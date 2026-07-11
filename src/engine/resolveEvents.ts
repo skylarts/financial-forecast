@@ -1,4 +1,3 @@
-import { nanoid } from "nanoid";
 import type { Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
 import { addDays, compareDates, elapsedYears } from "./dateMath";
 import { expandOccurrences } from "./occurrences";
@@ -222,11 +221,16 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         sourceId: `${event.id}:downpayment`,
       });
 
-      const realEstateId = nanoid();
+      // Derived from the event's own (stable) id, not a fresh nanoid() --
+      // resolveEvents reruns on every edit, and a random id here would give
+      // this account a new identity every render, breaking anything keyed by
+      // account id across recomputes (e.g. the chart's per-account
+      // show/hide toggle, which would silently "forget" these were hidden).
+      const realEstateId = `${event.id}:real_estate`;
       let linkedLiabilityId: Id | undefined;
 
       if (event.mortgage) {
-        const mortgageId = nanoid();
+        const mortgageId = `${event.id}:mortgage`;
         const principal = purchasePrice - downPaymentAmount;
         accounts.push({
           id: mortgageId,

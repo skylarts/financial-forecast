@@ -32,6 +32,20 @@ describe("resolveEvents (mock fixture)", () => {
     expect(resolved.mortgages).toHaveLength(1);
   });
 
+  it("gives the buy_home-created real estate and mortgage accounts stable ids across repeated resolves", () => {
+    // Regression: these used to get a fresh nanoid() every call, so anything
+    // keyed by account id (e.g. the chart's per-account show/hide toggle)
+    // would silently lose track of them on every edit, since useProjection
+    // recomputes forecastScenario -> resolveEvents on every scenario change.
+    const again = resolveEvents(mockScenario);
+    const realEstate1 = resolved.accounts.find((a) => a.class === "real_estate")!;
+    const realEstate2 = again.accounts.find((a) => a.class === "real_estate")!;
+    const mortgage1 = resolved.accounts.find((a) => a.class === "mortgage")!;
+    const mortgage2 = again.accounts.find((a) => a.class === "mortgage")!;
+    expect(realEstate2.id).toBe(realEstate1.id);
+    expect(mortgage2.id).toBe(mortgage1.id);
+  });
+
   it("stops Alex's salary postings after the retire event", () => {
     const alexSalary = resolved.postings.filter((p) => p.label === "Alex Salary");
     const last = alexSalary[alexSalary.length - 1];
