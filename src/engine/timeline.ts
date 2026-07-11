@@ -6,10 +6,6 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
     scenario.household.people.find((p) => p.id === id)?.name ?? "Someone";
   const accountName = (id: string) =>
     scenario.accounts.find((a) => a.id === id)?.name ?? "an account";
-  const incomeSourceName = (id: string) =>
-    scenario.incomeSources.find((i) => i.id === id)?.name ?? "an income source";
-  const expenseName = (id: string) =>
-    scenario.expenses.find((e) => e.id === id)?.name ?? "an expense";
 
   return scenario.events.map((event: ScenarioEvent) => {
     let description: string;
@@ -20,16 +16,6 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
         description = `${personName(event.personId)} retires${age !== null ? ` at age ${age}` : ""}`;
         break;
       }
-      case "income_change":
-        description = `${incomeSourceName(event.targetIncomeSourceId)} change${
-          event.multiplier !== undefined ? ` (×${event.multiplier})` : ""
-        }`;
-        break;
-      case "expense_change":
-        description = `${expenseName(event.targetExpenseId)} change${
-          event.multiplier !== undefined ? ` (×${event.multiplier})` : ""
-        }`;
-        break;
       case "buy_home":
         description = `Buy a home for $${event.purchasePrice.toLocaleString()}${
           event.mortgage ? " (financed)" : " (cash)"
@@ -40,12 +26,6 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
         break;
       case "have_a_kid":
         description = `New dependent — childcare $${event.childcareMonthlyExpense.toLocaleString()}/mo`;
-        break;
-      case "windfall":
-        description =
-          event.amount >= 0
-            ? `Windfall: +$${event.amount.toLocaleString()} to ${accountName(event.depositAccountId)}`
-            : `One-time expense: $${Math.abs(event.amount).toLocaleString()} from ${accountName(event.depositAccountId)}`;
         break;
       case "custom_transfer":
         description = `Transfer $${event.amount.toLocaleString()}/${event.frequency} from ${accountName(
@@ -63,6 +43,7 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
       date: event.startDate,
       year: yearOf(event.startDate),
       description,
+      isExcluded: event.isExcluded,
     };
   });
 }

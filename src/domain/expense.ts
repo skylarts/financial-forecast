@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { idSchema, isoDateSchema, recurrenceFrequencySchema } from "./common";
+import { temporaryAdjustmentSchema } from "./adjustment";
 
 export const expenseCategorySchema = z.enum([
   "housing",
@@ -26,5 +27,9 @@ export const expenseBaselineSchema = z.object({
   /** Direct assignment -- mirrors the validated "pay from a specific account" pattern. */
   paymentAccountId: idSchema,
   category: expenseCategorySchema,
+  /** Temporary scaling windows (a spending cut, a temporary rent hike). */
+  adjustments: z.array(temporaryAdjustmentSchema).optional(),
+  /** Visible and editable, but the engine skips it entirely (no postings). */
+  isExcluded: z.boolean().optional(),
 });
 export type ExpenseBaseline = z.infer<typeof expenseBaselineSchema>;

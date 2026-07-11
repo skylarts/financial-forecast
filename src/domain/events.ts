@@ -8,6 +8,10 @@ const baseEventFields = {
   /** For temporary effects (career break); omitted/null = permanent. */
   endDate: isoDateSchema.nullable().optional(),
   notes: z.string().optional(),
+  /** Visible and editable, but the engine skips it entirely -- no effect on
+   *  the projection. A lighter-weight "what if this didn't happen" toggle
+   *  than duplicating a whole scenario. */
+  isExcluded: z.boolean().optional(),
 };
 
 export const retireEventSchema = z.object({
@@ -18,28 +22,6 @@ export const retireEventSchema = z.object({
   retirementAge: z.number().int().positive().optional(),
 });
 export type RetireEvent = z.infer<typeof retireEventSchema>;
-
-export const incomeChangeEventSchema = z.object({
-  ...baseEventFields,
-  type: z.literal("income_change"),
-  /** The existing income source this modifies ("career break", ad hoc raise/cut). To add a
-   *  new income source, use "+ Add Income" on the Income & Expenses tab instead -- it already
-   *  supports a future start date, so there's no separate "new source" path here. */
-  targetIncomeSourceId: idSchema,
-  /** e.g. 0 = full pause, 0.5 = half-time, applied over [startDate, endDate]. */
-  multiplier: z.number().min(0).optional(),
-});
-export type IncomeChangeEvent = z.infer<typeof incomeChangeEventSchema>;
-
-export const expenseChangeEventSchema = z.object({
-  ...baseEventFields,
-  type: z.literal("expense_change"),
-  /** The existing expense this modifies. To add a new expense, use "+ Add Expense" on the
-   *  Income & Expenses tab instead -- it already supports a future start date. */
-  targetExpenseId: idSchema,
-  multiplier: z.number().min(0).optional(),
-});
-export type ExpenseChangeEvent = z.infer<typeof expenseChangeEventSchema>;
 
 export const buyHomeEventSchema = z.object({
   ...baseEventFields,
@@ -80,28 +62,6 @@ export const haveAKidEventSchema = z.object({
 });
 export type HaveAKidEvent = z.infer<typeof haveAKidEventSchema>;
 
-export const windfallEventSchema = z.object({
-  ...baseEventFields,
-  type: z.literal("windfall"),
-  /** Positive = inflow, negative = one-time outflow. */
-  amount: z.number(),
-  depositAccountId: idSchema,
-  isRecurring: z.boolean().optional(),
-  frequency: recurrenceFrequencySchema.optional(),
-  /** Repeat every N years (e.g. a car replaced every 7 yrs); overrides frequency. */
-  intervalYears: z.number().int().positive().optional(),
-});
-export type WindfallEvent = z.infer<typeof windfallEventSchema>;
-
-export const growthRateChangeEventSchema = z.object({
-  ...baseEventFields,
-  type: z.literal("growth_rate_change"),
-  targetAccountId: idSchema,
-  /** Replaces the account's growthRatePct (or propertyGrowthRatePct for real estate) from startDate on. */
-  newGrowthRatePct: z.number(),
-});
-export type GrowthRateChangeEvent = z.infer<typeof growthRateChangeEventSchema>;
-
 export const customTransferEventSchema = z.object({
   ...baseEventFields,
   type: z.literal("custom_transfer"),
@@ -115,15 +75,21 @@ export const customTransferEventSchema = z.object({
 });
 export type CustomTransferEvent = z.infer<typeof customTransferEventSchema>;
 
+export const growthRateChangeEventSchema = z.object({
+  ...baseEventFields,
+  type: z.literal("growth_rate_change"),
+  targetAccountId: idSchema,
+  /** Replaces the account's growthRatePct (or propertyGrowthRatePct for real estate) from startDate on. */
+  newGrowthRatePct: z.number(),
+});
+export type GrowthRateChangeEvent = z.infer<typeof growthRateChangeEventSchema>;
+
 export const scenarioEventSchema = z
   .discriminatedUnion("type", [
     retireEventSchema,
-    incomeChangeEventSchema,
-    expenseChangeEventSchema,
     buyHomeEventSchema,
     socialSecurityStartEventSchema,
     haveAKidEventSchema,
-    windfallEventSchema,
     customTransferEventSchema,
     growthRateChangeEventSchema,
   ])

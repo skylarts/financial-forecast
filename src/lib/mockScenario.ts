@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { Scenario, Account, AccountClass } from "@/domain";
+import type { Scenario, Account } from "@/domain";
 
 /**
  * A fictional household exercising every part of the domain model, used for
@@ -17,18 +17,6 @@ const alex401kId = nanoid();
 const jordan401kId = nanoid();
 const alexRothId = nanoid();
 
-const defaultGrowthByClass: Record<AccountClass, number> = {
-  cash: 0.02,
-  taxable_investment: 0.065,
-  tax_deferred: 0.07,
-  tax_free: 0.07,
-  real_estate: 0.035,
-  other_asset: 0.03,
-  credit_card: 0,
-  loan: 0,
-  mortgage: 0,
-};
-
 const accounts: Account[] = [
   {
     id: checkingId,
@@ -38,17 +26,6 @@ const accounts: Account[] = [
     ownerId: null,
     startingBalance: 15_000,
     growthRatePct: 0.01,
-    isExcluded: false,
-    linkedExternally: true,
-    balanceUpdateRequired: false,
-    withdrawalPriority: null,
-    isSpendingAccount: true,
-    // Keep ~$10k (today's dollars) in checking before sweeping surplus to savings.
-    targetCashBalance: 10_000,
-    isSurplusTarget: false,
-    surplusTargetPriority: null,
-    maxBalance: null,
-    maxBalanceGrowthRatePct: null,
     taxTreatment: "n/a",
     subjectToRMD: false,
   },
@@ -60,16 +37,6 @@ const accounts: Account[] = [
     ownerId: null,
     startingBalance: 10_000,
     growthRatePct: 0.04,
-    isExcluded: false,
-    linkedExternally: true,
-    withdrawalPriority: 0,
-    isSpendingAccount: false,
-    isSurplusTarget: true,
-    // Filled first, but only up to a cap that keeps pace with inflation; once
-    // it's topped off, surplus spills to the brokerage below.
-    surplusTargetPriority: 1,
-    maxBalance: 30_000,
-    maxBalanceGrowthRatePct: null,
     taxTreatment: "n/a",
     subjectToRMD: false,
   },
@@ -81,15 +48,6 @@ const accounts: Account[] = [
     ownerId: null,
     startingBalance: 40_000,
     growthRatePct: 0.065,
-    isExcluded: false,
-    linkedExternally: true,
-    withdrawalPriority: 1,
-    isSpendingAccount: false,
-    isSurplusTarget: true,
-    // Uncapped catch-all: absorbs whatever's left after the emergency fund is full.
-    surplusTargetPriority: 2,
-    maxBalance: null,
-    maxBalanceGrowthRatePct: null,
     taxTreatment: "taxable",
     subjectToRMD: false,
     // Funded from take-home: drawn from checking each month on top of expenses.
@@ -103,14 +61,6 @@ const accounts: Account[] = [
     ownerId: alexId,
     startingBalance: 85_000,
     growthRatePct: 0.07,
-    isExcluded: false,
-    linkedExternally: true,
-    withdrawalPriority: 3,
-    isSpendingAccount: false,
-    isSurplusTarget: false,
-    surplusTargetPriority: null,
-    maxBalance: null,
-    maxBalanceGrowthRatePct: null,
     taxTreatment: "tax_deferred",
     subjectToRMD: true,
     // Payroll-deducted: grows the balance but doesn't reduce take-home (income is entered net of it).
@@ -124,14 +74,6 @@ const accounts: Account[] = [
     ownerId: jordanId,
     startingBalance: 62_000,
     growthRatePct: 0.07,
-    isExcluded: false,
-    linkedExternally: true,
-    withdrawalPriority: 3,
-    isSpendingAccount: false,
-    isSurplusTarget: false,
-    surplusTargetPriority: null,
-    maxBalance: null,
-    maxBalanceGrowthRatePct: null,
     taxTreatment: "tax_deferred",
     subjectToRMD: true,
   },
@@ -143,14 +85,6 @@ const accounts: Account[] = [
     ownerId: alexId,
     startingBalance: 20_000,
     growthRatePct: 0.07,
-    isExcluded: false,
-    linkedExternally: true,
-    withdrawalPriority: 4,
-    isSpendingAccount: false,
-    isSurplusTarget: false,
-    surplusTargetPriority: null,
-    maxBalance: null,
-    maxBalanceGrowthRatePct: null,
     taxTreatment: "tax_free",
     subjectToRMD: false,
   },
@@ -192,6 +126,18 @@ export const mockScenario: Scenario = {
       depositAccountId: checkingId,
       category: "salary",
     },
+    {
+      id: nanoid(),
+      name: "Inheritance",
+      amount: 50_000,
+      frequency: "one_time",
+      startDate: "2035-01-15",
+      endDate: null,
+      growthRatePct: 0,
+      depositAccountId: brokerageId,
+      category: "other",
+      ownerId: null,
+    },
   ],
   expenses: [
     {
@@ -213,7 +159,7 @@ export const mockScenario: Scenario = {
       startDate: "2026-01-01",
       // Ends the day before the "Buy a home" event below -- the engine does
       // not automatically cancel rent when a home is purchased; this is a
-      // manual simplification in the fixture, worth revisiting as a V2
+      // manual simplification in the fixture, worth revisiting as a future
       // authoring-flow affordance (auto-suggest ending rent on a Buy a Home event).
       endDate: "2032-05-31",
       growthRatePct: 0.03, // nominal: tracks inflation
@@ -242,14 +188,6 @@ export const mockScenario: Scenario = {
       downPaymentFromAccountId: brokerageId,
       propertyGrowthRatePct: 0.035,
       mortgage: { annualInterestRatePct: 0.06, termMonths: 360 },
-    },
-    {
-      id: nanoid(),
-      type: "windfall",
-      name: "Inheritance",
-      startDate: "2035-01-15",
-      amount: 50_000,
-      depositAccountId: brokerageId,
     },
     {
       id: nanoid(),
@@ -290,8 +228,17 @@ export const mockScenario: Scenario = {
     startDate: "2026-01-01",
     horizonEndDate: "2087-12-31",
     inflationRatePct: 0.03,
-    defaultGrowthByClass,
-    surplusRoutingRule: { mode: "priority_fill" },
+    moneyFlow: {
+      hubs: [{ accountId: checkingId, bufferAmount: 10_000 }],
+      // Filled first, but only up to a cap that keeps pace with inflation; once
+      // it's topped off, surplus spills to the uncapped brokerage catch-all.
+      fillOrder: [
+        { accountId: emergencyFundId, maxBalance: 30_000, maxBalanceGrowthRatePct: null, splitPct: null },
+        { accountId: brokerageId, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null },
+      ],
+      drainOrder: [emergencyFundId, brokerageId, alex401kId, jordan401kId, alexRothId],
+      splitMode: "priority_fill",
+    },
     rmdEnabled: true,
     withdrawalTaxRates: { taxDeferredPct: 0.22, taxablePct: 0.15, taxFreePct: 0 },
   },

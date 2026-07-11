@@ -68,6 +68,8 @@ export interface TimelineRow {
   date: ISODate;
   year: number;
   description: string;
+  /** Excluded events still show here (with a badge) but have no engine effect. */
+  isExcluded?: boolean;
 }
 
 /**
@@ -104,7 +106,7 @@ export interface YearSnapshot {
 
 export interface ProjectionWarning {
   year: number;
-  kind: "insufficient_funds" | "unlinked_mortgage" | "balance_update_required" | "other";
+  kind: "insufficient_funds" | "unlinked_mortgage";
   message: string;
   accountId?: Id;
 }

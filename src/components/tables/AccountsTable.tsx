@@ -3,7 +3,7 @@
 import { Fragment, useState } from "react";
 import type { Account, Id, Person, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
-import { accountClassLabels, ASSET_CLASS_ORDER, LIABILITY_CLASS_ORDER } from "@/lib/labels";
+import { ASSET_CLASS_GROUPS, LIABILITY_CLASS_GROUPS, type AccountClassGroup } from "@/lib/labels";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
 
 /** Deflate a nominal dollar amount to today's dollars when in real mode. */
@@ -61,9 +61,6 @@ function AccountRow({
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}
           {account.isExcluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
-          {account.balanceUpdateRequired && (
-            <span className="ml-2 text-xs text-negative">Balance update required</span>
-          )}
           {editable && (
             <button
               type="button"
@@ -93,7 +90,7 @@ function Section({
   title,
   accounts,
   years,
-  classes,
+  groups: groupDefs,
   editableIds,
   onEdit,
   mode,
@@ -101,17 +98,22 @@ function Section({
   title: string;
   accounts: Account[];
   years: YearSnapshot[];
-  classes: string[];
+  groups: AccountClassGroup[];
   editableIds: Set<Id>;
   onEdit: (account: Account) => void;
   mode: DollarMode;
 }) {
-  const groups = classes
-    .map((cls) => ({ cls, accounts: accounts.filter((a) => a.class === cls) }))
+  const groups = groupDefs
+    .map((g) => ({ ...g, accounts: accounts.filter((a) => g.classes.includes(a.class)) }))
     .filter((g) => g.accounts.length > 0);
 
+  // Excluded accounts are still shown as a row (see AccountRow's badge) but
+  // never counted toward a subtotal -- that's the whole point of exclusion.
+  const includedBalance = (year: YearSnapshot, accts: Account[]) =>
+    accts.reduce((s, a) => (a.isExcluded ? s : s + balanceOf(year, a.id)), 0);
+
   const sectionTotal = (year: YearSnapshot) =>
-    groups.reduce((sum, g) => sum + g.accounts.reduce((s, a) => s + balanceOf(year, a.id), 0), 0);
+    groups.reduce((sum, g) => sum + includedBalance(year, g.accounts), 0);
 
   return (
     <>
@@ -124,12 +126,12 @@ function Section({
         ))}
       </tr>
       {groups.map((g) => (
-        <Fragment key={g.cls}>
+        <Fragment key={g.label}>
           <tr className="text-dim">
-            <td className="py-1.5 pl-6">{accountClassLabels[g.cls as keyof typeof accountClassLabels]}</td>
+            <td className="py-1.5 pl-6">{g.label}</td>
             {years.map((y) => (
               <td key={y.year} className="py-1.5 pr-2 text-right">
-                {formatMoney(deflate(g.accounts.reduce((s, a) => s + balanceOf(y, a.id), 0), y, mode))}
+                {formatMoney(deflate(includedBalance(y, g.accounts), y, mode))}
               </td>
             ))}
           </tr>
@@ -215,7 +217,7 @@ export function AccountsTable({
               title="Assets"
               accounts={accounts.filter((a) => a.category === "asset")}
               years={years}
-              classes={ASSET_CLASS_ORDER}
+              groups={ASSET_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
                 setDrawerAccount(a);
@@ -227,7 +229,7 @@ export function AccountsTable({
               title="Liabilities"
               accounts={accounts.filter((a) => a.category === "liability")}
               years={years}
-              classes={LIABILITY_CLASS_ORDER}
+              groups={LIABILITY_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
                 setDrawerAccount(a);

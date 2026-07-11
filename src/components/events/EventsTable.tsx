@@ -1,17 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { Account, ExpenseBaseline, IncomeSource, LedgerEvent, Person, ScenarioEvent, TimelineRow } from "@/domain";
+import type { Account, LedgerEvent, Person, ScenarioEvent, TimelineRow } from "@/domain";
 import { EventDrawer } from "./EventDrawer";
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
   retire: "Retire",
-  income_change: "Income",
-  expense_change: "Expense",
   buy_home: "Buy a home",
   social_security_start: "Social Security",
   have_a_kid: "Have a kid",
-  windfall: "Windfall",
   custom_transfer: "Transfer",
   growth_rate_change: "Growth rate",
 };
@@ -33,8 +30,6 @@ export function EventsTable({
   events,
   editableAccounts,
   people,
-  incomeSources,
-  expenses,
 }: {
   timeline: TimelineRow[];
   ledger: LedgerEvent[];
@@ -42,8 +37,6 @@ export function EventsTable({
   events: ScenarioEvent[];
   editableAccounts: Account[];
   people: Person[];
-  incomeSources: IncomeSource[];
-  expenses: ExpenseBaseline[];
 }) {
   const [drawerEvent, setDrawerEvent] = useState<ScenarioEvent | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -96,7 +89,10 @@ export function EventsTable({
                     {EVENT_TYPE_LABELS[row.eventType]}
                   </span>
                 </td>
-                <td className="py-2 pr-2">{row.description}</td>
+                <td className="py-2 pr-2">
+                  {row.description}
+                  {row.isExcluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
+                </td>
               </tr>
             ))}
             {sortedTimeline.length === 0 && (
@@ -157,8 +153,6 @@ export function EventsTable({
         event={drawerEvent}
         accounts={editableAccounts}
         people={people}
-        incomeSources={incomeSources}
-        expenses={expenses}
       />
     </div>
   );

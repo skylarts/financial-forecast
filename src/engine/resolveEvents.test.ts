@@ -68,20 +68,22 @@ describe("resolveEvents -- today's dollars for future-dated items with no growth
   const inflationRatePct = 0.03;
   const inflationFactor = growthAdjustedAmount(1, elapsedYears(planStart, futureDate), inflationRatePct);
 
-  it("inflates a one-time windfall entered in today's dollars", () => {
+  it("inflates a one-time windfall (an Income entry with a future start date) entered in today's dollars", () => {
+    // Windfalls are no longer a separate event type (v3): a one-time inflow is
+    // just an Income source with frequency "one_time" and a future startDate,
+    // riding the same today's-dollars path as every other income source.
     const cash = makeAccount({ class: "cash", name: "Cash" });
+    const inheritance = makeIncome({
+      name: "Inheritance",
+      amount: 50_000,
+      frequency: "one_time",
+      startDate: futureDate,
+      growthRatePct: 0,
+      depositAccountId: cash.id,
+    });
     const scenario = makeScenario({
       accounts: [cash],
-      events: [
-        {
-          id: nanoid(),
-          type: "windfall",
-          name: "Inheritance",
-          startDate: futureDate,
-          amount: 50_000,
-          depositAccountId: cash.id,
-        },
-      ],
+      incomeSources: [inheritance],
       startDate: planStart,
       horizonEndDate: "2036-12-31",
       inflationRatePct,
@@ -147,27 +149,24 @@ describe("resolveEvents -- today's dollars for future-dated items with no growth
   });
 });
 
-describe("resolveEvents -- income_change / expense_change modify an existing source", () => {
-  // These events can only modify an existing baseline income source or expense
-  // now (see EventDrawer) -- creating a new one goes through "+ Add Income" /
-  // "+ Add Expense" directly instead.
-  it("applies an income_change multiplier window to the targeted income source", () => {
+describe("resolveEvents -- temporary adjustments modify an income/expense in place", () => {
+  // income_change / expense_change are no longer separate event types (v3):
+  // a temporary scaling window lives directly on the income source or
+  // expense it affects (Scenario.incomeSources[].adjustments), removing the
+  // "which event points at which source" indirection.
+  it("applies a temporary-adjustment multiplier window to an income source", () => {
     const cash = makeAccount({ class: "cash", name: "Cash", isSpendingAccount: true });
-    const salary = makeIncome({ name: "Salary", amount: 4_000, frequency: "monthly", growthRatePct: 0, depositAccountId: cash.id });
+    const salary = makeIncome({
+      name: "Salary",
+      amount: 4_000,
+      frequency: "monthly",
+      growthRatePct: 0,
+      depositAccountId: cash.id,
+      adjustments: [{ id: nanoid(), startDate: "2026-06-01", endDate: "2026-08-31", multiplier: 0 }],
+    });
     const scenario = makeScenario({
       accounts: [cash],
       incomeSources: [salary],
-      events: [
-        {
-          id: nanoid(),
-          type: "income_change",
-          name: "Career break",
-          targetIncomeSourceId: salary.id,
-          startDate: "2026-06-01",
-          endDate: "2026-08-31",
-          multiplier: 0,
-        },
-      ],
       startDate: "2026-01-01",
       horizonEndDate: "2026-12-31",
     });
@@ -181,22 +180,19 @@ describe("resolveEvents -- income_change / expense_change modify an existing sou
     expect(postings.every((p) => p.amount === 4_000)).toBe(true);
   });
 
-  it("applies an expense_change multiplier window to the targeted expense", () => {
+  it("applies a temporary-adjustment multiplier window to an expense", () => {
     const cash = makeAccount({ class: "cash", name: "Cash", isSpendingAccount: true });
-    const rent = makeExpense({ name: "Rent", amount: 1_500, frequency: "monthly", growthRatePct: 0, paymentAccountId: cash.id });
+    const rent = makeExpense({
+      name: "Rent",
+      amount: 1_500,
+      frequency: "monthly",
+      growthRatePct: 0,
+      paymentAccountId: cash.id,
+      adjustments: [{ id: nanoid(), startDate: "2026-07-01", endDate: null, multiplier: 1.2 }],
+    });
     const scenario = makeScenario({
       accounts: [cash],
       expenses: [rent],
-      events: [
-        {
-          id: nanoid(),
-          type: "expense_change",
-          name: "Rent goes up",
-          targetExpenseId: rent.id,
-          startDate: "2026-07-01",
-          multiplier: 1.2,
-        },
-      ],
       startDate: "2026-01-01",
       horizonEndDate: "2026-12-31",
     });
@@ -206,5 +202,46 @@ describe("resolveEvents -- income_change / expense_change modify an existing sou
     const after = postings.filter((p) => p.date >= "2026-07-01");
     expect(before.every((p) => p.amount === -1_500)).toBe(true);
     expect(after.every((p) => p.amount === -1_800)).toBe(true); // 1,500 * 1.2
+  });
+});
+
+describe("resolveEvents -- isExcluded", () => {
+  it("an excluded income source produces no postings", () => {
+    const cash = makeAccount({ class: "cash", name: "Cash" });
+    const salary = makeIncome({ name: "Salary", amount: 4_000, depositAccountId: cash.id, isExcluded: true });
+    const scenario = makeScenario({ accounts: [cash], incomeSources: [salary], horizonEndDate: "2026-12-31" });
+    const resolved = resolveEvents(scenario);
+    expect(resolved.postings.some((p) => p.label === "Salary")).toBe(false);
+  });
+
+  it("an excluded expense produces no postings", () => {
+    const cash = makeAccount({ class: "cash", name: "Cash" });
+    const rent = makeExpense({ name: "Rent", amount: 1_500, paymentAccountId: cash.id, isExcluded: true });
+    const scenario = makeScenario({ accounts: [cash], expenses: [rent], horizonEndDate: "2026-12-31" });
+    const resolved = resolveEvents(scenario);
+    expect(resolved.postings.some((p) => p.label === "Rent")).toBe(false);
+  });
+
+  it("an excluded event has no effect (a retire event doesn't trim salary)", () => {
+    const personId = nanoid();
+    const cash = makeAccount({ class: "cash", name: "Cash" });
+    const salary = makeIncome({ name: "Salary", amount: 4_000, ownerId: personId, category: "salary", depositAccountId: cash.id });
+    const scenario = makeScenario({
+      accounts: [cash],
+      incomeSources: [salary],
+      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-06-01", personId, isExcluded: true }],
+      horizonEndDate: "2026-12-31",
+    });
+    const resolved = resolveEvents(scenario);
+    const postings = resolved.postings.filter((p) => p.label === "Salary");
+    expect(postings).toHaveLength(12); // not trimmed -- the retire event is excluded
+  });
+
+  it("a posting targeting an excluded account is dropped entirely", () => {
+    const excludedAccount = makeAccount({ class: "cash", name: "Kid's UTMA", isExcluded: true });
+    const income = makeIncome({ name: "Gift", amount: 1_000, depositAccountId: excludedAccount.id });
+    const scenario = makeScenario({ accounts: [excludedAccount], incomeSources: [income], horizonEndDate: "2026-12-31" });
+    const resolved = resolveEvents(scenario);
+    expect(resolved.postings).toHaveLength(0);
   });
 });

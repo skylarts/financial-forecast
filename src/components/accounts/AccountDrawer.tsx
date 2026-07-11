@@ -45,13 +45,6 @@ interface FormValues {
   startingBalance: number;
   growthRatePct: number;
   taxTreatment: TaxTreatment;
-  isSpendingAccount: boolean;
-  targetCashBalance: string;
-  isSurplusTarget: boolean;
-  surplusTargetPriority: string;
-  maxBalance: string;
-  maxBalanceGrowthRatePct: string;
-  withdrawalPriority: string;
   subjectToRMD: boolean;
   isExcluded: boolean;
   contributionAmount: string;
@@ -69,13 +62,6 @@ function toFormValues(account?: Account): FormValues {
     startingBalance: account?.startingBalance ?? 0,
     growthRatePct: account?.growthRatePct ?? 0,
     taxTreatment: account?.taxTreatment ?? "n/a",
-    isSpendingAccount: account?.isSpendingAccount ?? false,
-    targetCashBalance: account?.targetCashBalance?.toString() ?? "",
-    isSurplusTarget: account?.isSurplusTarget ?? false,
-    surplusTargetPriority: account?.surplusTargetPriority?.toString() ?? "",
-    maxBalance: account?.maxBalance?.toString() ?? "",
-    maxBalanceGrowthRatePct: account?.maxBalanceGrowthRatePct?.toString() ?? "",
-    withdrawalPriority: account?.withdrawalPriority?.toString() ?? "",
     subjectToRMD: account?.subjectToRMD ?? false,
     isExcluded: account?.isExcluded ?? false,
     contributionAmount: account?.contribution?.amount?.toString() ?? "",
@@ -110,6 +96,7 @@ export function AccountDrawer({
   const updateAccount = usePlanStore((s) => s.updateAccount);
   const removeAccount = usePlanStore((s) => s.removeAccount);
   const [error, setError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const { register, handleSubmit, reset, watch } = useForm<FormValues>({
     defaultValues: toFormValues(account),
@@ -118,11 +105,18 @@ export function AccountDrawer({
   useEffect(() => {
     reset(toFormValues(account));
     setError(null);
+    // Auto-expand Advanced when editing an account that already has
+    // something set there, so it's never silently hidden.
+    setAdvancedOpen(
+      !!account &&
+        (account.subjectToRMD ||
+          account.isExcluded === true ||
+          account.taxTreatment !== "n/a" ||
+          !!account.contribution)
+    );
   }, [account, open, reset]);
 
   const selectedClass = watch("class");
-  const isSpendingAccount = watch("isSpendingAccount");
-  const isSurplusTarget = watch("isSurplusTarget");
   const contributionAmount = watch("contributionAmount");
   const contributionFunding = watch("contributionFunding");
 
@@ -136,15 +130,6 @@ export function AccountDrawer({
       startingBalance: Number(values.startingBalance),
       growthRatePct: Number(values.growthRatePct),
       isExcluded: values.isExcluded,
-      linkedExternally: false,
-      withdrawalPriority: values.withdrawalPriority === "" ? null : Number(values.withdrawalPriority),
-      isSpendingAccount: values.isSpendingAccount,
-      targetCashBalance: values.targetCashBalance.trim() === "" ? null : Number(values.targetCashBalance),
-      isSurplusTarget: values.isSurplusTarget,
-      surplusTargetPriority: values.surplusTargetPriority === "" ? null : Number(values.surplusTargetPriority),
-      maxBalance: values.maxBalance.trim() === "" ? null : Number(values.maxBalance),
-      maxBalanceGrowthRatePct:
-        values.maxBalanceGrowthRatePct.trim() === "" ? null : Number(values.maxBalanceGrowthRatePct),
       taxTreatment: values.taxTreatment,
       subjectToRMD: values.subjectToRMD,
       contribution:
@@ -180,92 +165,81 @@ export function AccountDrawer({
         <Field label="Class">
           <SelectInput reg={register("class")} options={CLASS_OPTIONS} />
         </Field>
-        <Field label="Owner">
-          <SelectInput
-            reg={register("ownerId")}
-            options={[{ value: "", label: "Joint / none" }, ...people.map((p) => ({ value: p.id, label: p.name }))]}
-          />
-        </Field>
         <Field label="Starting Balance">
           <TextInput reg={register("startingBalance", { valueAsNumber: true })} type="number" step="0.01" />
         </Field>
         <Field label="Annual Growth Rate (e.g. 0.07 for 7%)">
           <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
         </Field>
-        <Field label="Tax Treatment">
-          <SelectInput reg={register("taxTreatment")} options={TAX_TREATMENT_OPTIONS} />
+        <Field label="Owner">
+          <SelectInput
+            reg={register("ownerId")}
+            options={[{ value: "", label: "Joint / none" }, ...people.map((p) => ({ value: p.id, label: p.name }))]}
+          />
         </Field>
-        {selectedClass === "tax_deferred" && (
-          <CheckboxInput reg={register("subjectToRMD")} label="Subject to RMDs (age 73+)" />
-        )}
-        <CheckboxInput reg={register("isSpendingAccount")} label="Spending account (deficits covered here first)" />
-        {isSpendingAccount && (
-          <>
-            <Field label="Target cash balance (buffer to keep before sweeping surplus, optional)">
-              <TextInput reg={register("targetCashBalance")} type="number" step="0.01" placeholder="e.g. 10000" />
-            </Field>
-            <p className="-mt-1 text-xs text-dim">
-              Surplus is only swept to your savings/investments once this account is above the buffer. Entered in
-              today&rsquo;s dollars and grown with inflation. Leave blank to sweep every dollar each month.
-            </p>
-          </>
-        )}
-        <Field label="Withdrawal Priority (lower = drawn first, optional)">
-          <TextInput reg={register("withdrawalPriority")} type="number" placeholder="e.g. 1" />
-        </Field>
-        <CheckboxInput reg={register("isSurplusTarget")} label="Surplus target (receives routed surplus cash)" />
-        {isSurplusTarget && (
-          <>
-            <Field label="Surplus Target Priority (lower = filled first, optional)">
-              <TextInput reg={register("surplusTargetPriority")} type="number" placeholder="e.g. 1" />
-            </Field>
-            <Field label="Max Balance (cap, blank = no cap / absorbs everything)">
-              <TextInput reg={register("maxBalance")} type="number" step="0.01" placeholder="e.g. 25000" />
-            </Field>
-            <Field label="Max Balance Growth Rate (blank = follow inflation, 0 = hold flat)">
-              <TextInput reg={register("maxBalanceGrowthRatePct")} type="number" step="0.001" placeholder="e.g. 0.03" />
-            </Field>
-            <p className="-mt-1 text-xs text-dim">
-              Surplus fills this account only up to its cap, then spills to the next-priority target. Leave the
-              lowest-priority account uncapped as a catch-all. The cap grows each year by its growth rate (defaulting to
-              your inflation assumption) so it keeps pace over time.
-            </p>
-          </>
-        )}
-        <div className="mt-1 rounded-md border border-border p-3">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">Recurring Contribution</div>
-          <Field label="Contribution Amount (per occurrence, blank = none)">
-            <TextInput reg={register("contributionAmount")} type="number" step="0.01" placeholder="e.g. 1500" />
-          </Field>
-          {contributionAmount?.trim() !== "" && (
-            <>
-              <Field label="Contribution Frequency">
-                <SelectInput reg={register("contributionFrequency")} options={FREQUENCY_OPTIONS} />
-              </Field>
-              <Field label="Contribution Growth Rate (optional, actual)">
-                <TextInput reg={register("contributionGrowthRatePct")} type="number" step="0.001" />
-              </Field>
-              <Field label="Funded from">
-                <SelectInput reg={register("contributionFunding")} options={FUNDING_OPTIONS} />
-              </Field>
-              <p className="mt-1 text-xs text-dim">
-                {contributionFunding === "paycheck"
-                  ? "Deducted from your paycheck before take-home (e.g. a 401k or Roth 401k), so it grows this account without reducing your cash flow. Enter your income net of it."
-                  : "Drawn from your spending account each period, on top of your expenses (e.g. a Roth IRA or taxable brokerage)."}
-              </p>
-              <Field label="Stop contributing on (optional)">
-                <TextInput reg={register("contributionEndDate")} type="date" />
-              </Field>
-              <p className="mt-1 text-xs text-dim">
-                Leave blank to stop automatically when the account&rsquo;s owner retires (a paycheck deduction
-                can&rsquo;t outlive the paycheck). Set a date to stop sooner, or to cap a joint account with no single
-                retiree.
-              </p>
-            </>
-          )}
-        </div>
 
-        <CheckboxInput reg={register("isExcluded")} label="Excluded from the plan" />
+        <p className="text-xs text-dim">
+          Whether this account is a spending hub, receives routed surplus, or gets drawn down for a shortfall is set
+          in the <span className="font-medium text-foreground">Money Flow</span> tab, not here.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-dim hover:text-foreground"
+        >
+          <span className="inline-block w-3">{advancedOpen ? "▾" : "▸"}</span>
+          Advanced
+        </button>
+
+        {advancedOpen && (
+          <div className="flex flex-col gap-3 border-l border-border pl-3">
+            <Field label="Tax Treatment (blank/N-A infers from class)">
+              <SelectInput reg={register("taxTreatment")} options={TAX_TREATMENT_OPTIONS} />
+            </Field>
+            {selectedClass === "tax_deferred" && (
+              <CheckboxInput reg={register("subjectToRMD")} label="Subject to RMDs (age 73+)" />
+            )}
+
+            <div className="rounded-md border border-border p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">Recurring Contribution</div>
+              <Field label="Contribution Amount (per occurrence, blank = none)">
+                <TextInput reg={register("contributionAmount")} type="number" step="0.01" placeholder="e.g. 1500" />
+              </Field>
+              {contributionAmount?.trim() !== "" && (
+                <>
+                  <Field label="Contribution Frequency">
+                    <SelectInput reg={register("contributionFrequency")} options={FREQUENCY_OPTIONS} />
+                  </Field>
+                  <Field label="Contribution Growth Rate (optional, actual)">
+                    <TextInput reg={register("contributionGrowthRatePct")} type="number" step="0.001" />
+                  </Field>
+                  <Field label="Funded from">
+                    <SelectInput reg={register("contributionFunding")} options={FUNDING_OPTIONS} />
+                  </Field>
+                  <p className="mt-1 text-xs text-dim">
+                    {contributionFunding === "paycheck"
+                      ? "Deducted from your paycheck before take-home (e.g. a 401k or Roth 401k), so it grows this account without reducing your cash flow. Enter your income net of it."
+                      : "Drawn from your spending account each period, on top of your expenses (e.g. a Roth IRA or taxable brokerage)."}
+                  </p>
+                  <Field label="Stop contributing on (optional)">
+                    <TextInput reg={register("contributionEndDate")} type="date" />
+                  </Field>
+                  <p className="mt-1 text-xs text-dim">
+                    Leave blank to stop automatically when the account&rsquo;s owner retires (a paycheck deduction
+                    can&rsquo;t outlive the paycheck). Set a date to stop sooner, or to cap a joint account with no
+                    single retiree.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <CheckboxInput
+              reg={register("isExcluded")}
+              label="Excluded (kept visible for reference, no effect on the projection)"
+            />
+          </div>
+        )}
 
         <div className="mt-2 flex items-center justify-between gap-2">
           {account ? (

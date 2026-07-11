@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import type { ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account } from "@/domain";
+import type { ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { expenseBaselineSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
+import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 
 const CATEGORY_OPTIONS: { value: ExpenseCategory; label: string }[] = [
   { value: "housing", label: "Housing" },
@@ -36,6 +37,7 @@ interface FormValues {
   intervalYears: string;
   paymentAccountId: string;
   category: ExpenseCategory;
+  isExcluded: boolean;
 }
 
 function toFormValues(expense?: ExpenseBaseline): FormValues {
@@ -49,6 +51,7 @@ function toFormValues(expense?: ExpenseBaseline): FormValues {
     intervalYears: expense?.intervalYears?.toString() ?? "",
     paymentAccountId: expense?.paymentAccountId ?? "",
     category: expense?.category ?? "other",
+    isExcluded: expense?.isExcluded ?? false,
   };
 }
 
@@ -67,6 +70,10 @@ export function ExpenseDrawer({
   const updateExpense = usePlanStore((s) => s.updateExpense);
   const removeExpense = usePlanStore((s) => s.removeExpense);
   const [error, setError] = useState<string | null>(null);
+  const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(expense?.adjustments ?? []);
+  const [advancedOpen, setAdvancedOpen] = useState(
+    !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
+  );
 
   const { register, handleSubmit } = useForm<FormValues>({
     defaultValues: toFormValues(expense),
@@ -83,6 +90,8 @@ export function ExpenseDrawer({
       intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       paymentAccountId: values.paymentAccountId,
       category: values.category,
+      adjustments,
+      isExcluded: values.isExcluded,
     };
 
     const result = expenseBaselineSchema.omit({ id: true }).safeParse(candidate);
@@ -132,17 +141,36 @@ export function ExpenseDrawer({
           <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
         </Field>
 
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-dim hover:text-foreground"
+        >
+          <span className="inline-block w-3">{advancedOpen ? "▾" : "▸"}</span>
+          Advanced
+        </button>
+
+        {advancedOpen && (
+          <div className="flex flex-col gap-3 border-l border-border pl-3">
+            <AdjustmentsEditor
+              adjustments={adjustments}
+              onChange={setAdjustments}
+              helpText="A temporary scale-up or scale-down over a date range (e.g. a rent hike: multiplier 1.2)."
+            />
+            <CheckboxInput
+              reg={register("isExcluded")}
+              label="Excluded (kept visible for reference, no effect on the projection)"
+            />
+          </div>
+        )}
+
         <div className="mt-2 flex items-center justify-between gap-2">
           {expense ? (
             <button
               type="button"
               onClick={() => {
-                const removed = removeExpense(expense.id);
-                if (removed) onClose();
-                else
-                  alert(
-                    `Can't delete ${expense.name || "this expense"} -- an Expense Change event still targets it. Update or delete that event first.`
-                  );
+                removeExpense(expense.id);
+                onClose();
               }}
               className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
             >

@@ -70,6 +70,13 @@ export type Contribution = z.infer<typeof contributionSchema>;
 // on a refined schema at runtime (throws, despite type-checking) -- callers
 // that need a sub-shape (e.g. a create-account form omitting `id`) should
 // build off this raw object schema instead.
+//
+// Cash-flow ROLE (spending hub / surplus target / drain order / buffers /
+// caps) deliberately does NOT live here -- it lives in
+// ForecastSettings.moneyFlow as two ordered lists (fill order, drain order),
+// edited from the Money Flow view rather than scattered across every
+// account's form. An account only needs to exist and be selectable there;
+// nothing about *this* object's shape encodes its routing role.
 export const accountObjectSchema = z
   .object({
     id: idSchema,
@@ -78,33 +85,13 @@ export const accountObjectSchema = z
     category: accountCategorySchema,
     ownerId: idSchema.nullable(),
     startingBalance: z.number(),
-    /** Annual rate; falls back to ForecastSettings.defaultGrowthByClass if unset. */
+    /** Annual rate, nominal (already includes inflation). */
     growthRatePct: z.number(),
-    isExcluded: z.boolean().default(false),
-    linkedExternally: z.boolean().default(false),
-    /** Stub flag -- no real bank sync in this build; manually settable for UI fidelity. */
-    balanceUpdateRequired: z.boolean().optional(),
-    /** Lower = drawn first to cover a deficit. null = not a funding source. */
-    withdrawalPriority: z.number().int().nullable().default(null),
-    isSpendingAccount: z.boolean().default(false),
-    /**
-     * For a spending account: keep this much cash here (a buffer) before
-     * sweeping the excess to surplus targets. Entered in today's dollars and
-     * grown with inflation. Unset/0 = sweep everything (legacy behavior).
-     */
-    targetCashBalance: z.number().nonnegative().nullable().optional(),
-    isSurplusTarget: z.boolean().default(false),
-    /** Lower = filled first when routing surplus. */
-    surplusTargetPriority: z.number().int().nullable().default(null),
-    /**
-     * Ceiling for surplus routing: this account is filled only up to maxBalance,
-     * then the overflow spills to the next-priority surplus target. null = no cap
-     * (absorbs everything, the legacy behavior). Grows yearly per
-     * `maxBalanceGrowthRatePct`.
-     */
-    maxBalance: z.number().nonnegative().nullable().default(null),
-    /** Annual growth of maxBalance; null = follow ForecastSettings.inflationRatePct. */
-    maxBalanceGrowthRatePct: z.number().nullable().default(null),
+    /** Visible and editable, but the engine skips it entirely: no growth, no
+     *  cashflows, no effect on net worth, KPIs, or subtotals. For money you
+     *  don't want counted as part of the plan (e.g. a kid's UTMA) while
+     *  still keeping a record of it. */
+    isExcluded: z.boolean().optional(),
     taxTreatment: taxTreatmentSchema.default("n/a"),
     /** Only meaningful when class='tax_deferred' and ownerId is set. */
     subjectToRMD: z.boolean().default(false),

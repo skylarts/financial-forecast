@@ -4,6 +4,7 @@ import { useState } from "react";
 import type {
   Account,
   ExpenseBaseline,
+  ForecastSettings,
   Id,
   IncomeSource,
   LedgerEvent,
@@ -17,8 +18,9 @@ import { AccountsTable } from "./AccountsTable";
 import { CashFlowTable } from "./CashFlowTable";
 import { IncomeExpensesTable } from "./IncomeExpensesTable";
 import { EventsTable } from "@/components/events/EventsTable";
+import { MoneyFlowEditor } from "@/components/moneyflow/MoneyFlowEditor";
 
-const TABS = ["Accounts", "Income & Expenses", "Cash Flow", "Events"] as const;
+const TABS = ["Accounts", "Income & Expenses", "Money Flow", "Cash Flow", "Events"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailTabs({
@@ -31,6 +33,7 @@ export function DetailTabs({
   editableAccountIds,
   incomeSources,
   expenses,
+  settings,
   dollarMode,
 }: {
   accounts: Account[];
@@ -42,6 +45,7 @@ export function DetailTabs({
   editableAccountIds: Set<Id>;
   incomeSources: IncomeSource[];
   expenses: ExpenseBaseline[];
+  settings: ForecastSettings;
   dollarMode: DollarMode;
 }) {
   const [active, setActive] = useState<Tab>("Accounts");
@@ -79,6 +83,9 @@ export function DetailTabs({
           people={people}
         />
       )}
+      {active === "Money Flow" && (
+        <MoneyFlowEditor accounts={accounts.filter((a) => editableAccountIds.has(a.id))} settings={settings} />
+      )}
       {active === "Cash Flow" && <CashFlowTable years={years} accounts={accounts} dollarMode={dollarMode} />}
       {active === "Events" && (
         <EventsTable
@@ -88,8 +95,6 @@ export function DetailTabs({
           events={events}
           editableAccounts={accounts.filter((a) => editableAccountIds.has(a.id))}
           people={people}
-          incomeSources={incomeSources}
-          expenses={expenses}
         />
       )}
     </div>

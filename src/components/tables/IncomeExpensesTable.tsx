@@ -70,7 +70,10 @@ export function IncomeExpensesTable({
                     setIncomeDrawerOpen(true);
                   }}
                 >
-                  <td className="py-1.5 pl-2">{i.name}</td>
+                  <td className="py-1.5 pl-2">
+                    {i.name}
+                    {i.isExcluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
+                  </td>
                   <td className="py-1.5 text-dim">{ownerName(i.ownerId)}</td>
                   <td className="py-1.5 text-right">{formatMoney(i.amount)}</td>
                   <td className="py-1.5 text-dim">{FREQUENCY_LABELS[i.frequency]}</td>
@@ -123,7 +126,10 @@ export function IncomeExpensesTable({
                     setExpenseDrawerOpen(true);
                   }}
                 >
-                  <td className="py-1.5 pl-2">{e.name}</td>
+                  <td className="py-1.5 pl-2">
+                    {e.name}
+                    {e.isExcluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
+                  </td>
                   <td className="py-1.5 text-right">{formatMoney(e.amount)}</td>
                   <td className="py-1.5 text-dim">{FREQUENCY_LABELS[e.frequency]}</td>
                   <td className="py-1.5 pr-2 text-dim">{accountName(e.paymentAccountId)}</td>

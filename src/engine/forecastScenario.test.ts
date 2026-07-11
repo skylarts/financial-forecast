@@ -854,3 +854,90 @@ describe("forecastScenario -- withdrawal taxes", () => {
     expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(0, 0);
   });
 });
+
+describe("forecastScenario -- isExcluded (real exclusion, not cosmetic)", () => {
+  it("freezes an excluded account's balance and drops it from net worth, KPIs, and cash flow", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 10_000, growthRatePct: 0 });
+    const utma = makeAccount({ class: "cash", name: "Kid's UTMA", startingBalance: 5_000, growthRatePct: 0.1, isExcluded: true });
+    const scenario = makeScenario({
+      accounts: [checking, utma],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 1000 })],
+      horizonEndDate: "2027-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year2 = result.years[1];
+
+    // Frozen at its starting balance despite a 10% growth rate -- no growth applied.
+    expect(year2.accountBalances[utma.id]).toBeCloseTo(5_000, 0);
+    // Net worth only reflects the non-excluded account.
+    expect(year2.netWorthNominal).toBeCloseTo(year2.accountBalances[checking.id], 0);
+    expect(year2.totalAssetsNominal).toBeCloseTo(year2.accountBalances[checking.id], 0);
+  });
+
+  it("drops postings targeting an excluded account, without also silently draining the paired account", () => {
+    // A take-home-funded contribution into an excluded account must not still
+    // pull money out of checking with nowhere for it to land.
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const excludedBrokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Excluded Brokerage",
+      isExcluded: true,
+      contribution: { amount: 500, frequency: "monthly", growthRatePct: 0, payrollDeducted: false },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, excludedBrokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    expect(year.accountBalances[excludedBrokerage.id]).toBeCloseTo(0, 0); // no contribution landed
+    expect(year.accountBalances[checking.id]).toBeCloseTo(60_000, 0); // untouched by the (skipped) contribution draw
+  });
+
+  it("an excluded event doesn't count toward the retirement KPI", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const scenario = makeScenario({
+      accounts: [checking],
+      people: [{ id: personId, name: "Worker", birthDate: "1990-01-01", retirementAge: 65, planningEndAge: 95 }],
+      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-07-01", personId, isExcluded: true }],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    expect(result.kpis.retirementAge).toBeNull();
+  });
+});
+
+describe("forecastScenario -- moneyFlow (multiple hubs, expressed directly)", () => {
+  it("sweeps surplus from two independent spending hubs into a shared fill order", () => {
+    const checkingA = makeAccount({ class: "cash", name: "Checking A", startingBalance: 0, growthRatePct: 0 });
+    const checkingB = makeAccount({ class: "cash", name: "Checking B", startingBalance: 0, growthRatePct: 0 });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0, growthRatePct: 0 });
+    const scenario = makeScenario({
+      accounts: [checkingA, checkingB, savings],
+      incomeSources: [
+        makeIncome({ depositAccountId: checkingA.id, amount: 3000 }),
+        makeIncome({ depositAccountId: checkingB.id, amount: 2000 }),
+      ],
+      horizonEndDate: "2026-12-31",
+      moneyFlow: {
+        hubs: [
+          { accountId: checkingA.id, bufferAmount: 0 },
+          { accountId: checkingB.id, bufferAmount: 0 },
+        ],
+        fillOrder: [{ accountId: savings.id, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+        drainOrder: [],
+        splitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // Both hubs sweep everything (no buffer) into the single shared fill target.
+    expect(year.accountBalances[checkingA.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[checkingB.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[savings.id]).toBeCloseTo((3000 + 2000) * 12, 0);
+  });
+});

@@ -1,16 +1,11 @@
 import { nanoid } from "nanoid";
-import type { Account, Id, ISODate, IncomeSource, ExpenseBaseline, Scenario } from "@/domain";
+import type { Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
 import { addDays, compareDates, elapsedYears } from "./dateMath";
 import { expandOccurrences } from "./occurrences";
 import { growthAdjustedAmount, todaysDollarsAmount } from "./growth";
 import { buildTimeline } from "./timeline";
+import { resolvePrimarySpendingAccountId } from "./moneyFlow";
 import type { EngineAccount, MortgageSpec, Posting, ResolvedSchedule } from "./types";
-
-interface ModifierWindow {
-  startDate: ISODate;
-  endDate: ISODate | null;
-  multiplier: number;
-}
 
 /** The earlier of two optional dates; null only when both are null. */
 function earliestDate(a: ISODate | null, b: ISODate | null): ISODate | null {
@@ -19,7 +14,7 @@ function earliestDate(a: ISODate | null, b: ISODate | null): ISODate | null {
   return compareDates(a, b) <= 0 ? a : b;
 }
 
-function activeMultiplier(windows: ModifierWindow[], onDate: ISODate): number {
+function activeMultiplier(windows: TemporaryAdjustment[], onDate: ISODate): number {
   let multiplier = 1;
   for (const w of windows) {
     const started = compareDates(onDate, w.startDate) >= 0;
@@ -29,21 +24,22 @@ function activeMultiplier(windows: ModifierWindow[], onDate: ISODate): number {
   return multiplier;
 }
 
-function resolvePrimarySpendingAccountId(accounts: Account[]): Id | null {
-  const spending = accounts.find((a) => a.isSpendingAccount);
-  if (spending) return spending.id;
-  const cash = accounts.find((a) => a.class === "cash");
-  return cash ? cash.id : null;
-}
-
 export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   const { settings } = scenario;
   const horizonEnd = settings.horizonEndDate;
+  const events = scenario.events.filter((e) => !e.isExcluded);
+
+  // Accounts that are excluded from the plan never receive or emit a
+  // posting -- the engine treats them as if they don't exist for cash-flow
+  // purposes (they still appear in the resolved account list so the UI can
+  // render them as a static line; see forecastScenario for how their
+  // balance stays frozen).
+  const excludedAccountIds = new Set(scenario.accounts.filter((a) => a.isExcluded).map((a) => a.id));
 
   // growth_rate_change events, grouped by target account and sorted so the
   // engine can pick "the last one that's started" for any given month.
   const growthRateOverrides = new Map<Id, { startDate: ISODate; growthRatePct: number }[]>();
-  for (const event of scenario.events) {
+  for (const event of events) {
     if (event.type === "growth_rate_change") {
       const list = growthRateOverrides.get(event.targetAccountId) ?? [];
       list.push({ startDate: event.startDate, growthRatePct: event.newGrowthRatePct });
@@ -60,15 +56,16 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   const postings: Posting[] = [];
   const mortgages: MortgageSpec[] = [];
 
-  // --- Income sources: start from the baseline, then layer event effects ---
-  const incomeSources: IncomeSource[] = [...scenario.incomeSources];
-  const incomeEndOverrides = new Map<Id, ISODate>();
-  const incomeModifiers = new Map<Id, ModifierWindow[]>();
-  // Earliest retirement date per person; used to end both their salary and the
-  // contributions into accounts they own.
-  const retirementByPerson = new Map<Id, ISODate>();
+  const pushPosting = (posting: Posting) => {
+    if (excludedAccountIds.has(posting.accountId)) return;
+    postings.push(posting);
+  };
 
-  for (const event of scenario.events) {
+  // --- Income sources: today's-dollars amount, own growth rate, plus any
+  //     temporary adjustment windows entered directly on the source. ---
+  const retirementByPerson = new Map<Id, ISODate>();
+  const incomeEndOverrides = new Map<Id, ISODate>();
+  for (const event of events) {
     if (event.type === "retire") {
       const existingRetire = retirementByPerson.get(event.personId);
       if (!existingRetire || compareDates(event.startDate, existingRetire) < 0) {
@@ -83,15 +80,12 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           }
         }
       }
-    } else if (event.type === "income_change") {
-      const list = incomeModifiers.get(event.targetIncomeSourceId) ?? [];
-      list.push({
-        startDate: event.startDate,
-        endDate: event.endDate ?? null,
-        multiplier: event.multiplier ?? 0,
-      });
-      incomeModifiers.set(event.targetIncomeSourceId, list);
-    } else if (event.type === "social_security_start") {
+    }
+  }
+
+  const incomeSources: IncomeSource[] = [...scenario.incomeSources];
+  for (const event of events) {
+    if (event.type === "social_security_start") {
       incomeSources.push({
         id: nanoid(),
         name: event.name,
@@ -110,9 +104,10 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   }
 
   for (const src of incomeSources) {
+    if (src.isExcluded) continue;
     const effectiveEnd = incomeEndOverrides.get(src.id) ?? src.endDate;
-    const windows = incomeModifiers.get(src.id) ?? [];
-    const occurrences = expandOccurrences(src.startDate, effectiveEnd, src.frequency, horizonEnd);
+    const windows = src.adjustments ?? [];
+    const occurrences = expandOccurrences(src.startDate, effectiveEnd, src.frequency, horizonEnd, src.intervalYears);
     for (const occ of occurrences) {
       // Every income amount is entered in today's dollars: inflation carries
       // it from the plan start to this source's own start date (today's
@@ -131,7 +126,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       );
       const amount = base * activeMultiplier(windows, occ);
       if (amount === 0) continue;
-      postings.push({
+      pushPosting({
         date: occ,
         yearMonth: occ.slice(0, 7),
         accountId: src.depositAccountId,
@@ -144,23 +139,9 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   }
 
   // --- Expenses: same pattern as income ---
-  const expenses: ExpenseBaseline[] = [...scenario.expenses];
-  const expenseModifiers = new Map<Id, ModifierWindow[]>();
-
-  for (const event of scenario.events) {
-    if (event.type === "expense_change") {
-      const list = expenseModifiers.get(event.targetExpenseId) ?? [];
-      list.push({
-        startDate: event.startDate,
-        endDate: event.endDate ?? null,
-        multiplier: event.multiplier ?? 0,
-      });
-      expenseModifiers.set(event.targetExpenseId, list);
-    }
-  }
-
-  for (const exp of expenses) {
-    const windows = expenseModifiers.get(exp.id) ?? [];
+  for (const exp of scenario.expenses) {
+    if (exp.isExcluded) continue;
+    const windows = exp.adjustments ?? [];
     const occurrences = expandOccurrences(exp.startDate, exp.endDate, exp.frequency, horizonEnd, exp.intervalYears);
     for (const occ of occurrences) {
       // Entered in today's dollars; inflates from plan start to this expense's
@@ -175,7 +156,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       );
       const amount = base * activeMultiplier(windows, occ);
       if (amount === 0) continue;
-      postings.push({
+      pushPosting({
         date: occ,
         yearMonth: occ.slice(0, 7),
         accountId: exp.paymentAccountId,
@@ -193,9 +174,9 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // of the spending account ("contribution_out"), so they cost cash; payroll-
   // deducted ones don't, since take-home income was entered net of them. This is
   // independent of tax treatment (a Roth 401k is payroll-deducted but after-tax).
-  const contributionSpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts);
+  const contributionSpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts, settings.moneyFlow);
   for (const account of scenario.accounts) {
-    if (!account.contribution) continue;
+    if (!account.contribution || account.isExcluded) continue;
     const { amount: baseAmount, frequency, growthRatePct, payrollDeducted, endDate } = account.contribution;
     // Contributions stop the day before the owner's retirement (mirrors how
     // salary is trimmed -- last contribution while still earning). An explicit
@@ -209,7 +190,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       const years = elapsedYears(settings.startDate, occ);
       const amount = growthAdjustedAmount(baseAmount, years, growthRatePct);
       if (amount === 0) continue;
-      postings.push({
+      pushPosting({
         date: occ,
         yearMonth: occ.slice(0, 7),
         accountId: account.id,
@@ -219,7 +200,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         sourceId: `${account.id}:contribution`,
       });
       if (!payrollDeducted && contributionSpendingAccountId && contributionSpendingAccountId !== account.id) {
-        postings.push({
+        pushPosting({
           date: occ,
           yearMonth: occ.slice(0, 7),
           accountId: contributionSpendingAccountId,
@@ -233,7 +214,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   }
 
   // --- Remaining event types: direct postings + dynamically-created accounts ---
-  for (const event of scenario.events) {
+  for (const event of events) {
     if (event.type === "buy_home") {
       // Purchase price and down payment are entered in today's dollars;
       // inflate both by the same factor so the loan-to-value ratio the user
@@ -246,7 +227,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       const purchasePrice = event.purchasePrice * inflationFactor;
       const downPaymentAmount = event.downPaymentAmount * inflationFactor;
 
-      postings.push({
+      pushPosting({
         date: event.startDate,
         yearMonth: event.startDate.slice(0, 7),
         accountId: event.downPaymentFromAccountId,
@@ -270,14 +251,6 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           ownerId: null,
           startingBalance: principal,
           growthRatePct: 0,
-          isExcluded: false,
-          linkedExternally: false,
-          withdrawalPriority: null,
-          isSpendingAccount: false,
-          isSurplusTarget: false,
-          surplusTargetPriority: null,
-          maxBalance: null,
-          maxBalanceGrowthRatePct: null,
           taxTreatment: "n/a",
           subjectToRMD: false,
           loanTerms: {
@@ -297,7 +270,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             annualInterestRatePct: event.mortgage.annualInterestRatePct,
             termMonths: event.mortgage.termMonths,
           },
-          payingAccountId: resolvePrimarySpendingAccountId(scenario.accounts),
+          payingAccountId: resolvePrimarySpendingAccountId(scenario.accounts, settings.moneyFlow),
         });
         linkedLiabilityId = mortgageId;
       }
@@ -311,14 +284,6 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         startingBalance: purchasePrice,
         growthRatePct: event.propertyGrowthRatePct,
         propertyGrowthRatePct: event.propertyGrowthRatePct,
-        isExcluded: false,
-        linkedExternally: false,
-        withdrawalPriority: null,
-        isSpendingAccount: false,
-        isSurplusTarget: false,
-        surplusTargetPriority: null,
-        maxBalance: null,
-        maxBalanceGrowthRatePct: null,
         taxTreatment: "n/a",
         subjectToRMD: false,
         linkedLiabilityId,
@@ -335,7 +300,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           elapsedYears(settings.startDate, occ),
           settings.inflationRatePct
         );
-        postings.push({
+        pushPosting({
           date: occ,
           yearMonth: occ.slice(0, 7),
           accountId: event.paymentAccountId,
@@ -352,7 +317,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           elapsedYears(settings.startDate, event.startDate),
           settings.inflationRatePct
         );
-        postings.push({
+        pushPosting({
           date: event.startDate,
           yearMonth: event.startDate.slice(0, 7),
           accountId: event.paymentAccountId,
@@ -360,29 +325,6 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           category: "expense",
           label: `One-time cost: ${event.name}`,
           sourceId: `${event.id}:onetime`,
-        });
-      }
-    } else if (event.type === "windfall") {
-      const recurEvery = event.isRecurring ? event.intervalYears : undefined;
-      const frequency = event.isRecurring && event.frequency ? event.frequency : "one_time";
-      const occurrences = expandOccurrences(event.startDate, event.endDate ?? null, frequency, horizonEnd, recurEvery);
-      for (const occ of occurrences) {
-        // Entered in today's dollars; inflates from plan start to each
-        // occurrence date (recurring windfalls each reflect the same real
-        // cost/value, growing in nominal terms as they recur further out).
-        const amount = growthAdjustedAmount(
-          event.amount,
-          elapsedYears(settings.startDate, occ),
-          settings.inflationRatePct
-        );
-        postings.push({
-          date: occ,
-          yearMonth: occ.slice(0, 7),
-          accountId: event.depositAccountId,
-          amount,
-          category: amount >= 0 ? "income" : "expense",
-          label: event.name,
-          sourceId: event.id,
         });
       }
     } else if (event.type === "custom_transfer") {
@@ -398,7 +340,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           settings.inflationRatePct,
           event.growthRatePct ?? 0
         );
-        postings.push({
+        pushPosting({
           date: occ,
           yearMonth: occ.slice(0, 7),
           accountId: event.fromAccountId,
@@ -407,7 +349,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           label: event.name,
           sourceId: `${event.id}:from`,
         });
-        postings.push({
+        pushPosting({
           date: occ,
           yearMonth: occ.slice(0, 7),
           accountId: event.toAccountId,

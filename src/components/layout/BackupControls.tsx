@@ -77,7 +77,13 @@ export function BackupControls() {
           ? (parsed as { state: { plan: unknown } }).state.plan
           : parsed;
       const result = importPlan(candidate);
-      setMessage(result.ok ? "Backup restored." : `Import failed: ${result.error}`);
+      setMessage(
+        result.ok
+          ? result.migrated
+            ? "Backup restored (auto-migrated from an older plan format)."
+            : "Backup restored."
+          : `Import failed: ${result.error}`
+      );
     } catch {
       setMessage("Import failed: not a valid JSON file.");
     }

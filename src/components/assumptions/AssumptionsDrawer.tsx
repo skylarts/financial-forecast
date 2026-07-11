@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Person, Scenario, SurplusRoutingRule } from "@/domain";
+import type { Person, Scenario } from "@/domain";
 import { personSchema, forecastSettingsSchema, DEFAULT_WITHDRAWAL_TAX_RATES } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
 import { ErrorBanner } from "@/components/ui/formFields";
@@ -80,18 +80,6 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
 
   const [settingsDraft, setSettingsDraft] = useState(scenario.settings);
   const taxRates = settingsDraft.withdrawalTaxRates ?? DEFAULT_WITHDRAWAL_TAX_RATES;
-
-  const surplusTargets = scenario.accounts.filter((a) => a.isSurplusTarget);
-  const rule = settingsDraft.surplusRoutingRule;
-  const splitFor = (accountId: string) =>
-    rule.mode === "fixed_split" ? rule.splits.find((s) => s.accountId === accountId)?.pct ?? 0 : 0;
-  const setSplit = (accountId: string, pct: number) => {
-    if (rule.mode !== "fixed_split") return;
-    const others = rule.splits.filter((s) => s.accountId !== accountId);
-    const splits = pct > 0 ? [...others, { accountId, pct }] : others;
-    saveSettings({ ...settingsDraft, surplusRoutingRule: { mode: "fixed_split", splits } });
-  };
-  const splitTotal = rule.mode === "fixed_split" ? rule.splits.reduce((s, x) => s + x.pct, 0) : 0;
 
   const saveSettings = (next: typeof settingsDraft) => {
     setSettingsDraft(next);
@@ -187,62 +175,10 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
               </label>
             ))}
           </div>
-          <label className="flex flex-col gap-1 text-xs text-dim">
-            Surplus routing
-            <select
-              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-              value={rule.mode}
-              onChange={(e) => {
-                const mode = e.target.value as SurplusRoutingRule["mode"];
-                // Seed a fixed split with an even share across surplus targets so
-                // the option does something out of the box (previously empty = 0%).
-                const seeded =
-                  surplusTargets.length > 0
-                    ? surplusTargets.map((a) => ({ accountId: a.id, pct: 1 / surplusTargets.length }))
-                    : [];
-                const next: SurplusRoutingRule =
-                  mode === "priority_fill" ? { mode: "priority_fill" } : { mode: "fixed_split", splits: seeded };
-                saveSettings({ ...settingsDraft, surplusRoutingRule: next });
-              }}
-            >
-              <option value="priority_fill">Fill by priority (top-priority target first, then overflow)</option>
-              <option value="fixed_split">Split by fixed percentages</option>
-            </select>
-          </label>
-
-          {rule.mode === "fixed_split" && (
-            <div className="rounded-md border border-border p-3">
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-dim">Split percentages</div>
-              <p className="mb-2 text-xs text-dim">
-                Share of each period&rsquo;s surplus sent to each target. Enter decimals (0.6 = 60%). Anything not
-                allocated stays in your spending account.
-              </p>
-              {surplusTargets.length === 0 ? (
-                <p className="text-xs text-dim">No surplus-target accounts yet. Mark an account as a surplus target first.</p>
-              ) : (
-                <>
-                  {surplusTargets.map((a) => (
-                    <label key={a.id} className="mb-2 flex items-center justify-between gap-2 text-xs text-dim">
-                      <span className="flex-1 truncate text-foreground">{a.name}</span>
-                      <input
-                        className="w-24 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        max="1"
-                        value={splitFor(a.id)}
-                        onChange={(e) => setSplit(a.id, Number(e.target.value))}
-                      />
-                    </label>
-                  ))}
-                  <div className={`text-xs ${Math.abs(splitTotal - 1) < 0.001 ? "text-dim" : "text-negative"}`}>
-                    Total allocated: {(splitTotal * 100).toFixed(0)}%
-                    {Math.abs(splitTotal - 1) >= 0.001 && " (the remainder stays in your spending account)"}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <p className="text-xs text-dim">
+            Spending accounts, surplus routing, and drain order live in the{" "}
+            <span className="font-medium text-foreground">Money Flow</span> tab now, not here.
+          </p>
           <label className="flex flex-col gap-1 text-xs text-dim">
             Horizon end date
             <input

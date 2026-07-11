@@ -13,6 +13,7 @@ import type {
 } from "@/domain";
 import { planSchema } from "@/domain";
 import { mockScenario } from "@/lib/mockScenario";
+import { looksLikeV2Plan, migrateV2PlanToV3 } from "@/lib/migrateV2Plan";
 
 const defaultPlan: Plan = {
   id: "local-plan",
@@ -46,8 +47,12 @@ interface PlanState {
 
   // Backup / restore
   /** Validates `raw` against planSchema before replacing anything -- a bad or
-   * corrupt file can't wipe out the current plan. */
-  importPlan: (raw: unknown) => { ok: true } | { ok: false; error: string };
+   * corrupt file can't wipe out the current plan. A file in the older
+   * (pre-streamlining) shape is auto-migrated first -- see migrateV2Plan --
+   * so restoring an existing real backup doesn't silently drop its
+   * money-flow routing (spending accounts, surplus targets, withdrawal
+   * order) or its income_change/expense_change/windfall events. */
+  importPlan: (raw: unknown) => { ok: true; migrated: boolean } | { ok: false; error: string };
 
   // Accounts
   addAccount: (account: Omit<Account, "id">) => void;
@@ -60,16 +65,16 @@ interface PlanState {
   // Income
   addIncomeSource: (income: Omit<IncomeSource, "id">) => void;
   updateIncomeSource: (id: string, income: Omit<IncomeSource, "id">) => void;
-  /** Returns false (without removing) if an income_change event still targets
-   * this source -- deleting it would leave that event pointing at nothing. */
-  removeIncomeSource: (id: string) => boolean;
+  /** No external entity can reference an income source by id anymore (temporary
+   * adjustments live on the source itself), so deletion always succeeds. */
+  removeIncomeSource: (id: string) => void;
 
   // Expenses
   addExpense: (expense: Omit<ExpenseBaseline, "id">) => void;
   updateExpense: (id: string, expense: Omit<ExpenseBaseline, "id">) => void;
-  /** Returns false (without removing) if an expense_change event still targets
-   * this expense -- deleting it would leave that event pointing at nothing. */
-  removeExpense: (id: string) => boolean;
+  /** No external entity can reference an expense by id anymore (temporary
+   * adjustments live on the expense itself), so deletion always succeeds. */
+  removeExpense: (id: string) => void;
 
   // Events
   addEvent: (event: Omit<ScenarioEvent, "id">) => void;
@@ -174,12 +179,14 @@ export const usePlanStore = create<PlanState>()(
       updateSettings: (settings) => withActiveScenario(set, (s) => ({ ...s, settings })),
 
       importPlan: (raw) => {
-        const result = planSchema.safeParse(raw);
+        const migrated = looksLikeV2Plan(raw);
+        const candidate = migrated ? migrateV2PlanToV3(raw) : raw;
+        const result = planSchema.safeParse(candidate);
         if (!result.success) {
           return { ok: false, error: result.error.issues[0]?.message ?? "That file isn't a valid Forecast backup." };
         }
         set({ plan: result.data, lastSavedAt: Date.now() });
-        return { ok: true };
+        return { ok: true, migrated };
       },
 
       addAccount: (account) =>
@@ -201,7 +208,6 @@ export const usePlanStore = create<PlanState>()(
               case "buy_home":
                 return e.downPaymentFromAccountId === id;
               case "social_security_start":
-              case "windfall":
                 return e.depositAccountId === id;
               case "have_a_kid":
                 return e.paymentAccountId === id;
@@ -214,7 +220,22 @@ export const usePlanStore = create<PlanState>()(
             }
           });
         if (referenced) return false;
-        withActiveScenario(set, (s) => ({ ...s, accounts: s.accounts.filter((a) => a.id !== id) }));
+        withActiveScenario(set, (s) => ({
+          ...s,
+          accounts: s.accounts.filter((a) => a.id !== id),
+          // A deleted account's role in the money-flow waterfall is just
+          // routing metadata, not a hard reference -- drop it from whichever
+          // list it was in rather than blocking the deletion.
+          settings: {
+            ...s.settings,
+            moneyFlow: {
+              ...s.settings.moneyFlow,
+              hubs: s.settings.moneyFlow.hubs.filter((h) => h.accountId !== id),
+              fillOrder: s.settings.moneyFlow.fillOrder.filter((f) => f.accountId !== id),
+              drainOrder: s.settings.moneyFlow.drainOrder.filter((a) => a !== id),
+            },
+          },
+        }));
         return true;
       },
 
@@ -227,15 +248,8 @@ export const usePlanStore = create<PlanState>()(
           incomeSources: s.incomeSources.map((i) => (i.id === id ? { ...income, id } : i)),
         })),
 
-      removeIncomeSource: (id) => {
-        const scenario = get().activeScenario();
-        const referenced = scenario.events.some(
-          (e) => e.type === "income_change" && e.targetIncomeSourceId === id
-        );
-        if (referenced) return false;
-        withActiveScenario(set, (s) => ({ ...s, incomeSources: s.incomeSources.filter((i) => i.id !== id) }));
-        return true;
-      },
+      removeIncomeSource: (id) =>
+        withActiveScenario(set, (s) => ({ ...s, incomeSources: s.incomeSources.filter((i) => i.id !== id) })),
 
       addExpense: (expense) =>
         withActiveScenario(set, (s) => ({ ...s, expenses: [...s.expenses, { ...expense, id: nanoid() }] })),
@@ -246,15 +260,8 @@ export const usePlanStore = create<PlanState>()(
           expenses: s.expenses.map((e) => (e.id === id ? { ...expense, id } : e)),
         })),
 
-      removeExpense: (id) => {
-        const scenario = get().activeScenario();
-        const referenced = scenario.events.some(
-          (e) => e.type === "expense_change" && e.targetExpenseId === id
-        );
-        if (referenced) return false;
-        withActiveScenario(set, (s) => ({ ...s, expenses: s.expenses.filter((e) => e.id !== id) }));
-        return true;
-      },
+      removeExpense: (id) =>
+        withActiveScenario(set, (s) => ({ ...s, expenses: s.expenses.filter((e) => e.id !== id) })),
 
       addEvent: (event) =>
         withActiveScenario(set, (s) => ({ ...s, events: [...s.events, { ...event, id: nanoid() } as ScenarioEvent] })),

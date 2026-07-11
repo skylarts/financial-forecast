@@ -112,7 +112,7 @@
             var writable = await handle.createWritable();
             await writable.write(raw);
             await writable.close();
-            dlNote.textContent = "Saved. (First time: navigate into your forecast-v2 project folder, then the backups subfolder.)";
+            dlNote.textContent = "Saved. (First time: navigate into your forecast-v3 project folder, then the backups subfolder.)";
           } catch (e) {
             if (e && e.name !== "AbortError") dlNote.textContent = "Save cancelled or failed: " + e.message;
           }

@@ -71,6 +71,7 @@ function HomeContent() {
           editableAccountIds={editableAccountIds}
           incomeSources={scenario.incomeSources}
           expenses={scenario.expenses}
+          settings={scenario.settings}
           dollarMode={dollarMode}
         />
       </main>

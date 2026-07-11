@@ -2,23 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import type {
-  Account,
-  EventType,
-  ExpenseBaseline,
-  IncomeSource,
-  Person,
-  RecurrenceFrequency,
-  ScenarioEvent,
-} from "@/domain";
+import type { Account, EventType, Person, RecurrenceFrequency, ScenarioEvent } from "@/domain";
 import {
   retireEventSchema,
-  incomeChangeEventSchema,
-  expenseChangeEventSchema,
   buyHomeEventSchema,
   socialSecurityStartEventSchema,
   haveAKidEventSchema,
-  windfallEventSchema,
   customTransferEventSchema,
   growthRateChangeEventSchema,
 } from "@/domain";
@@ -26,14 +15,15 @@ import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
 
+// income_change / expense_change and windfall are not separate event types
+// here -- a temporary raise/pause/cut lives directly on the income or
+// expense it affects (see the Income & Expenses tab), and a one-time or
+// recurring inflow/outflow is just an Income or Expense entry.
 const EVENT_TEMPLATES: { type: EventType; label: string; hint: string }[] = [
   { type: "retire", label: "Retire", hint: "Stop a person's salary income at a given date" },
-  { type: "income_change", label: "Income change", hint: "Raise, pause, or scale an existing income source for a period" },
-  { type: "expense_change", label: "Expense change", hint: "Scale an existing expense up or down for a period" },
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
   { type: "social_security_start", label: "Social Security", hint: "Start a monthly benefit" },
   { type: "have_a_kid", label: "Have a kid", hint: "Childcare costs + optional one-time cost" },
-  { type: "windfall", label: "Windfall", hint: "One-time or recurring inflow/outflow" },
   { type: "custom_transfer", label: "Custom transfer", hint: "Move money between two of your accounts" },
   { type: "growth_rate_change", label: "Change growth rate", hint: "Shift an account to a new rate of return, e.g. de-risking at retirement" },
 ];
@@ -50,10 +40,9 @@ interface FormValues {
   name: string;
   startDate: string;
   endDate: string;
+  isExcluded: boolean;
   personId: string;
   retirementAge: string;
-  targetId: string;
-  multiplier: string;
   purchasePrice: string;
   downPaymentAmount: string;
   downPaymentFromAccountId: string;
@@ -68,11 +57,6 @@ interface FormValues {
   childcareEndDate: string;
   additionalOneTimeCost: string;
   kidPaymentAccountId: string;
-  windfallAmount: string;
-  windfallDepositAccountId: string;
-  isRecurring: boolean;
-  windfallFrequency: RecurrenceFrequency;
-  windfallIntervalYears: string;
   transferAmount: string;
   fromAccountId: string;
   toAccountId: string;
@@ -87,10 +71,9 @@ const DEFAULTS: FormValues = {
   name: "",
   startDate: "",
   endDate: "",
+  isExcluded: false,
   personId: "",
   retirementAge: "",
-  targetId: "",
-  multiplier: "",
   purchasePrice: "",
   downPaymentAmount: "",
   downPaymentFromAccountId: "",
@@ -105,11 +88,6 @@ const DEFAULTS: FormValues = {
   childcareEndDate: "",
   additionalOneTimeCost: "",
   kidPaymentAccountId: "",
-  windfallAmount: "",
-  windfallDepositAccountId: "",
-  isRecurring: false,
-  windfallFrequency: "annual",
-  windfallIntervalYears: "",
   transferAmount: "",
   fromAccountId: "",
   toAccountId: "",
@@ -121,17 +99,16 @@ const DEFAULTS: FormValues = {
 };
 
 function eventToFormValues(event: ScenarioEvent): FormValues {
-  const base = { ...DEFAULTS, name: event.name, startDate: event.startDate, endDate: event.endDate ?? "" };
+  const base = {
+    ...DEFAULTS,
+    name: event.name,
+    startDate: event.startDate,
+    endDate: event.endDate ?? "",
+    isExcluded: event.isExcluded ?? false,
+  };
   switch (event.type) {
     case "retire":
       return { ...base, personId: event.personId, retirementAge: event.retirementAge?.toString() ?? "" };
-    case "income_change":
-    case "expense_change":
-      return {
-        ...base,
-        targetId: event.type === "income_change" ? event.targetIncomeSourceId : event.targetExpenseId,
-        multiplier: event.multiplier?.toString() ?? "",
-      };
     case "buy_home":
       return {
         ...base,
@@ -159,15 +136,6 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         additionalOneTimeCost: event.additionalOneTimeCost?.toString() ?? "",
         kidPaymentAccountId: event.paymentAccountId,
       };
-    case "windfall":
-      return {
-        ...base,
-        windfallAmount: event.amount.toString(),
-        windfallDepositAccountId: event.depositAccountId,
-        isRecurring: event.isRecurring ?? false,
-        windfallFrequency: event.frequency ?? "annual",
-        windfallIntervalYears: event.intervalYears?.toString() ?? "",
-      };
     case "custom_transfer":
       return {
         ...base,
@@ -193,16 +161,12 @@ export function EventDrawer({
   event,
   accounts,
   people,
-  incomeSources,
-  expenses,
 }: {
   open: boolean;
   onClose: () => void;
   event?: ScenarioEvent;
   accounts: Account[];
   people: Person[];
-  incomeSources: IncomeSource[];
-  expenses: ExpenseBaseline[];
 }) {
   const addEvent = usePlanStore((s) => s.addEvent);
   const updateEvent = usePlanStore((s) => s.updateEvent);
@@ -223,11 +187,15 @@ export function EventDrawer({
   const accountOptions = accounts.map((a) => ({ value: a.id, label: a.name }));
   const personOptions = people.map((p) => ({ value: p.id, label: p.name }));
   const financed = watch("financed");
-  const isRecurring = watch("isRecurring");
 
   const onSubmit = (v: FormValues) => {
     if (!selectedType) return;
-    const base = { name: v.name.trim(), startDate: v.startDate, endDate: v.endDate || undefined };
+    const base = {
+      name: v.name.trim(),
+      startDate: v.startDate,
+      endDate: v.endDate || undefined,
+      isExcluded: v.isExcluded,
+    };
     let candidate: unknown;
     let schema: { safeParse: (x: unknown) => { success: boolean; data?: unknown; error?: { issues: { message: string }[] } } };
 
@@ -235,24 +203,6 @@ export function EventDrawer({
       case "retire":
         candidate = { ...base, type: "retire", personId: v.personId, retirementAge: v.retirementAge ? Number(v.retirementAge) : undefined };
         schema = retireEventSchema.omit({ id: true });
-        break;
-      case "income_change":
-        candidate = {
-          ...base,
-          type: "income_change",
-          targetIncomeSourceId: v.targetId,
-          multiplier: v.multiplier ? Number(v.multiplier) : undefined,
-        };
-        schema = incomeChangeEventSchema.omit({ id: true });
-        break;
-      case "expense_change":
-        candidate = {
-          ...base,
-          type: "expense_change",
-          targetExpenseId: v.targetId,
-          multiplier: v.multiplier ? Number(v.multiplier) : undefined,
-        };
-        schema = expenseChangeEventSchema.omit({ id: true });
         break;
       case "buy_home":
         candidate = {
@@ -289,19 +239,6 @@ export function EventDrawer({
           paymentAccountId: v.kidPaymentAccountId,
         };
         schema = haveAKidEventSchema.omit({ id: true });
-        break;
-      case "windfall":
-        candidate = {
-          ...base,
-          type: "windfall",
-          amount: Number(v.windfallAmount),
-          depositAccountId: v.windfallDepositAccountId,
-          isRecurring: v.isRecurring,
-          frequency: v.isRecurring ? v.windfallFrequency : undefined,
-          intervalYears:
-            v.isRecurring && v.windfallIntervalYears.trim() !== "" ? Number(v.windfallIntervalYears) : undefined,
-        };
-        schema = windfallEventSchema.omit({ id: true });
         break;
       case "custom_transfer":
         if (v.fromAccountId === v.toAccountId) {
@@ -378,31 +315,6 @@ export function EventDrawer({
             </>
           )}
 
-          {(selectedType === "income_change" || selectedType === "expense_change") && (
-            <>
-              <p className="-mt-1 text-xs text-dim">
-                To add a brand-new income source or expense (including one starting on a future date), use
-                &quot;+ Add Income&quot; / &quot;+ Add Expense&quot; on the Income &amp; Expenses tab instead. This event only
-                modifies one that already exists.
-              </p>
-              <Field label={selectedType === "income_change" ? "Target Income Source" : "Target Expense"}>
-                <SelectInput
-                  reg={register("targetId", { required: true })}
-                  options={(selectedType === "income_change" ? incomeSources : expenses).map((x) => ({
-                    value: x.id,
-                    label: x.name,
-                  }))}
-                />
-              </Field>
-              <Field label="Multiplier (e.g. 0 = pause, 0.5 = half, 1.03 = 3% bump)">
-                <TextInput reg={register("multiplier")} type="number" step="0.01" />
-              </Field>
-              <Field label="End Date (leave blank for permanent)">
-                <TextInput reg={register("endDate")} type="date" />
-              </Field>
-            </>
-          )}
-
           {selectedType === "buy_home" && (
             <>
               <Field label="Purchase Price (today's dollars)">
@@ -444,8 +356,8 @@ export function EventDrawer({
                 <TextInput reg={register("monthlyBenefitAmount", { required: true })} type="number" step="0.01" />
               </Field>
               <p className="-mt-1 text-xs text-dim">
-                Enter the future benefit in today's dollars. It's automatically grown to future
-                (nominal) dollars by the COLA below, so Real view shows it back in today's-dollars terms.
+                Enter the future benefit in today&rsquo;s dollars. It&rsquo;s automatically grown to future
+                (nominal) dollars by the COLA below, so Real view shows it back in today&rsquo;s-dollars terms.
               </p>
               <Field label="Annual COLA / growth rate (optional)">
                 <TextInput reg={register("ssGrowthRatePct")} type="number" step="0.001" placeholder="blank = match inflation" />
@@ -477,35 +389,6 @@ export function EventDrawer({
               <Field label="Payment Account">
                 <SelectInput reg={register("kidPaymentAccountId", { required: true })} options={accountOptions} />
               </Field>
-            </>
-          )}
-
-          {selectedType === "windfall" && (
-            <>
-              <Field label="Amount (today's dollars; negative = one-time expense)">
-                <TextInput reg={register("windfallAmount", { required: true })} type="number" step="0.01" />
-              </Field>
-              <p className="-mt-1 text-xs text-dim">
-                Automatically inflated from today to whenever this occurs (each recurrence, if repeating).
-              </p>
-              <Field label="Account">
-                <SelectInput reg={register("windfallDepositAccountId", { required: true })} options={accountOptions} />
-              </Field>
-              <CheckboxInput reg={register("isRecurring")} label="Recurring" />
-              {isRecurring && (
-                <>
-                  <Field label="Frequency">
-                    <SelectInput reg={register("windfallFrequency")} options={FREQUENCIES.filter((f) => f.value !== "one_time")} />
-                  </Field>
-                  <Field label="Or repeat every N years (optional)">
-                    <TextInput reg={register("windfallIntervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
-                  </Field>
-                  <p className="-mt-1 text-xs text-dim">
-                    Set this for something like a car you replace on a cycle. When filled, it repeats every N years from
-                    the start date and overrides the frequency above.
-                  </p>
-                </>
-              )}
             </>
           )}
 
@@ -552,11 +435,13 @@ export function EventDrawer({
                 <TextInput reg={register("growthChangeNewRatePct", { required: true })} type="number" step="0.001" />
               </Field>
               <p className="-mt-1 text-xs text-dim">
-                Replaces this account's growth rate starting on the date above (e.g. shift to a more conservative
+                Replaces this account&rsquo;s growth rate starting on the date above (e.g. shift to a more conservative
                 rate at retirement). Add another one of these events later to change it again.
               </p>
             </>
           )}
+
+          <CheckboxInput reg={register("isExcluded")} label="Excluded (kept for reference, no effect on the projection)" />
 
           <div className="mt-2 flex items-center justify-between gap-2">
             {event ? (

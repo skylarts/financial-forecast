@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account } from "@/domain";
+import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { incomeSourceSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
+import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 
 const CATEGORY_OPTIONS: { value: IncomeCategory; label: string }[] = [
   { value: "salary", label: "Salary" },
@@ -32,8 +33,10 @@ interface FormValues {
   startDate: string;
   endDate: string;
   growthRatePct: number;
+  intervalYears: string;
   depositAccountId: string;
   category: IncomeCategory;
+  isExcluded: boolean;
 }
 
 function toFormValues(income?: IncomeSource): FormValues {
@@ -45,8 +48,10 @@ function toFormValues(income?: IncomeSource): FormValues {
     startDate: income?.startDate ?? "",
     endDate: income?.endDate ?? "",
     growthRatePct: income?.growthRatePct ?? 0,
+    intervalYears: income?.intervalYears?.toString() ?? "",
     depositAccountId: income?.depositAccountId ?? "",
     category: income?.category ?? "salary",
+    isExcluded: income?.isExcluded ?? false,
   };
 }
 
@@ -67,6 +72,10 @@ export function IncomeDrawer({
   const updateIncomeSource = usePlanStore((s) => s.updateIncomeSource);
   const removeIncomeSource = usePlanStore((s) => s.removeIncomeSource);
   const [error, setError] = useState<string | null>(null);
+  const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(income?.adjustments ?? []);
+  const [advancedOpen, setAdvancedOpen] = useState(
+    !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
+  );
 
   const { register, handleSubmit } = useForm<FormValues>({
     defaultValues: toFormValues(income),
@@ -81,8 +90,11 @@ export function IncomeDrawer({
       startDate: values.startDate,
       endDate: values.endDate || null,
       growthRatePct: Number(values.growthRatePct) || 0,
+      intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       depositAccountId: values.depositAccountId,
       category: values.category,
+      adjustments,
+      isExcluded: values.isExcluded,
     };
 
     const result = incomeSourceSchema.omit({ id: true }).safeParse(candidate);
@@ -115,6 +127,9 @@ export function IncomeDrawer({
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
         </Field>
+        <Field label="Or repeat every N years (optional)">
+          <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 10" />
+        </Field>
         <Field label="Category">
           <SelectInput reg={register("category")} options={CATEGORY_OPTIONS} />
         </Field>
@@ -131,17 +146,36 @@ export function IncomeDrawer({
           <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
         </Field>
 
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-dim hover:text-foreground"
+        >
+          <span className="inline-block w-3">{advancedOpen ? "▾" : "▸"}</span>
+          Advanced
+        </button>
+
+        {advancedOpen && (
+          <div className="flex flex-col gap-3 border-l border-border pl-3">
+            <AdjustmentsEditor
+              adjustments={adjustments}
+              onChange={setAdjustments}
+              helpText="A temporary raise, pause, or cut over a date range (e.g. a career break: multiplier 0)."
+            />
+            <CheckboxInput
+              reg={register("isExcluded")}
+              label="Excluded (kept visible for reference, no effect on the projection)"
+            />
+          </div>
+        )}
+
         <div className="mt-2 flex items-center justify-between gap-2">
           {income ? (
             <button
               type="button"
               onClick={() => {
-                const removed = removeIncomeSource(income.id);
-                if (removed) onClose();
-                else
-                  alert(
-                    `Can't delete ${income.name || "this income source"} -- an Income Change event still targets it. Update or delete that event first.`
-                  );
+                removeIncomeSource(income.id);
+                onClose();
               }}
               className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
             >

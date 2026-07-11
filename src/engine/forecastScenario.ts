@@ -8,12 +8,14 @@ import type {
   ProjectionWarning,
   LedgerEvent,
   WithdrawalTaxRates,
+  MoneyFlowStop,
 } from "@/domain";
 import { ageOn, compareDates, eachMonthStart, endOfYear, yearOf } from "./dateMath";
 import { monthlyRateFromAnnual } from "./growth";
 import { rmdDivisor } from "./rmd";
 import { computeMonthlyPayment, amortizeMonth } from "./amortization";
 import { resolveEvents } from "./resolveEvents";
+import { resolvePrimarySpendingAccountId } from "./moneyFlow";
 import type { EngineAccount, MortgageSpec, Posting } from "./types";
 
 interface YearAccumulator {
@@ -83,19 +85,15 @@ function effectiveAnnualRate(account: EngineAccount, month: string): number {
 }
 
 /**
- * The surplus-routing ceiling for an account in a given year. Uncapped accounts
- * return Infinity (they absorb everything). Capped accounts grow their ceiling
- * yearly by `maxBalanceGrowthRatePct`, defaulting to inflation, so the cap keeps
- * pace in real terms over a long horizon.
+ * The surplus-routing ceiling for a fill-order stop in a given year. Uncapped
+ * stops return Infinity (they absorb everything). Capped stops grow their
+ * ceiling yearly by maxBalanceGrowthRatePct, defaulting to inflation, so the
+ * cap keeps pace in real terms over a long horizon.
  */
-function effectiveMaxBalance(
-  account: EngineAccount,
-  yearsSinceStart: number,
-  inflationRatePct: number
-): number {
-  if (account.maxBalance == null) return Infinity;
-  const rate = account.maxBalanceGrowthRatePct ?? inflationRatePct;
-  return account.maxBalance * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
+function effectiveMaxBalance(stop: MoneyFlowStop, yearsSinceStart: number, inflationRatePct: number): number {
+  if (stop.maxBalance == null) return Infinity;
+  const rate = stop.maxBalanceGrowthRatePct ?? inflationRatePct;
+  return stop.maxBalance * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
 }
 
 /**
@@ -133,20 +131,19 @@ function withdrawalTaxRate(account: EngineAccount, rates: WithdrawalTaxRates | u
   }
 }
 
-function resolvePrimarySpendingAccountId(accounts: EngineAccount[]): Id | null {
-  const spending = accounts.find((a) => a.isSpendingAccount);
-  if (spending) return spending.id;
-  const cash = accounts.find((a) => a.class === "cash");
-  return cash ? cash.id : null;
-}
-
 export function forecastScenario(scenario: Scenario): ProjectionResult {
   const { settings } = scenario;
+  const moneyFlow = settings.moneyFlow;
   const taxRates = settings.withdrawalTaxRates;
   const resolved = resolveEvents(scenario);
   const accounts = resolved.accounts;
   const accountIds = accounts.map((a) => a.id);
   const accountById = new Map(accounts.map((a) => [a.id, a]));
+  // Excluded accounts stay in the resolved list (so the UI can still render
+  // them as a static line) but are skipped everywhere in the simulation: no
+  // growth, no postings, no RMDs, no routing, no totals. Their balance simply
+  // freezes at startingBalance once set.
+  const activeAccounts = accounts.filter((a) => !a.isExcluded);
 
   const postingsByMonth = new Map<string, Posting[]>();
   for (const p of resolved.postings) {
@@ -165,14 +162,26 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
   }
   const mortgageByAccountId = new Map<Id, MortgageSpec>(resolved.mortgages.map((m) => [m.accountId, m]));
 
-  const cascadeSources = accounts
-    .filter((a) => a.withdrawalPriority !== null && a.category === "asset")
-    .sort((a, b) => (a.withdrawalPriority ?? 0) - (b.withdrawalPriority ?? 0));
-  const surplusTargets = accounts
-    .filter((a) => a.isSurplusTarget)
-    .sort((a, b) => (a.surplusTargetPriority ?? 0) - (b.surplusTargetPriority ?? 0));
-  const spendingAccounts = accounts.filter((a) => a.isSpendingAccount);
-  const primarySpendingAccountId = resolvePrimarySpendingAccountId(accounts);
+  // Resolve the money-flow waterfall against the actual (active) accounts:
+  // hubs are the spending accounts (each with its own buffer), fillOrder is
+  // the ordered surplus-target chain, drainOrder is the ordered deficit
+  // cascade. List order IS the priority -- no numeric priority fields anymore.
+  const spendingHubs = moneyFlow.hubs
+    .map((hub) => {
+      const account = accountById.get(hub.accountId);
+      return account && !account.isExcluded ? { account, hub } : null;
+    })
+    .filter((x): x is { account: EngineAccount; hub: (typeof moneyFlow.hubs)[number] } => x !== null);
+  const fillStops = moneyFlow.fillOrder
+    .map((stop) => {
+      const account = accountById.get(stop.accountId);
+      return account && !account.isExcluded ? { account, stop } : null;
+    })
+    .filter((x): x is { account: EngineAccount; stop: MoneyFlowStop } => x !== null);
+  const cascadeSources = moneyFlow.drainOrder
+    .map((id) => accountById.get(id))
+    .filter((a): a is EngineAccount => !!a && a.category === "asset" && !a.isExcluded);
+  const primarySpendingAccountId = resolvePrimarySpendingAccountId(activeAccounts, moneyFlow);
 
   const balances = new Map<Id, number>(accounts.map((a) => [a.id, 0]));
   const priorYearEndBalances = new Map<Id, number>();
@@ -219,7 +228,9 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
     const isJanuary = month.endsWith("-01-01");
 
     // 1. Growth (skipped in an account's creation month -- mirrors the
-    //    proven prior engine's "no interest on day one" rule).
+    //    proven prior engine's "no interest on day one" rule -- and skipped
+    //    entirely for excluded accounts, which stay frozen at their starting
+    //    balance once set).
     for (const account of accounts) {
       if (compareDates(month, account.effectiveStartDate) < 0) continue;
       const isCreationMonth = month.slice(0, 7) === account.effectiveStartDate.slice(0, 7);
@@ -231,6 +242,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         yearStartBalances.set(account.id, account.startingBalance);
         continue;
       }
+      if (account.isExcluded) continue;
       if (account.class === "credit_card" || account.class === "loan" || account.class === "mortgage") continue;
       const rate = monthlyRateFromAnnual(effectiveAnnualRate(account, month));
       if (!rate) continue;
@@ -239,9 +251,12 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
       acc.rollforward.get(account.id)!.growth += growthAmount;
     }
 
-    // 2. Scheduled cashflows for this month.
+    // 2. Scheduled cashflows for this month. (resolveEvents already omits
+    //    postings targeting an excluded account; this check is a cheap backstop.)
     for (const posting of postingsByMonth.get(yearMonth) ?? []) {
-      if (compareDates(month, (accountById.get(posting.accountId)?.effectiveStartDate ?? month)) < 0) continue;
+      const targetAccount = accountById.get(posting.accountId);
+      if (targetAccount?.isExcluded) continue;
+      if (compareDates(month, (targetAccount?.effectiveStartDate ?? month)) < 0) continue;
       balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) + posting.amount);
       const bucket = acc.rollforward.get(posting.accountId);
       if (bucket) {
@@ -275,6 +290,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
 
     // 3. Amortize mortgages/loans.
     for (const account of accounts) {
+      if (account.isExcluded) continue;
       if (account.class !== "mortgage" && account.class !== "loan") continue;
       if (compareDates(month, account.effectiveStartDate) < 0) continue;
       if (month.slice(0, 7) === account.effectiveStartDate.slice(0, 7)) continue; // originates this month, first payment next month
@@ -308,7 +324,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
     if (isJanuary) {
       const year = yearOf(month);
       for (const account of accounts) {
-        if (!account.subjectToRMD || !account.ownerId) continue;
+        if (account.isExcluded || !account.subjectToRMD || !account.ownerId) continue;
         if (compareDates(month, account.effectiveStartDate) < 0) continue;
         const owner = scenario.household.people.find((p) => p.id === account.ownerId);
         if (!owner) continue;
@@ -339,32 +355,32 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
       }
     }
 
-    // 5. Surplus routing. Each target has an optional maxBalance ceiling (grown
-    //    yearly for inflation); a target is filled only up to its ceiling and the
-    //    overflow spills to the next-priority target. Uncapped targets absorb
-    //    everything (Infinity room), matching the legacy behavior.
+    // 5. Surplus routing. Each hub keeps a buffer before sweeping; each fill
+    //    stop has an optional maxBalance ceiling (grown yearly for inflation);
+    //    a stop is filled only up to its ceiling and the overflow spills to
+    //    the next stop in list order. Uncapped stops absorb everything
+    //    (Infinity room), matching the legacy behavior.
     const yearsSinceStart = currentYear - yearOf(settings.startDate);
     const inflationFactor = Math.pow(1 + settings.inflationRatePct, Math.max(0, yearsSinceStart));
-    for (const spender of spendingAccounts) {
+    for (const { account: spender, hub } of spendingHubs) {
       const balance = balances.get(spender.id) ?? 0;
       // Keep a cash buffer in the spending account (grown for inflation) and
       // only sweep what's above it -- prevents zeroing out checking each month
       // and the resulting sweep/withdraw churn.
-      const buffer = (spender.targetCashBalance ?? 0) * inflationFactor;
+      const buffer = (hub.bufferAmount ?? 0) * inflationFactor;
       let remaining = balance - buffer;
       if (remaining <= 0) continue;
       // Fixed-split percentages apply to the whole sweepable surplus, not the
       // running remainder, so each target's share is independent of order.
       const splitBase = remaining;
-      for (const target of surplusTargets) {
+      for (const { account: target, stop } of fillStops) {
         if (remaining <= 0) break;
         if (target.id === spender.id) continue;
-        const cap = effectiveMaxBalance(target, yearsSinceStart, settings.inflationRatePct);
+        const cap = effectiveMaxBalance(stop, yearsSinceStart, settings.inflationRatePct);
         const room = cap - (balances.get(target.id) ?? 0);
         if (room <= 0) continue; // target already at/over its ceiling -- spill onward
-        const requested = scenario.settings.surplusRoutingRule.mode === "fixed_split"
-          ? splitBase * (scenario.settings.surplusRoutingRule.splits.find((s) => s.accountId === target.id)?.pct ?? 0)
-          : remaining; // priority_fill: this target takes all it can hold
+        const requested =
+          moneyFlow.splitMode === "fixed_split" ? splitBase * (stop.splitPct ?? 0) : remaining; // priority_fill: this target takes all it can hold
         const take = Math.min(requested, room, remaining);
         if (take <= 0) continue;
         balances.set(spender.id, (balances.get(spender.id) ?? 0) - take);
@@ -377,31 +393,32 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
       }
     }
 
-    // 5b. Cap overflow. The sweep above only governs money entering a target
-    //     from a spending account. Money that lands in a capped target another
-    //     way -- a custom transfer, income deposited straight into it, or the
-    //     account's own growth -- can push it above its ceiling. Spill any such
-    //     excess down the priority chain so the cap holds no matter how the
-    //     money arrived. This is a rebalance between savings buckets, so it is
-    //     recorded in the rollforward (to keep balances reconciled) but not in
-    //     the surplus-routed headline, which tracks routed income only.
-    for (let ti = 0; ti < surplusTargets.length; ti++) {
-      const over = surplusTargets[ti];
-      const overCap = effectiveMaxBalance(over, yearsSinceStart, settings.inflationRatePct);
-      let excess = (balances.get(over.id) ?? 0) - overCap;
+    // 5b. Cap overflow. The sweep above only catches money entering a target
+    //     from a spending account. A target can also exceed its cap via a
+    //     custom transfer landing on it directly, income deposited straight
+    //     into it, or its own organic growth. So: for every fill stop
+    //     currently above its cap, walk later stops in list order and push
+    //     the excess down the chain, landing wherever there's room. This is a
+    //     rebalance between the user's own accounts, so it's recorded in
+    //     rollforwards (balances must still reconcile) but explicitly NOT
+    //     counted in the surplusRouted headline, which tracks routed income only.
+    for (let ti = 0; ti < fillStops.length; ti++) {
+      const over = fillStops[ti];
+      const overCap = effectiveMaxBalance(over.stop, yearsSinceStart, settings.inflationRatePct);
+      let excess = (balances.get(over.account.id) ?? 0) - overCap;
       if (excess <= 0.005) continue;
-      for (let tj = ti + 1; tj < surplusTargets.length && excess > 0.005; tj++) {
-        const dest = surplusTargets[tj];
-        const destCap = effectiveMaxBalance(dest, yearsSinceStart, settings.inflationRatePct);
-        const room = destCap - (balances.get(dest.id) ?? 0);
+      for (let tj = ti + 1; tj < fillStops.length && excess > 0.005; tj++) {
+        const dest = fillStops[tj];
+        const destCap = effectiveMaxBalance(dest.stop, yearsSinceStart, settings.inflationRatePct);
+        const room = destCap - (balances.get(dest.account.id) ?? 0);
         if (room <= 0) continue; // next target also full -- keep spilling onward
         const move = Math.min(excess, room);
-        balances.set(over.id, (balances.get(over.id) ?? 0) - move);
-        balances.set(dest.id, (balances.get(dest.id) ?? 0) + move);
-        acc.rollforward.get(over.id)!.withdrawals += move;
-        acc.rollforward.get(dest.id)!.deposits += move;
+        balances.set(over.account.id, (balances.get(over.account.id) ?? 0) - move);
+        balances.set(dest.account.id, (balances.get(dest.account.id) ?? 0) + move);
+        acc.rollforward.get(over.account.id)!.withdrawals += move;
+        acc.rollforward.get(dest.account.id)!.deposits += move;
         // Overflowing out of a taxable account is still a sale -- tax it.
-        realizeWithdrawalTax(over.id, move);
+        realizeWithdrawalTax(over.account.id, move);
         excess -= move;
       }
       // Any excess still left here had nowhere to go (every downstream target is
@@ -410,7 +427,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
     }
 
     // 6. Deficit cascade.
-    for (const spender of spendingAccounts) {
+    for (const { account: spender } of spendingHubs) {
       let shortfall = -(balances.get(spender.id) ?? 0);
       if (shortfall <= 0) continue;
       for (const source of cascadeSources) {
@@ -446,10 +463,10 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
       }
     }
 
-    // 7. Warnings -- any asset account still negative after the above.
+    // 7. Warnings -- any (non-excluded) asset account still negative after the above.
     const year = yearOf(month);
     for (const account of accounts) {
-      if (account.category !== "asset") continue;
+      if (account.isExcluded || account.category !== "asset") continue;
       const balance = balances.get(account.id) ?? 0;
       if (balance >= -0.005) continue;
       const key = `${year}:${account.id}`;
@@ -483,17 +500,18 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         };
       });
 
-      const totalAssetsNominal = accounts
+      // Excluded accounts don't count toward net worth, KPIs, or subtotals.
+      const totalAssetsNominal = activeAccounts
         .filter((a) => a.category === "asset")
         .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
-      const totalLiabilitiesNominal = accounts
+      const totalLiabilitiesNominal = activeAccounts
         .filter((a) => a.category === "liability")
         .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
       const netWorthNominal = totalAssetsNominal - totalLiabilitiesNominal;
       const cumulativeInflation = Math.pow(1 + settings.inflationRatePct, currentYear - yearOf(settings.startDate));
       const netWorthReal = netWorthNominal / cumulativeInflation;
 
-      const endingCashBalance = accounts
+      const endingCashBalance = activeAccounts
         .filter((a) => a.class === "cash")
         .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
 
@@ -558,7 +576,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
   }
 
   const retireEvents = scenario.events
-    .filter((e) => e.type === "retire")
+    .filter((e) => e.type === "retire" && !e.isExcluded)
     .sort((a, b) => compareDates(a.startDate, b.startDate));
   const firstRetire = retireEvents[0];
   let netWorthAtRetirement: number | null = null;
@@ -573,7 +591,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
     retirementAge = person ? ageOn(person.birthDate, firstRetire.startDate) : null;
   }
 
-  const unlinkedMortgages = accounts.filter((a) => a.class === "mortgage" && !a.loanTerms?.linkedAssetId);
+  const unlinkedMortgages = activeAccounts.filter((a) => a.class === "mortgage" && !a.loanTerms?.linkedAssetId);
   for (const m of unlinkedMortgages) {
     warnings.unshift({ year: yearOf(m.effectiveStartDate), kind: "unlinked_mortgage", accountId: m.id, message: `${m.name} has no linked real estate asset.` });
   }

@@ -1,38 +1,58 @@
 import { nanoid } from "nanoid";
-import type { Account, AccountClass, Scenario, ScenarioEvent, IncomeSource, ExpenseBaseline } from "@/domain";
+import type { Account, AccountClass, Scenario, ScenarioEvent, IncomeSource, ExpenseBaseline, MoneyFlow } from "@/domain";
 
-const defaultGrowthByClass: Record<AccountClass, number> = {
-  cash: 0,
-  taxable_investment: 0,
-  tax_deferred: 0,
-  tax_free: 0,
-  real_estate: 0,
-  other_asset: 0,
-  credit_card: 0,
-  loan: 0,
-  mortgage: 0,
-};
+/**
+ * Legacy-shaped convenience hints for building a test account's cash-flow
+ * role. These fields no longer exist on Account (see settings.moneyFlow) --
+ * makeAccount/makeScenario translate them into the real moneyFlow shape so
+ * the many existing engine tests didn't need a mechanical rewrite when the
+ * routing model moved off the account object.
+ */
+interface MoneyFlowHints {
+  isSpendingAccount?: boolean;
+  targetCashBalance?: number | null;
+  withdrawalPriority?: number | null;
+  isSurplusTarget?: boolean;
+  surplusTargetPriority?: number | null;
+  maxBalance?: number | null;
+  maxBalanceGrowthRatePct?: number | null;
+}
 
-export function makeAccount(overrides: Partial<Account> & { class: AccountClass }): Account {
+export type TestAccount = Account & MoneyFlowHints;
+
+export function makeAccount(overrides: Partial<Account> & MoneyFlowHints & { class: AccountClass }): TestAccount {
   const category = overrides.category ?? (["credit_card", "loan", "mortgage"].includes(overrides.class) ? "liability" : "asset");
-  return {
+  const {
+    isSpendingAccount,
+    targetCashBalance,
+    withdrawalPriority,
+    isSurplusTarget,
+    surplusTargetPriority,
+    maxBalance,
+    maxBalanceGrowthRatePct,
+    ...accountOverrides
+  } = overrides;
+  const account: Account = {
     id: nanoid(),
     name: "Account",
     ownerId: null,
     startingBalance: 0,
     growthRatePct: 0,
     isExcluded: false,
-    linkedExternally: false,
-    withdrawalPriority: null,
-    isSpendingAccount: false,
-    isSurplusTarget: false,
-    surplusTargetPriority: null,
-    maxBalance: null,
-    maxBalanceGrowthRatePct: null,
     taxTreatment: "n/a",
     subjectToRMD: false,
-    ...overrides,
+    ...accountOverrides,
     category,
+  };
+  return {
+    ...account,
+    isSpendingAccount,
+    targetCashBalance,
+    withdrawalPriority,
+    isSurplusTarget,
+    surplusTargetPriority,
+    maxBalance,
+    maxBalanceGrowthRatePct,
   };
 }
 
@@ -65,8 +85,52 @@ export function makeExpense(overrides: Partial<ExpenseBaseline> & { paymentAccou
   };
 }
 
+/** Derives settings.moneyFlow from the legacy per-account hints on `accounts`. */
+function deriveMoneyFlow(
+  accounts: TestAccount[],
+  surplusRoutingRule?: { mode: "priority_fill" } | { mode: "fixed_split"; splits: { accountId: string; pct: number }[] }
+): MoneyFlow {
+  const hubs = accounts
+    .filter((a) => a.isSpendingAccount)
+    .map((a) => ({ accountId: a.id, bufferAmount: a.targetCashBalance ?? null }));
+  const fillOrder = accounts
+    .filter((a) => a.isSurplusTarget)
+    .sort((a, b) => (a.surplusTargetPriority ?? 0) - (b.surplusTargetPriority ?? 0))
+    .map((a) => ({
+      accountId: a.id,
+      maxBalance: a.maxBalance ?? null,
+      maxBalanceGrowthRatePct: a.maxBalanceGrowthRatePct ?? null,
+      splitPct:
+        surplusRoutingRule?.mode === "fixed_split"
+          ? surplusRoutingRule.splits.find((s) => s.accountId === a.id)?.pct ?? null
+          : null,
+    }));
+  const drainOrder = accounts
+    .filter((a) => a.withdrawalPriority != null)
+    .sort((a, b) => (a.withdrawalPriority as number) - (b.withdrawalPriority as number))
+    .map((a) => a.id);
+  return { hubs, fillOrder, drainOrder, splitMode: surplusRoutingRule?.mode ?? "priority_fill" };
+}
+
+const MONEY_FLOW_HINT_KEYS = [
+  "isSpendingAccount",
+  "targetCashBalance",
+  "withdrawalPriority",
+  "isSurplusTarget",
+  "surplusTargetPriority",
+  "maxBalance",
+  "maxBalanceGrowthRatePct",
+] as const satisfies readonly (keyof MoneyFlowHints)[];
+
+/** Strips the test-only money-flow hints back off, leaving a real Account. */
+function cleanAccount(a: TestAccount): Account {
+  const account = { ...a };
+  for (const key of MONEY_FLOW_HINT_KEYS) delete account[key];
+  return account;
+}
+
 export function makeScenario(overrides: {
-  accounts: Account[];
+  accounts: TestAccount[];
   incomeSources?: IncomeSource[];
   expenses?: ExpenseBaseline[];
   events?: ScenarioEvent[];
@@ -75,13 +139,14 @@ export function makeScenario(overrides: {
   inflationRatePct?: number;
   people?: Scenario["household"]["people"];
   withdrawalTaxRates?: Scenario["settings"]["withdrawalTaxRates"];
-  surplusRoutingRule?: Scenario["settings"]["surplusRoutingRule"];
+  surplusRoutingRule?: { mode: "priority_fill" } | { mode: "fixed_split"; splits: { accountId: string; pct: number }[] };
+  moneyFlow?: MoneyFlow;
 }): Scenario {
   return {
     id: nanoid(),
     name: "Test Scenario",
     household: { people: overrides.people ?? [{ id: nanoid(), name: "Test Person", birthDate: "1960-01-01", retirementAge: 65, planningEndAge: 95 }] },
-    accounts: overrides.accounts,
+    accounts: overrides.accounts.map(cleanAccount),
     incomeSources: overrides.incomeSources ?? [],
     expenses: overrides.expenses ?? [],
     events: overrides.events ?? [],
@@ -89,8 +154,7 @@ export function makeScenario(overrides: {
       startDate: overrides.startDate ?? "2026-01-01",
       horizonEndDate: overrides.horizonEndDate ?? "2026-12-31",
       inflationRatePct: overrides.inflationRatePct ?? 0,
-      defaultGrowthByClass,
-      surplusRoutingRule: overrides.surplusRoutingRule ?? { mode: "priority_fill" },
+      moneyFlow: overrides.moneyFlow ?? deriveMoneyFlow(overrides.accounts, overrides.surplusRoutingRule),
       rmdEnabled: true,
       // Untaxed by default so existing tests stay deterministic; opt in per test.
       withdrawalTaxRates: overrides.withdrawalTaxRates ?? { taxDeferredPct: 0, taxablePct: 0, taxFreePct: 0 },

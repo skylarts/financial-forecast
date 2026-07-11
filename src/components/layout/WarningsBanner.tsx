@@ -6,8 +6,6 @@ import type { Account, ProjectionWarning } from "@/domain";
 const KIND_LABELS: Record<ProjectionWarning["kind"], string> = {
   insufficient_funds: "Insufficient funds",
   unlinked_mortgage: "Unlinked mortgage",
-  balance_update_required: "Balance update required",
-  other: "Warning",
 };
 
 export function WarningsBanner({ warnings, accounts }: { warnings: ProjectionWarning[]; accounts: Account[] }) {
