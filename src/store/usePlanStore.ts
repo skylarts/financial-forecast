@@ -207,8 +207,6 @@ export const usePlanStore = create<PlanState>()(
             switch (e.type) {
               case "buy_home":
                 return e.downPaymentFromAccountId === id;
-              case "social_security_start":
-                return e.depositAccountId === id;
               case "have_a_kid":
                 return e.paymentAccountId === id;
               case "custom_transfer":

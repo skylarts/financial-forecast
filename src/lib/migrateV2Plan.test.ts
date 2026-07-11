@@ -7,7 +7,8 @@ import { looksLikeV2Plan, migrateV2PlanToV3 } from "./migrateV2Plan";
  * Synthetic v2-shaped plan (fictional data, not derived from any real backup)
  * exercising every structural difference the migration needs to handle:
  * per-account routing fields, a fixed_split surplusRoutingRule, and all
- * three folded event types (income_change, expense_change, windfall).
+ * four folded event types (income_change, expense_change, windfall,
+ * social_security_start).
  */
 function v2Plan() {
   return {
@@ -137,6 +138,15 @@ function v2Plan() {
             amount: -3_000,
             depositAccountId: "checking",
           },
+          {
+            id: "ss-start",
+            type: "social_security_start",
+            name: "Social Security",
+            startDate: "2026-05-01",
+            personId: "person-1",
+            monthlyBenefitAmount: 2_200,
+            depositAccountId: "checking",
+          },
         ],
         settings: {
           startDate: "2026-01-01",
@@ -215,7 +225,19 @@ describe("migrateV2PlanToV3", () => {
     expect(carRepair.paymentAccountId).toBe("checking");
   });
 
-  it("removes all three folded event types, keeping nothing else changed", () => {
+  it("converts social_security_start into an income source with category social_security", () => {
+    const ss = scenario.incomeSources.find((i: { id: string }) => i.id === "ss-start");
+    expect(ss).toBeDefined();
+    expect(ss.category).toBe("social_security");
+    expect(ss.ownerId).toBe("person-1");
+    expect(ss.amount).toBe(2_200);
+    expect(ss.frequency).toBe("monthly");
+    expect(ss.depositAccountId).toBe("checking");
+    // No explicit growthRatePct on the old event -> falls back to the plan's inflation rate.
+    expect(ss.growthRatePct).toBe(0.03);
+  });
+
+  it("removes all four folded event types, keeping nothing else changed", () => {
     expect(scenario.events).toHaveLength(0);
   });
 

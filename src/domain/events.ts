@@ -40,18 +40,6 @@ export const buyHomeEventSchema = z.object({
 });
 export type BuyHomeEvent = z.infer<typeof buyHomeEventSchema>;
 
-export const socialSecurityStartEventSchema = z.object({
-  ...baseEventFields,
-  type: z.literal("social_security_start"),
-  personId: idSchema,
-  /** Today's dollars; grown each year by `growthRatePct` as a COLA. */
-  monthlyBenefitAmount: z.number().nonnegative(),
-  /** Annual COLA; defaults to the global inflation rate when unset. */
-  growthRatePct: z.number().optional(),
-  depositAccountId: idSchema,
-});
-export type SocialSecurityStartEvent = z.infer<typeof socialSecurityStartEventSchema>;
-
 export const haveAKidEventSchema = z.object({
   ...baseEventFields,
   type: z.literal("have_a_kid"),
@@ -88,7 +76,6 @@ export const scenarioEventSchema = z
   .discriminatedUnion("type", [
     retireEventSchema,
     buyHomeEventSchema,
-    socialSecurityStartEventSchema,
     haveAKidEventSchema,
     customTransferEventSchema,
     growthRateChangeEventSchema,

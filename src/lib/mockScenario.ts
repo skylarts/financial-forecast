@@ -138,6 +138,33 @@ export const mockScenario: Scenario = {
       category: "other",
       ownerId: null,
     },
+    // Social Security isn't a separate event type -- it's a plain Income
+    // entry with category "social_security" (that category is what triggers
+    // the once-per-year, not continuous, COLA compounding in the engine).
+    {
+      id: nanoid(),
+      name: "Alex Social Security",
+      ownerId: alexId,
+      amount: 2_800,
+      frequency: "monthly",
+      startDate: "2057-05-15",
+      endDate: null,
+      growthRatePct: 0.03, // COLA tracks inflation
+      depositAccountId: checkingId,
+      category: "social_security",
+    },
+    {
+      id: nanoid(),
+      name: "Jordan Social Security",
+      ownerId: jordanId,
+      amount: 2_400,
+      frequency: "monthly",
+      startDate: "2059-09-22",
+      endDate: null,
+      growthRatePct: 0.03, // COLA tracks inflation
+      depositAccountId: checkingId,
+      category: "social_security",
+    },
   ],
   expenses: [
     {
@@ -204,24 +231,6 @@ export const mockScenario: Scenario = {
       startDate: "2055-09-22",
       personId: jordanId,
       retirementAge: 63,
-    },
-    {
-      id: nanoid(),
-      type: "social_security_start",
-      name: "Alex Social Security",
-      startDate: "2057-05-15",
-      personId: alexId,
-      monthlyBenefitAmount: 2_800,
-      depositAccountId: checkingId,
-    },
-    {
-      id: nanoid(),
-      type: "social_security_start",
-      name: "Jordan Social Security",
-      startDate: "2059-09-22",
-      personId: jordanId,
-      monthlyBenefitAmount: 2_400,
-      depositAccountId: checkingId,
     },
   ],
   settings: {

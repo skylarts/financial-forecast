@@ -6,7 +6,6 @@ import type { Account, EventType, Person, RecurrenceFrequency, ScenarioEvent } f
 import {
   retireEventSchema,
   buyHomeEventSchema,
-  socialSecurityStartEventSchema,
   haveAKidEventSchema,
   customTransferEventSchema,
   growthRateChangeEventSchema,
@@ -17,12 +16,14 @@ import { usePlanStore } from "@/store/usePlanStore";
 
 // income_change / expense_change and windfall are not separate event types
 // here -- a temporary raise/pause/cut lives directly on the income or
-// expense it affects (see the Income & Expenses tab), and a one-time or
-// recurring inflow/outflow is just an Income or Expense entry.
+// expense it affects, and a one-time or recurring inflow/outflow is just an
+// Income or Expense entry. Social Security is the same story: it's a plain
+// Income entry with category "social_security" (that category is what
+// triggers the once-per-year COLA compounding in the engine), entered via
+// "+ Income" on the Timeline tab, not here.
 const EVENT_TEMPLATES: { type: EventType; label: string; hint: string }[] = [
   { type: "retire", label: "Retire", hint: "Stop a person's salary income at a given date" },
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
-  { type: "social_security_start", label: "Social Security", hint: "Start a monthly benefit" },
   { type: "have_a_kid", label: "Have a kid", hint: "Childcare costs + optional one-time cost" },
   { type: "custom_transfer", label: "Custom transfer", hint: "Move money between two of your accounts" },
   { type: "growth_rate_change", label: "Change growth rate", hint: "Shift an account to a new rate of return, e.g. de-risking at retirement" },
@@ -50,9 +51,6 @@ interface FormValues {
   financed: boolean;
   mortgageRate: string;
   mortgageTermMonths: string;
-  monthlyBenefitAmount: string;
-  ssGrowthRatePct: string;
-  ssDepositAccountId: string;
   childcareMonthlyExpense: string;
   childcareEndDate: string;
   additionalOneTimeCost: string;
@@ -81,9 +79,6 @@ const DEFAULTS: FormValues = {
   financed: true,
   mortgageRate: "0.06",
   mortgageTermMonths: "360",
-  monthlyBenefitAmount: "",
-  ssGrowthRatePct: "",
-  ssDepositAccountId: "",
   childcareMonthlyExpense: "",
   childcareEndDate: "",
   additionalOneTimeCost: "",
@@ -119,14 +114,6 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         financed: event.mortgage !== null,
         mortgageRate: event.mortgage?.annualInterestRatePct.toString() ?? "0.06",
         mortgageTermMonths: event.mortgage?.termMonths.toString() ?? "360",
-      };
-    case "social_security_start":
-      return {
-        ...base,
-        personId: event.personId,
-        monthlyBenefitAmount: event.monthlyBenefitAmount.toString(),
-        ssGrowthRatePct: event.growthRatePct?.toString() ?? "",
-        ssDepositAccountId: event.depositAccountId,
       };
     case "have_a_kid":
       return {
@@ -217,17 +204,6 @@ export function EventDrawer({
             : null,
         };
         schema = buyHomeEventSchema.omit({ id: true });
-        break;
-      case "social_security_start":
-        candidate = {
-          ...base,
-          type: "social_security_start",
-          personId: v.personId,
-          monthlyBenefitAmount: Number(v.monthlyBenefitAmount),
-          growthRatePct: v.ssGrowthRatePct.trim() !== "" ? Number(v.ssGrowthRatePct) : undefined,
-          depositAccountId: v.ssDepositAccountId,
-        };
-        schema = socialSecurityStartEventSchema.omit({ id: true });
         break;
       case "have_a_kid":
         candidate = {
@@ -344,31 +320,6 @@ export function EventDrawer({
                   </Field>
                 </>
               )}
-            </>
-          )}
-
-          {selectedType === "social_security_start" && (
-            <>
-              <Field label="Person">
-                <SelectInput reg={register("personId")} options={personOptions} />
-              </Field>
-              <Field label="Monthly Benefit (today's dollars)">
-                <TextInput reg={register("monthlyBenefitAmount", { required: true })} type="number" step="0.01" />
-              </Field>
-              <p className="-mt-1 text-xs text-dim">
-                Enter the future benefit in today&rsquo;s dollars. It&rsquo;s automatically grown to future
-                (nominal) dollars by the COLA below, so Real view shows it back in today&rsquo;s-dollars terms.
-              </p>
-              <Field label="Annual COLA / growth rate (optional)">
-                <TextInput reg={register("ssGrowthRatePct")} type="number" step="0.001" placeholder="blank = match inflation" />
-              </Field>
-              <p className="-mt-1 text-xs text-dim">
-                How the benefit grows each year. Leave blank to track your inflation assumption (the usual
-                cost-of-living adjustment); enter a rate like 0.02 to model a smaller COLA.
-              </p>
-              <Field label="Deposit Account">
-                <SelectInput reg={register("ssDepositAccountId", { required: true })} options={accountOptions} />
-              </Field>
             </>
           )}
 

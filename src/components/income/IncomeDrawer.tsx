@@ -77,9 +77,10 @@ export function IncomeDrawer({
     !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
   );
 
-  const { register, handleSubmit } = useForm<FormValues>({
+  const { register, handleSubmit, watch } = useForm<FormValues>({
     defaultValues: toFormValues(income),
   });
+  const category = watch("category");
 
   const onSubmit = (values: FormValues) => {
     const candidate = {
@@ -145,6 +146,13 @@ export function IncomeDrawer({
         <Field label="Annual Growth Rate (actual, e.g. 0.05 for 5%/yr raises incl. inflation)">
           <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
         </Field>
+        {category === "social_security" && (
+          <p className="-mt-1 text-xs text-dim">
+            This grows once per year (a COLA), not continuously like a paycheck. Enter your inflation assumption
+            (e.g. 0.03) to keep the benefit flat in today&rsquo;s-dollars terms, or a smaller rate to model a
+            reduced COLA.
+          </p>
+        )}
 
         <button
           type="button"

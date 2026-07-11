@@ -21,9 +21,6 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
           event.mortgage ? " (financed)" : " (cash)"
         }`;
         break;
-      case "social_security_start":
-        description = `${personName(event.personId)} starts Social Security ($${event.monthlyBenefitAmount.toLocaleString()}/mo)`;
-        break;
       case "have_a_kid":
         description = `New dependent — childcare $${event.childcareMonthlyExpense.toLocaleString()}/mo`;
         break;

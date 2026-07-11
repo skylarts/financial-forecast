@@ -23,10 +23,19 @@ const FREQUENCY_LABELS: Record<string, string> = {
   one_time: " one-time",
 };
 
+// A plain "salary" income row just shows the generic Income badge; anything
+// else (Social Security, pension, rental, ...) shows its category instead,
+// so those stay visually distinct now that they're not separate event types.
+const INCOME_CATEGORY_BADGES: Record<string, string> = {
+  social_security: "Social Security",
+  pension: "Pension",
+  rental: "Rental",
+  other: "Income",
+};
+
 const EVENT_TYPE_LABELS: Record<string, string> = {
   retire: "Retire",
   buy_home: "Buy a home",
-  social_security_start: "Social Security",
   have_a_kid: "Have a kid",
   custom_transfer: "Transfer",
   growth_rate_change: "Growth rate",
@@ -103,7 +112,7 @@ export function TimelineTab({
       key: `inc-${inc.id}`,
       date: inc.startDate,
       tone: "income",
-      badge: "Income",
+      badge: INCOME_CATEGORY_BADGES[inc.category] ?? "Income",
       name: inc.name,
       detail: `${formatMoney(inc.amount)}${freqLabel(inc.frequency, inc.intervalYears)} · ${ownerName(inc.ownerId)}`,
       excluded: inc.isExcluded ?? false,

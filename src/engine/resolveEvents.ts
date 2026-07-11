@@ -83,25 +83,10 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     }
   }
 
+  // Social Security is not a separate event type -- it's a plain Income
+  // entry with category "social_security", which is what triggers the
+  // once-per-year (not continuous) COLA compounding below. No event needed.
   const incomeSources: IncomeSource[] = [...scenario.incomeSources];
-  for (const event of events) {
-    if (event.type === "social_security_start") {
-      incomeSources.push({
-        id: nanoid(),
-        name: event.name,
-        ownerId: event.personId,
-        amount: event.monthlyBenefitAmount,
-        frequency: "monthly",
-        startDate: event.startDate,
-        endDate: null,
-        // Benefit is entered in today's dollars; grow it each year as a COLA.
-        // Defaults to the global inflation rate unless the event overrides it.
-        growthRatePct: event.growthRatePct ?? settings.inflationRatePct,
-        depositAccountId: event.depositAccountId,
-        category: "social_security",
-      });
-    }
-  }
 
   for (const src of incomeSources) {
     if (src.isExcluded) continue;

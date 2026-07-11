@@ -563,23 +563,26 @@ describe("forecastScenario -- contributions stop at retirement", () => {
 });
 
 describe("forecastScenario -- social security COLA", () => {
-  const setup = (growthRatePct?: number) => {
+  // Social Security is not a separate event type -- it's a plain Income
+  // entry with category "social_security", which is what triggers the
+  // once-per-year (not continuous) COLA compounding in the engine.
+  const setup = (growthRatePct: number) => {
     const pid = nanoid();
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000 });
     return makeScenario({
       accounts: [checking],
       people: [{ id: pid, name: "P", birthDate: "1960-01-01", retirementAge: 65, planningEndAge: 95 }],
-      events: [
-        {
-          id: nanoid(),
-          type: "social_security_start",
+      incomeSources: [
+        makeIncome({
           name: "SS",
+          ownerId: pid,
+          amount: 2000,
+          frequency: "monthly",
           startDate: "2026-01-01",
-          personId: pid,
-          monthlyBenefitAmount: 2000,
           growthRatePct,
           depositAccountId: checking.id,
-        },
+          category: "social_security",
+        }),
       ],
       inflationRatePct: 0.03,
       startDate: "2026-01-01",
@@ -587,11 +590,11 @@ describe("forecastScenario -- social security COLA", () => {
     });
   };
 
-  it("defaults the COLA to the inflation rate", () => {
-    const r = forecastScenario(setup(undefined));
+  it("steps the COLA up once per year at a rate the user enters", () => {
+    const r = forecastScenario(setup(0.03)); // COLA matching the plan's inflation assumption
     const y26 = r.years.find((y) => y.year === 2026)!.cashFlow.totalIncome;
     const y29 = r.years.find((y) => y.year === 2029)!.cashFlow.totalIncome;
-    expect(y29).toBeCloseTo(y26 * 1.03 ** 3, -1); // grew at ~3% inflation (monthly COLA compounding)
+    expect(y29).toBeCloseTo(y26 * 1.03 ** 3, -1); // grew at ~3% (once-per-year COLA compounding)
   });
 
   it("honors an explicit COLA that differs from inflation", () => {
@@ -608,16 +611,17 @@ describe("forecastScenario -- social security COLA", () => {
     const scenario = makeScenario({
       accounts: [checking],
       people: [{ id: pid, name: "P", birthDate: "1960-01-01", retirementAge: 65, planningEndAge: 95 }],
-      events: [
-        {
-          id: nanoid(),
-          type: "social_security_start",
+      incomeSources: [
+        makeIncome({
           name: "SS",
+          ownerId: pid,
+          amount: 3000,
+          frequency: "monthly",
           startDate: "2040-01-01", // starts well after the plan start
-          personId: pid,
-          monthlyBenefitAmount: 3000,
+          growthRatePct: 0.03,
           depositAccountId: checking.id,
-        },
+          category: "social_security",
+        }),
       ],
       inflationRatePct: 0.03,
       startDate: "2026-01-01",

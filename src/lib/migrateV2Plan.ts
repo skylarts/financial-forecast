@@ -19,6 +19,12 @@
  * longer exist in this codebase) -- whatever it produces is re-validated by
  * planSchema immediately after by the caller, so a malformed migration fails
  * loudly (a clear Zod error) rather than silently corrupting data.
+ *
+ * v2 also had a social_security_start event; v3 has no such event because
+ * the special once-per-year COLA math it existed for is actually keyed off
+ * IncomeSource.category === "social_security", not the event -- so the
+ * event just synthesized a plain Income entry. This migration does the same
+ * synthesis once, up front, instead of at every forecast run.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -36,7 +42,11 @@ export function looksLikeV2Plan(raw: unknown): boolean {
     const accountHasLegacyField = Array.isArray(s.accounts) && s.accounts.some((a: Json) => isRecord(a) && "isSpendingAccount" in a);
     const settingsHasLegacyField = isRecord(s.settings) && ("surplusRoutingRule" in s.settings || "defaultGrowthByClass" in s.settings);
     const hasLegacyEvent =
-      Array.isArray(s.events) && s.events.some((e: Json) => isRecord(e) && ["income_change", "expense_change", "windfall"].includes(e.type));
+      Array.isArray(s.events) &&
+      s.events.some(
+        (e: Json) =>
+          isRecord(e) && ["income_change", "expense_change", "windfall", "social_security_start"].includes(e.type)
+      );
     return accountHasLegacyField || settingsHasLegacyField || hasLegacyEvent;
   });
 }
@@ -132,6 +142,25 @@ function migrateScenario(scenario: Json): Json {
       } else {
         expenses.push({ ...shared, amount: Math.abs(event.amount), paymentAccountId: event.depositAccountId, category: "other" });
       }
+      continue;
+    }
+    if (event.type === "social_security_start") {
+      incomeSources.push({
+        id: event.id,
+        name: event.name,
+        ownerId: event.personId,
+        amount: event.monthlyBenefitAmount,
+        frequency: "monthly",
+        startDate: event.startDate,
+        endDate: null,
+        // Same default the old event used: an unset COLA tracked the plan's
+        // inflation assumption at the time.
+        growthRatePct: event.growthRatePct ?? scenario.settings?.inflationRatePct ?? 0,
+        depositAccountId: event.depositAccountId,
+        category: "social_security",
+        isExcluded: event.isExcluded,
+        adjustments: [],
+      });
       continue;
     }
     remainingEvents.push(event);
