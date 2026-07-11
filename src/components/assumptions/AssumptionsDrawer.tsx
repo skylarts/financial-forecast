@@ -177,7 +177,7 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
           </div>
           <p className="text-xs text-dim">
             Spending accounts, surplus routing, and drain order live in the{" "}
-            <span className="font-medium text-foreground">Money Flow</span> tab now, not here.
+            <span className="font-medium text-foreground">Routing</span> tab now, not here.
           </p>
           <label className="flex flex-col gap-1 text-xs text-dim">
             Horizon end date

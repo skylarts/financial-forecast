@@ -180,7 +180,7 @@ export function AccountDrawer({
 
         <p className="text-xs text-dim">
           Whether this account is a spending hub, receives routed surplus, or gets drawn down for a shortfall is set
-          in the <span className="font-medium text-foreground">Money Flow</span> tab, not here.
+          in the <span className="font-medium text-foreground">Routing</span> tab, not here.
         </p>
 
         <button

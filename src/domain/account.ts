@@ -74,9 +74,9 @@ export type Contribution = z.infer<typeof contributionSchema>;
 // Cash-flow ROLE (spending hub / surplus target / drain order / buffers /
 // caps) deliberately does NOT live here -- it lives in
 // ForecastSettings.moneyFlow as two ordered lists (fill order, drain order),
-// edited from the Money Flow view rather than scattered across every
-// account's form. An account only needs to exist and be selectable there;
-// nothing about *this* object's shape encodes its routing role.
+// edited from the Routing tab rather than scattered across every account's
+// form. An account only needs to exist and be selectable there; nothing
+// about *this* object's shape encodes its routing role.
 export const accountObjectSchema = z
   .object({
     id: idSchema,

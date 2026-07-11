@@ -20,7 +20,7 @@ import { IncomeExpensesTable } from "./IncomeExpensesTable";
 import { EventsTable } from "@/components/events/EventsTable";
 import { MoneyFlowEditor } from "@/components/moneyflow/MoneyFlowEditor";
 
-const TABS = ["Accounts", "Income & Expenses", "Money Flow", "Cash Flow", "Events"] as const;
+const TABS = ["Accounts", "Income & Expenses", "Routing", "Cash Flow", "Events"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailTabs({
@@ -83,7 +83,7 @@ export function DetailTabs({
           people={people}
         />
       )}
-      {active === "Money Flow" && (
+      {active === "Routing" && (
         <MoneyFlowEditor accounts={accounts.filter((a) => editableAccountIds.has(a.id))} settings={settings} />
       )}
       {active === "Cash Flow" && <CashFlowTable years={years} accounts={accounts} dollarMode={dollarMode} />}

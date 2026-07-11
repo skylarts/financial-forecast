@@ -7,7 +7,7 @@ import { idSchema, isoDateSchema } from "./common";
  * the next stop). Replaces the old per-account isSurplusTarget /
  * surplusTargetPriority / maxBalance / maxBalanceGrowthRatePct fields: the
  * *values* (cap, cap growth rate) are unchanged, just relocated here so
- * they're edited from one Money Flow view instead of scattered across every
+ * they're edited from one Routing tab instead of scattered across every
  * account's form.
  */
 export const moneyFlowStopSchema = z.object({
@@ -37,7 +37,7 @@ export type MoneyFlowHub = z.infer<typeof moneyFlowHubSchema>;
  * How cash moves between accounts: which account(s) are the spending hub,
  * where surplus goes when there's extra, and what gets drained first when
  * there's a shortfall. This is the single source of truth for cash-flow
- * routing -- edited from the Money Flow view, not per-account forms.
+ * routing -- edited from the Routing tab, not per-account forms.
  */
 export const moneyFlowSchema = z.object({
   hubs: z.array(moneyFlowHubSchema).default([]),
