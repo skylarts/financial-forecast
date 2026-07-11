@@ -29,14 +29,9 @@ function HomeContent() {
     () => projection.years.filter((y) => y.year >= range[0] && y.year <= range[1]),
     [projection.years, range]
   );
-  const timeline = useMemo(
-    () => projection.timeline.filter((t) => t.year >= range[0] && t.year <= range[1]),
-    [projection.timeline, range]
-  );
-  const ledger = useMemo(
-    () => projection.ledger.filter((e) => Number(e.date.slice(0, 4)) >= range[0] && Number(e.date.slice(0, 4)) <= range[1]),
-    [projection.ledger, range]
-  );
+  // The Timeline tab shows your whole plan (all income/expenses/events) and the
+  // full auto-withdrawal ledger, independent of the chart's year window -- the
+  // range picker only narrows the projection views (chart, Accounts, Cash Flow).
   const editableAccountIds = useMemo<Set<Id>>(
     () => new Set(scenario.accounts.map((a) => a.id)),
     [scenario.accounts]
@@ -64,8 +59,8 @@ function HomeContent() {
         <DetailTabs
           accounts={projection.accounts}
           years={years}
-          timeline={timeline}
-          ledger={ledger}
+          timeline={projection.timeline}
+          ledger={projection.ledger}
           events={scenario.events}
           people={scenario.household.people}
           editableAccountIds={editableAccountIds}

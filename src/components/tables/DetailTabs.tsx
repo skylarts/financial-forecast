@@ -16,11 +16,10 @@ import type {
 import type { DollarMode } from "@/lib/format";
 import { AccountsTable } from "./AccountsTable";
 import { CashFlowTable } from "./CashFlowTable";
-import { IncomeExpensesTable } from "./IncomeExpensesTable";
-import { EventsTable } from "@/components/events/EventsTable";
+import { TimelineTab } from "./TimelineTab";
 import { MoneyFlowEditor } from "@/components/moneyflow/MoneyFlowEditor";
 
-const TABS = ["Accounts", "Income & Expenses", "Routing", "Cash Flow", "Events"] as const;
+const TABS = ["Accounts", "Timeline", "Routing", "Cash Flow"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailTabs({
@@ -49,6 +48,7 @@ export function DetailTabs({
   dollarMode: DollarMode;
 }) {
   const [active, setActive] = useState<Tab>("Accounts");
+  const editableAccounts = accounts.filter((a) => editableAccountIds.has(a.id));
 
   return (
     <div>
@@ -75,28 +75,20 @@ export function DetailTabs({
           dollarMode={dollarMode}
         />
       )}
-      {active === "Income & Expenses" && (
-        <IncomeExpensesTable
+      {active === "Timeline" && (
+        <TimelineTab
           incomeSources={incomeSources}
           expenses={expenses}
-          accounts={accounts.filter((a) => editableAccountIds.has(a.id))}
-          people={people}
-        />
-      )}
-      {active === "Routing" && (
-        <MoneyFlowEditor accounts={accounts.filter((a) => editableAccountIds.has(a.id))} settings={settings} />
-      )}
-      {active === "Cash Flow" && <CashFlowTable years={years} accounts={accounts} dollarMode={dollarMode} />}
-      {active === "Events" && (
-        <EventsTable
+          events={events}
           timeline={timeline}
           ledger={ledger}
           accounts={accounts}
-          events={events}
-          editableAccounts={accounts.filter((a) => editableAccountIds.has(a.id))}
+          editableAccounts={editableAccounts}
           people={people}
         />
       )}
+      {active === "Routing" && <MoneyFlowEditor accounts={editableAccounts} settings={settings} />}
+      {active === "Cash Flow" && <CashFlowTable years={years} accounts={accounts} dollarMode={dollarMode} />}
     </div>
   );
 }
