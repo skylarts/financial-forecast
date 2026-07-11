@@ -294,27 +294,34 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
       if (account.class !== "mortgage" && account.class !== "loan") continue;
       if (compareDates(month, account.effectiveStartDate) < 0) continue;
       if (month.slice(0, 7) === account.effectiveStartDate.slice(0, 7)) continue; // originates this month, first payment next month
+      const currentBalance = balances.get(account.id) ?? 0;
+      if (currentBalance <= 0) continue; // already paid off -- no more payments due
       const mortgage = mortgageByAccountId.get(account.id);
       const payment = mortgagePayments.get(account.id);
       if (!mortgage || !payment) continue;
-      const step = amortizeMonth(balances.get(account.id) ?? 0, mortgage.loanTerms.annualInterestRatePct, payment);
+      const step = amortizeMonth(currentBalance, mortgage.loanTerms.annualInterestRatePct, payment);
       balances.set(account.id, step.newBalance);
       acc.rollforward.get(account.id)!.withdrawals += step.principalPortion;
 
       const payerId = mortgage.payingAccountId;
       if (payerId) {
-        balances.set(payerId, (balances.get(payerId) ?? 0) - payment);
+        // Interest + principal actually owed this month, not the flat scheduled
+        // payment -- these match every month except possibly the final one,
+        // where the scheduled payment would otherwise overpay/overcharge a
+        // loan that's paying off with less than a full payment remaining.
+        const actualPayment = step.interestPortion + step.principalPortion;
+        balances.set(payerId, (balances.get(payerId) ?? 0) - actualPayment);
         const payerBucket = acc.rollforward.get(payerId);
-        if (payerBucket) payerBucket.withdrawals += payment;
-        acc.totalExpenses += payment;
-        addTo(acc.expenseByItem, account.id, payment);
+        if (payerBucket) payerBucket.withdrawals += actualPayment;
+        acc.totalExpenses += actualPayment;
+        addTo(acc.expenseByItem, account.id, actualPayment);
         itemLabels.set(account.id, `Mortgage payment (${account.name})`);
         ledger.push({
           date: month,
           kind: "mortgage_payment",
           accountId: payerId,
           toAccountId: account.id,
-          amount: payment,
+          amount: actualPayment,
           note: `Mortgage payment (${account.name})`,
         });
       }

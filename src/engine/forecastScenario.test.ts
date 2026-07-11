@@ -374,6 +374,50 @@ describe("forecastScenario -- buy_home", () => {
     expect(nextYearRollforward.startingBalance).toBeCloseTo(mortgageRollforward!.endingBalance, 2);
     expect(nextYearRollforward.endingBalance).toBeLessThan(mortgageRollforward!.endingBalance);
   });
+
+  it("stops charging the mortgage payment once the loan is fully paid off", () => {
+    // Regression: the loan BALANCE correctly stopped changing once paid off
+    // (amortizeMonth caps principal at the remaining balance), but the cash
+    // charge to the payer account and the ledger entry weren't gated on that
+    // at all -- the fixed payment kept being deducted and logged as an
+    // expense every month for the rest of the plan, even decades after
+    // payoff. A short (24-month) term keeps this test fast.
+    const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 200_000, growthRatePct: 0 });
+    const scenario = makeScenario({
+      accounts: [checking],
+      events: [
+        {
+          id: nanoid(),
+          type: "buy_home",
+          name: "Buy a home",
+          startDate: "2026-01-01",
+          purchasePrice: 100_000,
+          downPaymentAmount: 20_000,
+          downPaymentFromAccountId: checking.id,
+          propertyGrowthRatePct: 0,
+          mortgage: { annualInterestRatePct: 0.06, termMonths: 24 },
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const mortgageAccount = result.accounts.find((a) => a.class === "mortgage")!;
+
+    // Originates Jan 2026 (no payment that month); 24 monthly payments Feb
+    // 2026 through Jan 2028, then nothing.
+    const payments = result.ledger.filter((e) => e.kind === "mortgage_payment");
+    expect(payments).toHaveLength(24);
+    expect(payments[0].date).toBe("2026-02-01");
+    expect(payments[23].date).toBe("2028-01-01");
+
+    const y2027 = result.years.find((y) => y.year === 2027)!;
+    expect(y2027.cashFlow.expenseByItem.some((i) => i.id === mortgageAccount.id)).toBe(true); // still paying
+
+    const y2029 = result.years.find((y) => y.year === 2029)!;
+    expect(y2029.accountBalances[mortgageAccount.id]).toBeCloseTo(0, 6); // loan paid off
+    expect(y2029.cashFlow.expenseByItem.some((i) => i.id === mortgageAccount.id)).toBe(false); // no phantom payments
+  });
 });
 
 describe("forecastScenario -- exposes the full resolved account list", () => {
