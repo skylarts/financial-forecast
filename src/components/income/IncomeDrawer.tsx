@@ -1,0 +1,165 @@
+"use client";
+
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account } from "@/domain";
+import { incomeSourceSchema } from "@/domain";
+import { Drawer } from "@/components/ui/Drawer";
+import { Field, TextInput, SelectInput, ErrorBanner } from "@/components/ui/formFields";
+import { usePlanStore } from "@/store/usePlanStore";
+
+const CATEGORY_OPTIONS: { value: IncomeCategory; label: string }[] = [
+  { value: "salary", label: "Salary" },
+  { value: "social_security", label: "Social Security" },
+  { value: "pension", label: "Pension" },
+  { value: "rental", label: "Rental" },
+  { value: "other", label: "Other" },
+];
+
+const FREQUENCIES: { value: RecurrenceFrequency; label: string }[] = [
+  { value: "monthly", label: "Monthly" },
+  { value: "biweekly", label: "Biweekly" },
+  { value: "weekly", label: "Weekly" },
+  { value: "annual", label: "Annual" },
+  { value: "one_time", label: "One time" },
+];
+
+interface FormValues {
+  name: string;
+  ownerId: string;
+  amount: number;
+  frequency: RecurrenceFrequency;
+  startDate: string;
+  endDate: string;
+  growthRatePct: number;
+  depositAccountId: string;
+  category: IncomeCategory;
+}
+
+function toFormValues(income?: IncomeSource): FormValues {
+  return {
+    name: income?.name ?? "",
+    ownerId: income?.ownerId ?? "",
+    amount: income?.amount ?? 0,
+    frequency: income?.frequency ?? "monthly",
+    startDate: income?.startDate ?? "",
+    endDate: income?.endDate ?? "",
+    growthRatePct: income?.growthRatePct ?? 0,
+    depositAccountId: income?.depositAccountId ?? "",
+    category: income?.category ?? "salary",
+  };
+}
+
+export function IncomeDrawer({
+  open,
+  onClose,
+  income,
+  people,
+  accounts,
+}: {
+  open: boolean;
+  onClose: () => void;
+  income?: IncomeSource;
+  people: Person[];
+  accounts: Account[];
+}) {
+  const addIncomeSource = usePlanStore((s) => s.addIncomeSource);
+  const updateIncomeSource = usePlanStore((s) => s.updateIncomeSource);
+  const removeIncomeSource = usePlanStore((s) => s.removeIncomeSource);
+  const [error, setError] = useState<string | null>(null);
+
+  const { register, handleSubmit } = useForm<FormValues>({
+    defaultValues: toFormValues(income),
+  });
+
+  const onSubmit = (values: FormValues) => {
+    const candidate = {
+      name: values.name.trim(),
+      ownerId: values.ownerId || null,
+      amount: Number(values.amount),
+      frequency: values.frequency,
+      startDate: values.startDate,
+      endDate: values.endDate || null,
+      growthRatePct: Number(values.growthRatePct) || 0,
+      depositAccountId: values.depositAccountId,
+      category: values.category,
+    };
+
+    const result = incomeSourceSchema.omit({ id: true }).safeParse(candidate);
+    if (!result.success) {
+      setError(result.error.issues[0]?.message ?? "Invalid income source.");
+      return;
+    }
+
+    if (income) updateIncomeSource(income.id, result.data);
+    else addIncomeSource(result.data);
+    onClose();
+  };
+
+  return (
+    <Drawer open={open} onClose={onClose} title={income ? "Edit Income" : "Add Income"}>
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3">
+        <ErrorBanner message={error} />
+        <Field label="Name">
+          <TextInput reg={register("name", { required: true })} placeholder="e.g. Alex Salary" />
+        </Field>
+        <Field label="Owner">
+          <SelectInput
+            reg={register("ownerId")}
+            options={[{ value: "", label: "Joint / none" }, ...people.map((p) => ({ value: p.id, label: p.name }))]}
+          />
+        </Field>
+        <Field label="Amount (per occurrence, today's dollars)">
+          <TextInput reg={register("amount", { valueAsNumber: true, required: true })} type="number" step="0.01" />
+        </Field>
+        <Field label="Frequency">
+          <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+        </Field>
+        <Field label="Category">
+          <SelectInput reg={register("category")} options={CATEGORY_OPTIONS} />
+        </Field>
+        <Field label="Deposit Account">
+          <SelectInput reg={register("depositAccountId", { required: true })} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
+        </Field>
+        <Field label="Start Date">
+          <TextInput reg={register("startDate", { required: true })} type="date" />
+        </Field>
+        <Field label="End Date (optional -- leave blank to continue indefinitely)">
+          <TextInput reg={register("endDate")} type="date" />
+        </Field>
+        <Field label="Annual Growth Rate (actual, e.g. 0.05 for 5%/yr raises incl. inflation)">
+          <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
+        </Field>
+
+        <div className="mt-2 flex items-center justify-between gap-2">
+          {income ? (
+            <button
+              type="button"
+              onClick={() => {
+                const removed = removeIncomeSource(income.id);
+                if (removed) onClose();
+                else
+                  alert(
+                    `Can't delete ${income.name || "this income source"} -- an Income Change event still targets it. Update or delete that event first.`
+                  );
+              }}
+              className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
+            >
+              Delete
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
+              Cancel
+            </button>
+            <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white">
+              {income ? "Save" : "Add Income"}
+            </button>
+          </div>
+        </div>
+      </form>
+    </Drawer>
+  );
+}

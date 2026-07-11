@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Forecast — Backup &amp; Recovery</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #1c2230; }
+    h1 { font-size: 1.4rem; }
+    .card { border: 1px solid #d8dbe3; border-radius: 10px; padding: 1rem 1.25rem; margin: 1rem 0; }
+    .found { background: #eafaf1; border-color: #2fb56b; }
+    .sample { background: #fff6e6; border-color: #e0a72e; }
+    .empty { background: #f4f5f7; }
+    .badge { display: inline-block; font-weight: 700; padding: .15rem .5rem; border-radius: 6px; font-size: .85rem; }
+    .badge.ok { background: #2fb56b; color: #fff; }
+    .badge.warn { background: #e0a72e; color: #fff; }
+    .badge.none { background: #9aa4b8; color: #fff; }
+    button { font-size: 1rem; padding: .55rem 1rem; border-radius: 8px; border: 0; background: #2f6bed; color: #fff; cursor: pointer; margin-right: .5rem; }
+    button.secondary { background: #6b7280; }
+    button:disabled { background: #b8c0d0; cursor: not-allowed; }
+    pre { background: #0f1420; color: #e6e9f0; padding: 1rem; border-radius: 8px; overflow: auto; max-height: 320px; font-size: .8rem; white-space: pre-wrap; word-break: break-word; }
+    code { background: #eef0f4; padding: .1rem .3rem; border-radius: 4px; }
+    .muted { color: #6b7280; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>🩺 Forecast — Backup &amp; Recovery</h1>
+  <p class="muted">
+    This page only <strong>reads</strong> this browser's saved data on this origin — it never writes, changes,
+    or deletes anything in the app itself, and it doesn't load the app. Use it any time you want a snapshot of
+    your current plan, or to check which browser/profile has your real data if something looks wrong.
+  </p>
+
+  <div id="status"></div>
+
+  <div class="card">
+    <button id="saveToFolder" style="display:none">💾 Save to project's backups/ folder…</button>
+    <button id="download" class="secondary" disabled>⬇ Download to Downloads folder</button>
+    <div id="dlnote" class="muted" style="margin-top:.5rem"></div>
+  </div>
+
+  <details>
+    <summary>Show raw stored value</summary>
+    <pre id="raw"></pre>
+  </details>
+
+  <details>
+    <summary>All localStorage keys on this origin</summary>
+    <pre id="keys"></pre>
+  </details>
+
+  <script>
+    (function () {
+      var KEY = "forecast-plan";
+      var raw = null;
+      try { raw = localStorage.getItem(KEY); } catch (e) { raw = null; }
+
+      var statusEl = document.getElementById("status");
+      var rawEl = document.getElementById("raw");
+      var keysEl = document.getElementById("keys");
+      var dlBtn = document.getElementById("download");
+      var saveBtn = document.getElementById("saveToFolder");
+      var dlNote = document.getElementById("dlnote");
+
+      var allKeys = [];
+      try { for (var i = 0; i < localStorage.length; i++) allKeys.push(localStorage.key(i)); } catch (e) {}
+      keysEl.textContent = allKeys.length ? allKeys.join("\n") : "(no keys stored on this origin)";
+
+      rawEl.textContent = raw ? raw : "(nothing stored under 'forecast-plan')";
+
+      var hay = (raw || "").toLowerCase();
+      var hasReal = hay.indexOf("skylar") !== -1 || hay.indexOf("hirva") !== -1;
+      var hasSample = hay.indexOf("alex") !== -1 || hay.indexOf("jordan") !== -1;
+
+      function card(cls, badge, badgeCls, msg) {
+        return '<div class="card ' + cls + '"><span class="badge ' + badgeCls + '">' + badge + '</span> ' + msg + '</div>';
+      }
+
+      if (!raw) {
+        statusEl.innerHTML = card("empty", "NO DATA", "none",
+          "This browser/profile has <strong>no saved forecast plan</strong>. Try another browser or profile.");
+      } else if (hasReal) {
+        statusEl.innerHTML = card("found", "YOUR DATA", "ok",
+          "This browser has data mentioning <strong>Skylar / Hirva</strong>. Save a backup below.");
+        dlBtn.disabled = false;
+      } else if (hasSample) {
+        statusEl.innerHTML = card("sample", "SAMPLE DATA", "warn",
+          "This looks like the built-in <strong>Alex &amp; Jordan</strong> sample, not your real data.");
+        dlBtn.disabled = false;
+      } else {
+        statusEl.innerHTML = card("empty", "UNKNOWN", "none",
+          "There is saved data, but it doesn't obviously mention Skylar/Hirva or Alex/Jordan. Save it and share with Claude to inspect.");
+        dlBtn.disabled = false;
+      }
+
+      function fileName() {
+        var stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        return "forecast-plan-backup-" + stamp + ".json";
+      }
+
+      // Chromium browsers (incl. Comet) support letting the user pick a real
+      // folder on disk -- point them at the project's backups/ folder once and
+      // it's a one-click save from then on.
+      if (window.showSaveFilePicker && raw) {
+        saveBtn.style.display = "inline-block";
+        saveBtn.addEventListener("click", async function () {
+          try {
+            var handle = await window.showSaveFilePicker({
+              suggestedName: fileName(),
+              types: [{ description: "JSON backup", accept: { "application/json": [".json"] } }],
+            });
+            var writable = await handle.createWritable();
+            await writable.write(raw);
+            await writable.close();
+            dlNote.textContent = "Saved. (First time: navigate into your forecast-v2 project folder, then the backups subfolder.)";
+          } catch (e) {
+            if (e && e.name !== "AbortError") dlNote.textContent = "Save cancelled or failed: " + e.message;
+          }
+        });
+      }
+
+      dlBtn.addEventListener("click", function () {
+        var blob = new Blob([raw], { type: "application/json" });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url;
+        a.download = fileName();
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        dlNote.textContent = "Saved to your Downloads folder — move it into the project's backups/ folder.";
+      });
+    })();
+  </script>
+</body>
+</html>

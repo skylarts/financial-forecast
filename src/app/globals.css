@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0f1420;
+  --panel: #171d2b;
+  --border-color: #2a3245;
+  --foreground: #e6e9f0;
+  --dim: #9aa4b8;
+  --accent: #5b8def;
+  --positive: #3ecf8e;
+  --negative: #e8555a;
+  /* Chart chrome, overridable per theme. */
+  --chart-grid: #2a3245;
+  --chart-axis: #9aa4b8;
+  --chart-line: #5b8def;
+}
+
+/* 🩷 Pink mode -- a soft, cute second color scheme. */
+:root[data-theme="pink"] {
+  --background: #fff0f6;
+  --panel: #ffe4ef;
+  --border-color: #ffbcda;
+  --foreground: #6a2748;
+  --dim: #c06e93;
+  --accent: #ff4fa3;
+  --positive: #21b58a;
+  --negative: #f0506b;
+  --chart-grid: #ffc9e0;
+  --chart-axis: #c06e93;
+  --chart-line: #ff4fa3;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-panel: var(--panel);
+  --color-border: var(--border-color);
+  --color-foreground: var(--foreground);
+  --color-dim: var(--dim);
+  --color-accent: var(--accent);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}

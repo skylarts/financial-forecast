@@ -1,0 +1,166 @@
+"use client";
+
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import type { ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account } from "@/domain";
+import { expenseBaselineSchema } from "@/domain";
+import { Drawer } from "@/components/ui/Drawer";
+import { Field, TextInput, SelectInput, ErrorBanner } from "@/components/ui/formFields";
+import { usePlanStore } from "@/store/usePlanStore";
+
+const CATEGORY_OPTIONS: { value: ExpenseCategory; label: string }[] = [
+  { value: "housing", label: "Housing" },
+  { value: "transportation", label: "Transportation" },
+  { value: "food", label: "Food" },
+  { value: "healthcare", label: "Healthcare" },
+  { value: "childcare", label: "Childcare" },
+  { value: "discretionary", label: "Discretionary" },
+  { value: "other", label: "Other" },
+];
+
+const FREQUENCIES: { value: RecurrenceFrequency; label: string }[] = [
+  { value: "monthly", label: "Monthly" },
+  { value: "biweekly", label: "Biweekly" },
+  { value: "weekly", label: "Weekly" },
+  { value: "annual", label: "Annual" },
+  { value: "one_time", label: "One time" },
+];
+
+interface FormValues {
+  name: string;
+  amount: number;
+  frequency: RecurrenceFrequency;
+  startDate: string;
+  endDate: string;
+  growthRatePct: number;
+  intervalYears: string;
+  paymentAccountId: string;
+  category: ExpenseCategory;
+}
+
+function toFormValues(expense?: ExpenseBaseline): FormValues {
+  return {
+    name: expense?.name ?? "",
+    amount: expense?.amount ?? 0,
+    frequency: expense?.frequency ?? "monthly",
+    startDate: expense?.startDate ?? "",
+    endDate: expense?.endDate ?? "",
+    growthRatePct: expense?.growthRatePct ?? 0,
+    intervalYears: expense?.intervalYears?.toString() ?? "",
+    paymentAccountId: expense?.paymentAccountId ?? "",
+    category: expense?.category ?? "other",
+  };
+}
+
+export function ExpenseDrawer({
+  open,
+  onClose,
+  expense,
+  accounts,
+}: {
+  open: boolean;
+  onClose: () => void;
+  expense?: ExpenseBaseline;
+  accounts: Account[];
+}) {
+  const addExpense = usePlanStore((s) => s.addExpense);
+  const updateExpense = usePlanStore((s) => s.updateExpense);
+  const removeExpense = usePlanStore((s) => s.removeExpense);
+  const [error, setError] = useState<string | null>(null);
+
+  const { register, handleSubmit } = useForm<FormValues>({
+    defaultValues: toFormValues(expense),
+  });
+
+  const onSubmit = (values: FormValues) => {
+    const candidate = {
+      name: values.name.trim(),
+      amount: Number(values.amount),
+      frequency: values.frequency,
+      startDate: values.startDate,
+      endDate: values.endDate || null,
+      growthRatePct: Number(values.growthRatePct) || 0,
+      intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
+      paymentAccountId: values.paymentAccountId,
+      category: values.category,
+    };
+
+    const result = expenseBaselineSchema.omit({ id: true }).safeParse(candidate);
+    if (!result.success) {
+      setError(result.error.issues[0]?.message ?? "Invalid expense.");
+      return;
+    }
+
+    if (expense) updateExpense(expense.id, result.data);
+    else addExpense(result.data);
+    onClose();
+  };
+
+  return (
+    <Drawer open={open} onClose={onClose} title={expense ? "Edit Expense" : "Add Expense"}>
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3">
+        <ErrorBanner message={error} />
+        <Field label="Name">
+          <TextInput reg={register("name", { required: true })} placeholder="e.g. Rent" />
+        </Field>
+        <Field label="Amount (per occurrence, today's dollars)">
+          <TextInput reg={register("amount", { valueAsNumber: true, required: true })} type="number" step="0.01" />
+        </Field>
+        <Field label="Frequency">
+          <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+        </Field>
+        <Field label="Or repeat every N years (optional)">
+          <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
+        </Field>
+        <p className="-mt-1 text-xs text-dim">
+          For a repeat purchase like a car every few years: repeats every N years from the start date and overrides the
+          frequency above.
+        </p>
+        <Field label="Category">
+          <SelectInput reg={register("category")} options={CATEGORY_OPTIONS} />
+        </Field>
+        <Field label="Payment Account">
+          <SelectInput reg={register("paymentAccountId", { required: true })} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
+        </Field>
+        <Field label="Start Date">
+          <TextInput reg={register("startDate", { required: true })} type="date" />
+        </Field>
+        <Field label="End Date (optional -- leave blank to continue indefinitely)">
+          <TextInput reg={register("endDate")} type="date" />
+        </Field>
+        <Field label="Annual Growth Rate (actual, e.g. 0.03 to track inflation)">
+          <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
+        </Field>
+
+        <div className="mt-2 flex items-center justify-between gap-2">
+          {expense ? (
+            <button
+              type="button"
+              onClick={() => {
+                const removed = removeExpense(expense.id);
+                if (removed) onClose();
+                else
+                  alert(
+                    `Can't delete ${expense.name || "this expense"} -- an Expense Change event still targets it. Update or delete that event first.`
+                  );
+              }}
+              className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
+            >
+              Delete
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
+              Cancel
+            </button>
+            <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white">
+              {expense ? "Save" : "Add Expense"}
+            </button>
+          </div>
+        </div>
+      </form>
+    </Drawer>
+  );
+}

@@ -1,0 +1,856 @@
+import { describe, it, expect } from "vitest";
+import { nanoid } from "nanoid";
+import { forecastScenario } from "./forecastScenario";
+import { makeAccount, makeIncome, makeExpense, makeScenario } from "./testHelpers";
+import { mockScenario } from "@/lib/mockScenario";
+import { elapsedYears } from "./dateMath";
+import { growthAdjustedAmount } from "./growth";
+
+describe("forecastScenario -- account growth", () => {
+  it("compounds monthly, skipping the account's creation month (matches the prior engine's proven rule)", () => {
+    const account = makeAccount({ class: "cash", startingBalance: 10_000, growthRatePct: 0.04 });
+    const scenario = makeScenario({ accounts: [account], horizonEndDate: "2027-12-31" });
+    const result = forecastScenario(scenario);
+
+    const monthlyRate = Math.pow(1.04, 1 / 12) - 1;
+    const expected = 10_000 * Math.pow(1 + monthlyRate, 23); // 24 months, first skipped
+    expect(result.years[1].accountBalances[account.id]).toBeCloseTo(expected, 0);
+  });
+
+  it("switches to a new growth rate on a growth_rate_change event's start date (e.g. de-risking at retirement)", () => {
+    const account = makeAccount({ class: "taxable_investment", startingBalance: 100_000, growthRatePct: 0.08 });
+    const scenario = makeScenario({
+      accounts: [account],
+      events: [
+        {
+          id: nanoid(),
+          type: "growth_rate_change",
+          name: "De-risk at retirement",
+          startDate: "2028-01-01",
+          targetAccountId: account.id,
+          newGrowthRatePct: 0.02,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+    });
+    const result = forecastScenario(scenario);
+
+    const oldMonthlyRate = Math.pow(1.08, 1 / 12) - 1;
+    const newMonthlyRate = Math.pow(1.02, 1 / 12) - 1;
+    // 23 months (Feb 2026 - Dec 2027) at the original rate, then 24 months
+    // (Jan 2028 - Dec 2029) at the new rate once the event has started.
+    const expected = 100_000 * Math.pow(1 + oldMonthlyRate, 23) * Math.pow(1 + newMonthlyRate, 24);
+    expect(result.years[3].accountBalances[account.id]).toBeCloseTo(expected, 0);
+  });
+});
+
+describe("forecastScenario -- income, expenses, and surplus routing", () => {
+  it("routes positive net cash flow to the priority-1 surplus target", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      isSurplusTarget: true,
+      surplusTargetPriority: 1,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 3000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    expect(year.cashFlow.totalIncome).toBeCloseTo(60_000, 0);
+    expect(year.cashFlow.totalExpenses).toBeCloseTo(36_000, 0);
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(24_000, 0);
+  });
+
+  it("fills a capped priority-1 target then spills the overflow to priority-2", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const emergencyFund = makeAccount({
+      class: "cash",
+      name: "Emergency Fund",
+      isSurplusTarget: true,
+      surplusTargetPriority: 1,
+      maxBalance: 10_000,
+      maxBalanceGrowthRatePct: 0, // hold the cap flat for a clean assertion
+    });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      isSurplusTarget: true,
+      surplusTargetPriority: 2,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, emergencyFund, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 3000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // $24k of surplus: $10k fills the capped emergency fund, the other $14k
+    // spills to the brokerage -- which used to never be funded.
+    expect(year.accountBalances[emergencyFund.id]).toBeCloseTo(10_000, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(14_000, 0);
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+  });
+
+  it("grows the cap over time so a later year can hold more", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const emergencyFund = makeAccount({
+      class: "cash",
+      name: "Emergency Fund",
+      isSurplusTarget: true,
+      surplusTargetPriority: 1,
+      maxBalance: 10_000,
+      maxBalanceGrowthRatePct: 0.10, // +10%/yr for an easy-to-read assertion
+    });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      isSurplusTarget: true,
+      surplusTargetPriority: 2,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, emergencyFund, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 4500 })], // $6k surplus/yr
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const y2027 = result.years.find((y) => y.year === 2027)!;
+
+    // Year 1 fills to 10k. Year 2's cap is 11k, so it accepts 1k more before spilling.
+    expect(y2027.accountBalances[emergencyFund.id]).toBeCloseTo(11_000, 0);
+  });
+
+  it("spills a custom transfer that overshoots a capped target onto the next priority", () => {
+    const source = makeAccount({ class: "cash", name: "Windfall", startingBalance: 50_000 });
+    const emergencyFund = makeAccount({
+      class: "cash",
+      name: "Emergency Fund",
+      isSurplusTarget: true,
+      surplusTargetPriority: 1,
+      maxBalance: 30_000,
+      maxBalanceGrowthRatePct: 0,
+    });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      isSurplusTarget: true,
+      surplusTargetPriority: 2,
+    });
+    const scenario = makeScenario({
+      accounts: [source, emergencyFund, brokerage],
+      events: [
+        {
+          id: nanoid(),
+          type: "custom_transfer",
+          name: "Move windfall to emergency fund",
+          startDate: "2026-06-01",
+          amount: 50_000,
+          fromAccountId: source.id,
+          toAccountId: emergencyFund.id,
+          frequency: "one_time",
+        },
+      ],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // $50k transferred in, but the fund is capped at $30k, so $20k spills to the brokerage.
+    expect(year.accountBalances[emergencyFund.id]).toBeCloseTo(30_000, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(20_000, 0);
+    expect(year.accountBalances[source.id]).toBeCloseTo(0, 0);
+  });
+
+  it("keeps a target cash balance in the spending account and sweeps only the excess", () => {
+    const checking = makeAccount({
+      class: "cash",
+      name: "Checking",
+      isSpendingAccount: true,
+      targetCashBalance: 10_000,
+    });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      isSurplusTarget: true,
+      surplusTargetPriority: 1,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 3000 })], // $24k/yr surplus
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // Buffer keeps $10k in checking; the other $14k of surplus is swept.
+    expect(year.accountBalances[checking.id]).toBeCloseTo(10_000, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(14_000, 0);
+  });
+
+  it("routes surplus by fixed percentages when configured", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const savings = makeAccount({ class: "cash", name: "Savings", isSurplusTarget: true });
+    const brokerage = makeAccount({ class: "taxable_investment", name: "Brokerage", isSurplusTarget: true });
+    const scenario = makeScenario({
+      accounts: [checking, savings, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 3000 })], // $24k/yr surplus
+      surplusRoutingRule: {
+        mode: "fixed_split",
+        splits: [
+          { accountId: savings.id, pct: 0.75 },
+          { accountId: brokerage.id, pct: 0.25 },
+        ],
+      },
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // $24k split 75/25.
+    expect(year.accountBalances[savings.id]).toBeCloseTo(18_000, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(6_000, 0);
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+  });
+
+  it("spills income deposited straight into a capped target onto the next priority", () => {
+    const emergencyFund = makeAccount({
+      class: "cash",
+      name: "Emergency Fund",
+      isSurplusTarget: true,
+      surplusTargetPriority: 1,
+      maxBalance: 30_000,
+      maxBalanceGrowthRatePct: 0,
+    });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      isSurplusTarget: true,
+      surplusTargetPriority: 2,
+    });
+    const scenario = makeScenario({
+      accounts: [emergencyFund, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: emergencyFund.id, amount: 5000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // $60k of income lands in the fund; $30k stays (the cap), $30k spills to the brokerage.
+    expect(year.accountBalances[emergencyFund.id]).toBeCloseTo(30_000, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(30_000, 0);
+  });
+});
+
+describe("forecastScenario -- deficit cascade", () => {
+  it("covers a shortfall from the lowest withdrawal-priority account", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const savings = makeAccount({
+      class: "cash",
+      name: "Savings",
+      withdrawalPriority: 1,
+      startingBalance: 50_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, savings],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 2000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[savings.id]).toBeCloseTo(50_000 - 24_000, 0);
+    expect(year.cashFlow.deficitCovered).toBeCloseTo(24_000, 0);
+  });
+
+  it("emits an insufficient_funds warning when every source is exhausted", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [checking],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 1000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.accountId === checking.id)).toBe(true);
+  });
+});
+
+describe("forecastScenario -- RMDs", () => {
+  it("forces the correct RMD amount using the IRS divisor for age 73", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      ownerId: personId,
+      subjectToRMD: true,
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      people: [{ id: personId, name: "Retiree", birthDate: "1953-01-01", retirementAge: 65, planningEndAge: 95 }],
+      startDate: "2025-01-01",
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+
+    // Turns 73 in 2026 (born 1953) -> RMD fires in January 2026, using the
+    // 2025 year-end balance (500,000, since growthRatePct=0 and no other flows).
+    const rmdEvents = result.ledger.filter((e) => e.kind === "rmd");
+    expect(rmdEvents).toHaveLength(1);
+    expect(rmdEvents[0].amount).toBeCloseTo(500_000 / 26.5, 2);
+    expect(result.years[1].cashFlow.rmdTotal).toBeCloseTo(500_000 / 26.5, 2);
+  });
+});
+
+describe("forecastScenario -- retirement", () => {
+  it("stops salary income at the retire event's date", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const scenario = makeScenario({
+      accounts: [checking],
+      people: [{ id: personId, name: "Worker", birthDate: "1990-01-01", retirementAge: 65, planningEndAge: 95 }],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000, ownerId: personId, category: "salary" })],
+      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-07-01", personId }],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    expect(result.years[0].cashFlow.totalIncome).toBeCloseTo(5000 * 6, 0); // Jan-Jun only
+  });
+});
+
+describe("forecastScenario -- buy_home", () => {
+  it("creates a real estate asset and a linked, amortizing mortgage liability", () => {
+    const result = forecastScenario(mockScenario);
+    const buyEvent = mockScenario.events.find((e) => e.type === "buy_home");
+    expect(buyEvent).toBeDefined();
+    if (!buyEvent || buyEvent.type !== "buy_home") throw new Error("unreachable");
+
+    const purchaseYear = Number(buyEvent.startDate.slice(0, 4));
+    const purchaseSnapshot = result.years.find((y) => y.year === purchaseYear)!;
+    // Purchase price and down payment are entered in today's dollars and
+    // inflate from plan start to the purchase date, same factor for both.
+    const inflationFactor = growthAdjustedAmount(
+      1,
+      elapsedYears(mockScenario.settings.startDate, buyEvent.startDate),
+      mockScenario.settings.inflationRatePct
+    );
+    const principal = (buyEvent.purchasePrice - buyEvent.downPaymentAmount) * inflationFactor;
+
+    // The mortgage's opening principal is its starting balance for the year it's
+    // created; the rollforward must still balance:
+    // start + growth + deposits - withdrawals = end.
+    const mortgageRollforward = purchaseSnapshot.rollforwards.find(
+      (r) => Math.abs(r.startingBalance - principal) < 1
+    );
+    expect(mortgageRollforward).toBeDefined();
+    expect(mortgageRollforward!.startingBalance).toBeCloseTo(principal, 0);
+    const computedEnding =
+      mortgageRollforward!.startingBalance +
+      mortgageRollforward!.growth +
+      mortgageRollforward!.deposits -
+      mortgageRollforward!.withdrawals;
+    expect(mortgageRollforward!.endingBalance).toBeCloseTo(computedEnding, 6);
+    expect(mortgageRollforward!.endingBalance).toBeLessThan(principal); // paid down within the purchase year
+
+    // The mortgage should keep amortizing down in subsequent years too.
+    const nextYearRollforward = result.years
+      .find((y) => y.year === purchaseYear + 1)!
+      .rollforwards.find((r) => r.accountId === mortgageRollforward!.accountId)!;
+    expect(nextYearRollforward.startingBalance).toBeCloseTo(mortgageRollforward!.endingBalance, 2);
+    expect(nextYearRollforward.endingBalance).toBeLessThan(mortgageRollforward!.endingBalance);
+  });
+});
+
+describe("forecastScenario -- exposes the full resolved account list", () => {
+  it("includes event-created accounts (real estate + mortgage), not just Scenario.accounts", () => {
+    const result = forecastScenario(mockScenario);
+    expect(result.accounts.length).toBeGreaterThan(mockScenario.accounts.length);
+    expect(result.accounts.some((a) => a.class === "real_estate")).toBe(true);
+    expect(result.accounts.some((a) => a.class === "mortgage")).toBe(true);
+    // Every accountId referenced anywhere in the output must resolve to a name via this list.
+    const ids = new Set(result.accounts.map((a) => a.id));
+    for (const entry of result.ledger) {
+      expect(ids.has(entry.accountId), entry.note).toBe(true);
+      if (entry.toAccountId) expect(ids.has(entry.toAccountId), entry.note).toBe(true);
+    }
+  });
+});
+
+describe("forecastScenario -- rollforward invariant", () => {
+  it("every account-year rollforward balances: start + growth + deposits - withdrawals = end", () => {
+    const result = forecastScenario(mockScenario);
+    for (const year of result.years) {
+      for (const r of year.rollforwards) {
+        const computed = r.startingBalance + r.growth + r.deposits - r.withdrawals;
+        expect(computed, `${r.accountId} in ${r.year}`).toBeCloseTo(r.endingBalance, 2);
+      }
+    }
+  });
+});
+
+describe("forecastScenario -- account contributions", () => {
+  it("payroll-deducted contribution grows the account with no cash outflow", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const four01k = makeAccount({
+      class: "tax_deferred",
+      name: "401k",
+      taxTreatment: "tax_deferred",
+      ownerId: nanoid(),
+      startingBalance: 0,
+      growthRatePct: 0,
+      contribution: { amount: 1000, frequency: "monthly", growthRatePct: 0, payrollDeducted: true },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, four01k],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const year = forecastScenario(scenario).years[0];
+
+    // 12 monthly $1000 payroll-deducted contributions grow the 401k...
+    expect(year.accountBalances[four01k.id]).toBeCloseTo(12_000, 0);
+    // ...with zero cash-flow cost: net cash flow is just income, no contribution drag.
+    expect(year.cashFlow.afterTaxContributionTotal).toBe(0);
+    expect(year.cashFlow.netCashFlow).toBeCloseTo(60_000, 0);
+    const line = year.cashFlow.contributionsByItem.find((c) => c.id === `${four01k.id}:contribution`);
+    expect(line?.fromPaycheck).toBe(true);
+    expect(line?.amount).toBeCloseTo(12_000, 0);
+  });
+
+  it("take-home-funded contribution grows the account and draws from the spending account", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 0,
+      growthRatePct: 0,
+      contribution: { amount: 1000, frequency: "monthly", growthRatePct: 0, payrollDeducted: false },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const year = forecastScenario(scenario).years[0];
+
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(12_000, 0); // contributions landed
+    expect(year.accountBalances[checking.id]).toBeCloseTo(48_000, 0); // 60k income - 12k contributed
+    expect(year.cashFlow.afterTaxContributionTotal).toBeCloseTo(12_000, 0);
+    expect(year.cashFlow.netCashFlow).toBeCloseTo(48_000, 0); // income - take-home contributions
+    const line = year.cashFlow.contributionsByItem.find((c) => c.id === `${brokerage.id}:contribution`);
+    expect(line?.fromPaycheck).toBe(false);
+  });
+
+  it("Roth 401(k): after-tax (tax_free) but payroll-deducted, so NOT a cash outflow", () => {
+    // Regression: cash-flow treatment must follow payrollDeducted, not tax treatment.
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const roth401k = makeAccount({
+      class: "tax_free",
+      name: "Roth 401k",
+      taxTreatment: "tax_free",
+      ownerId: nanoid(),
+      startingBalance: 0,
+      growthRatePct: 0,
+      contribution: { amount: 1000, frequency: "monthly", growthRatePct: 0, payrollDeducted: true },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, roth401k],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const year = forecastScenario(scenario).years[0];
+
+    expect(year.accountBalances[roth401k.id]).toBeCloseTo(12_000, 0); // grows
+    expect(year.accountBalances[checking.id]).toBeCloseTo(60_000, 0); // untouched by the contribution
+    expect(year.cashFlow.afterTaxContributionTotal).toBe(0); // no cash-flow drag despite being after-tax
+    expect(year.cashFlow.netCashFlow).toBeCloseTo(60_000, 0);
+    const line = year.cashFlow.contributionsByItem.find((c) => c.id === `${roth401k.id}:contribution`);
+    expect(line?.fromPaycheck).toBe(true);
+  });
+});
+
+describe("forecastScenario -- per-item cash-flow breakdown", () => {
+  it("income and expense line items reconcile to the year totals (incl. mortgage payments)", () => {
+    const result = forecastScenario(mockScenario);
+    for (const year of result.years) {
+      const incomeSum = year.cashFlow.incomeByItem.reduce((s, i) => s + i.amount, 0);
+      const expenseSum = year.cashFlow.expenseByItem.reduce((s, i) => s + i.amount, 0);
+      expect(incomeSum, `income items in ${year.year}`).toBeCloseTo(year.cashFlow.totalIncome, 2);
+      expect(expenseSum, `expense items in ${year.year}`).toBeCloseTo(year.cashFlow.totalExpenses, 2);
+    }
+  });
+
+  it("breaks each salary out as its own income line in the first year", () => {
+    const result = forecastScenario(mockScenario);
+    const labels = result.years[0].cashFlow.incomeByItem.map((i) => i.label);
+    expect(labels).toContain("Alex Salary");
+    expect(labels).toContain("Jordan Salary");
+  });
+});
+
+describe("forecastScenario -- mock fixture end-to-end", () => {
+  it("produces a plausible, internally consistent projection", () => {
+    const result = forecastScenario(mockScenario);
+    expect(result.years.length).toBeGreaterThan(50);
+    expect(result.years[0].netWorthNominal).toBeGreaterThan(0);
+    // Net worth should generally trend upward through the working years.
+    expect(result.years[10].netWorthNominal).toBeGreaterThan(result.years[0].netWorthNominal);
+    expect(result.kpis.retirementAge).toBe(65);
+    expect(result.kpis.netWorthAtRetirement).not.toBeNull();
+  });
+});
+
+describe("forecastScenario -- contributions stop at retirement", () => {
+  it("stops an owned account's contributions the day the owner retires", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const k401 = makeAccount({
+      class: "tax_deferred",
+      name: "401(k)",
+      ownerId: personId,
+      contribution: { amount: 1000, frequency: "monthly", growthRatePct: 0, payrollDeducted: true },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, k401],
+      people: [{ id: personId, name: "Worker", birthDate: "1965-01-01", retirementAge: 63, planningEndAge: 95 }],
+      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2028-01-01", personId }],
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const balAt = (year: number) => result.years.find((y) => y.year === year)!.accountBalances[k401.id];
+
+    // 24 monthly contributions across 2026-2027, then nothing once retired.
+    expect(balAt(2027)).toBeCloseTo(24_000, 0);
+    expect(balAt(2028)).toBeCloseTo(24_000, 0);
+    expect(balAt(2029)).toBeCloseTo(24_000, 0);
+  });
+
+  it("honors a manual contribution end date", () => {
+    const roth = makeAccount({
+      class: "tax_free",
+      name: "Roth IRA",
+      contribution: {
+        amount: 500,
+        frequency: "monthly",
+        growthRatePct: 0,
+        payrollDeducted: true,
+        endDate: "2026-06-30",
+      },
+    });
+    const scenario = makeScenario({ accounts: [roth], horizonEndDate: "2026-12-31" });
+    const result = forecastScenario(scenario);
+
+    // 6 contributions (Jan-Jun), then stopped.
+    expect(result.years[0].accountBalances[roth.id]).toBeCloseTo(3_000, 0);
+  });
+});
+
+describe("forecastScenario -- social security COLA", () => {
+  const setup = (growthRatePct?: number) => {
+    const pid = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000 });
+    return makeScenario({
+      accounts: [checking],
+      people: [{ id: pid, name: "P", birthDate: "1960-01-01", retirementAge: 65, planningEndAge: 95 }],
+      events: [
+        {
+          id: nanoid(),
+          type: "social_security_start",
+          name: "SS",
+          startDate: "2026-01-01",
+          personId: pid,
+          monthlyBenefitAmount: 2000,
+          growthRatePct,
+          depositAccountId: checking.id,
+        },
+      ],
+      inflationRatePct: 0.03,
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+    });
+  };
+
+  it("defaults the COLA to the inflation rate", () => {
+    const r = forecastScenario(setup(undefined));
+    const y26 = r.years.find((y) => y.year === 2026)!.cashFlow.totalIncome;
+    const y29 = r.years.find((y) => y.year === 2029)!.cashFlow.totalIncome;
+    expect(y29).toBeCloseTo(y26 * 1.03 ** 3, -1); // grew at ~3% inflation (monthly COLA compounding)
+  });
+
+  it("honors an explicit COLA that differs from inflation", () => {
+    const r = forecastScenario(setup(0)); // 0% COLA -> flat in nominal terms
+    const y26 = r.years.find((y) => y.year === 2026)!.cashFlow.totalIncome;
+    const y29 = r.years.find((y) => y.year === 2029)!.cashFlow.totalIncome;
+    expect(y29).toBeCloseTo(y26, 0);
+    expect(y26).toBeCloseTo(24_000, 0); // 2000/mo, flat
+  });
+
+  it("treats the entered amount as today's dollars (real value stays flat, nominal inflates)", () => {
+    const pid = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000 });
+    const scenario = makeScenario({
+      accounts: [checking],
+      people: [{ id: pid, name: "P", birthDate: "1960-01-01", retirementAge: 65, planningEndAge: 95 }],
+      events: [
+        {
+          id: nanoid(),
+          type: "social_security_start",
+          name: "SS",
+          startDate: "2040-01-01", // starts well after the plan start
+          personId: pid,
+          monthlyBenefitAmount: 3000,
+          depositAccountId: checking.id,
+        },
+      ],
+      inflationRatePct: 0.03,
+      startDate: "2026-01-01",
+      horizonEndDate: "2041-12-31",
+    });
+    const r = forecastScenario(scenario);
+    const y2040 = r.years.find((y) => y.year === 2040)!;
+    const y2041 = r.years.find((y) => y.year === 2041)!;
+    // The $3,000/mo is entered in today's dollars, so its REAL (deflated) value
+    // in the first year is ~12 * $3,000 = $36,000 -- not the nominal amount.
+    const real2040 = y2040.cashFlow.totalIncome / y2040.inflationDeflator;
+    const real2041 = y2041.cashFlow.totalIncome / y2041.inflationDeflator;
+    expect(real2040).toBeCloseTo(36_000, -3); // ~$36k in today's dollars
+    expect(real2041).toBeCloseTo(36_000, -3); // stays flat in real terms
+    // Nominally the benefit has been inflated to future dollars by ~14 years of
+    // COLA, so it lands well above the entered $36,000.
+    expect(y2040.cashFlow.totalIncome).toBeGreaterThan(50_000);
+  });
+});
+
+describe("forecastScenario -- today's dollars for future-dated baseline income & expenses", () => {
+  // Income/expense events can no longer create a new source (see EventDrawer) --
+  // a future-dated income source or expense is just a baseline entry with a
+  // startDate after the plan start. These confirm that path still gets the
+  // same today's-dollars treatment as everything else.
+  it("treats a baseline income source starting years out as today's dollars", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000 });
+    const newJob = makeIncome({
+      name: "New job",
+      amount: 5_000,
+      frequency: "monthly",
+      startDate: "2040-01-01", // starts well after the plan start
+      growthRatePct: 0,
+      depositAccountId: checking.id,
+    });
+    const scenario = makeScenario({
+      accounts: [checking],
+      incomeSources: [newJob],
+      inflationRatePct: 0.03,
+      startDate: "2026-01-01",
+      horizonEndDate: "2041-12-31",
+    });
+    const r = forecastScenario(scenario);
+    const y2040 = r.years.find((y) => y.year === 2040)!;
+    const real2040 = y2040.cashFlow.totalIncome / y2040.inflationDeflator;
+    expect(real2040).toBeCloseTo(60_000, -3); // $5,000/mo in today's dollars
+    expect(y2040.cashFlow.totalIncome).toBeGreaterThan(80_000); // nominal is inflated well above that
+  });
+
+  it("treats a baseline expense starting years out as today's dollars", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000 });
+    const newLease = makeExpense({
+      name: "New lease",
+      amount: 1_000,
+      frequency: "monthly",
+      startDate: "2040-01-01",
+      growthRatePct: 0,
+      paymentAccountId: checking.id,
+    });
+    const scenario = makeScenario({
+      accounts: [checking],
+      expenses: [newLease],
+      inflationRatePct: 0.03,
+      startDate: "2026-01-01",
+      horizonEndDate: "2041-12-31",
+    });
+    const r = forecastScenario(scenario);
+    const y2040 = r.years.find((y) => y.year === 2040)!;
+    const real2040 = y2040.cashFlow.totalExpenses / y2040.inflationDeflator;
+    expect(real2040).toBeCloseTo(12_000, -3); // $1,000/mo in today's dollars
+    expect(y2040.cashFlow.totalExpenses).toBeGreaterThan(16_000); // nominal is inflated well above that
+  });
+});
+
+describe("forecastScenario -- starting balance", () => {
+  it("shows the opening balance as the first-year starting balance, not a deposit", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 15_000, growthRatePct: 0 });
+    const r = forecastScenario(makeScenario({ accounts: [checking], horizonEndDate: "2026-12-31" }));
+    const rf = r.years[0].rollforwards.find((x) => x.accountId === checking.id)!;
+    expect(rf.startingBalance).toBeCloseTo(15_000, 0);
+    expect(rf.deposits).toBeCloseTo(0, 0);
+    expect(rf.endingBalance).toBeCloseTo(15_000, 0);
+  });
+});
+
+describe("forecastScenario -- recurring expense every N years", () => {
+  it("charges a repeat expense every N years and skips the years between", () => {
+    const checking = makeAccount({
+      class: "cash",
+      name: "Checking",
+      isSpendingAccount: true,
+      startingBalance: 100_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking],
+      expenses: [
+        makeExpense({
+          paymentAccountId: checking.id,
+          name: "New car",
+          amount: 20_000,
+          frequency: "one_time",
+          intervalYears: 5,
+          startDate: "2026-01-01",
+          growthRatePct: 0,
+        }),
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2036-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const expenseIn = (year: number) => result.years.find((y) => y.year === year)!.cashFlow.totalExpenses;
+
+    // Fires 2026, 2031, 2036; nothing in between.
+    expect(expenseIn(2026)).toBeCloseTo(20_000, 0);
+    expect(expenseIn(2028)).toBeCloseTo(0, 0);
+    expect(expenseIn(2031)).toBeCloseTo(20_000, 0);
+    expect(expenseIn(2036)).toBeCloseTo(20_000, 0);
+    // $100k - three $20k purchases.
+    expect(result.years.find((y) => y.year === 2036)!.accountBalances[checking.id]).toBeCloseTo(40_000, 0);
+  });
+});
+
+describe("forecastScenario -- withdrawal taxes", () => {
+  it("taxes a shortfall withdrawal at the source", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      withdrawalPriority: 1,
+      startingBalance: 100_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 1000 })], // $12k/yr shortfall
+      withdrawalTaxRates: { taxDeferredPct: 0.25, taxablePct: 0, taxFreePct: 0 },
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // $12k drawn to cover spending realizes $3k tax (25%), both out of the IRA.
+    expect(year.accountBalances[ira.id]).toBeCloseTo(85_000, 0);
+    expect(year.cashFlow.deficitCovered).toBeCloseTo(12_000, 0);
+    expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(3_000, 0);
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+    // Tax shows on its own line but still counts against the bottom line:
+    // expenses stay $12k; net cash flow is -$12k spending - $3k tax = -$15k.
+    expect(year.cashFlow.totalExpenses).toBeCloseTo(12_000, 0);
+    expect(year.cashFlow.netCashFlow).toBeCloseTo(-15_000, 0);
+  });
+
+  it("taxes a transfer out of a taxable account as a withdrawal", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 100_000,
+    });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, savings],
+      events: [
+        {
+          id: nanoid(),
+          type: "custom_transfer",
+          name: "Move to savings",
+          startDate: "2026-06-01",
+          amount: 50_000,
+          fromAccountId: brokerage.id,
+          toAccountId: savings.id,
+          frequency: "one_time",
+        },
+      ],
+      withdrawalTaxRates: { taxDeferredPct: 0, taxablePct: 0.15, taxFreePct: 0 },
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // $50k moves to savings; the sale realizes $7.5k tax out of the brokerage.
+    expect(year.accountBalances[savings.id]).toBeCloseTo(50_000, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(42_500, 0);
+    expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(7_500, 0);
+  });
+
+  it("taxes an RMD at the tax-deferred rate", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      ownerId: personId,
+      taxTreatment: "tax_deferred",
+      subjectToRMD: true,
+      startingBalance: 500_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      people: [{ id: personId, name: "Retiree", birthDate: "1953-01-01", retirementAge: 65, planningEndAge: 95 }],
+      startDate: "2025-01-01",
+      withdrawalTaxRates: { taxDeferredPct: 0.25, taxablePct: 0, taxFreePct: 0 },
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    // Turns 73 in 2026 -> RMD fires that year off the 2025 year-end balance.
+    const year = result.years[1];
+
+    expect(year.cashFlow.rmdTotal).toBeGreaterThan(0);
+    // Tax is 25% of the forced distribution.
+    expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(year.cashFlow.rmdTotal * 0.25, 2);
+  });
+
+  it("leaves withdrawals untaxed when no rates are configured", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      withdrawalPriority: 1,
+      startingBalance: 100_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 1000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // No tax rates -> legacy behavior: pull exactly the shortfall, no tax.
+    expect(year.accountBalances[ira.id]).toBeCloseTo(88_000, 0);
+    expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(0, 0);
+  });
+});
