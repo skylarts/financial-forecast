@@ -1,13 +1,13 @@
 import type {
   Id,
   Scenario,
+  ForecastSettings,
   AccountYearRollforward,
   CashFlowYearRow,
   YearSnapshot,
   ProjectionResult,
   ProjectionWarning,
   LedgerEvent,
-  WithdrawalTaxRates,
   MoneyFlowStop,
 } from "@/domain";
 import { ageOn, compareDates, eachMonthStart, endOfYear, yearOf } from "./dateMath";
@@ -17,6 +17,17 @@ import { computeMonthlyPayment, amortizeMonth } from "./amortization";
 import { resolveEvents } from "./resolveEvents";
 import { resolvePrimarySpendingAccountId } from "./moneyFlow";
 import type { EngineAccount, MortgageSpec, Posting } from "./types";
+import {
+  bracketsForYear,
+  marginalRate,
+  progressiveTax,
+  stackedLtcgTax,
+  standardDeductionForYear,
+  taxableSocialSecurity,
+  ZERO_TAX_RATES,
+  SEED_TAX_RATES,
+  type YearTaxRates,
+} from "./taxTables";
 
 interface YearAccumulator {
   rollforward: Map<Id, { growth: number; deposits: number; withdrawals: number }>;
@@ -62,6 +73,12 @@ interface YearAccumulator {
   withdrawalNetByAccount: Map<Id, number>;
   /** Tax realized per source account, matching withdrawalNetByAccount. */
   withdrawalTaxByAccount: Map<Id, number>;
+  /** Realized capital gains (not the whole withdrawal, just the gain-over-basis portion) from taxable-account draws. */
+  capitalGainsRealized: number;
+  /** Gross (pre-tax) Social Security benefits received this year. */
+  grossSocialSecurity: number;
+  /** Gross (pre-tax) pension income received this year -- fully ordinary-taxable, no partial-inclusion rule. */
+  grossPension: number;
 }
 
 function freshAccumulator(accountIds: Id[]): YearAccumulator {
@@ -83,6 +100,9 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
     surplusByAccount: new Map(),
     withdrawalNetByAccount: new Map(),
     withdrawalTaxByAccount: new Map(),
+    capitalGainsRealized: 0,
+    grossSocialSecurity: 0,
+    grossPension: 0,
   };
 }
 
@@ -140,29 +160,25 @@ function effectiveTaxTreatment(account: EngineAccount): "taxable" | "tax_deferre
   }
 }
 
-/** Effective tax rate on withdrawing from this account, by its tax treatment. */
-function withdrawalTaxRate(account: EngineAccount, rates: WithdrawalTaxRates | undefined): number {
-  if (!rates) return 0;
-  switch (effectiveTaxTreatment(account)) {
-    case "tax_deferred":
-      return rates.taxDeferredPct;
-    case "taxable":
-      return rates.taxablePct;
-    case "tax_free":
-      return rates.taxFreePct;
-    default:
-      return 0;
-  }
-}
-
-export function forecastScenario(scenario: Scenario): ProjectionResult {
+/**
+ * Runs one deterministic month-by-month simulation of the scenario. Low-level
+ * and single-pass -- `ratesByYearOverride` supplies the per-year marginal
+ * tax-rate ESTIMATES used to size withholding/gross-up during the monthly
+ * loop (omit it, as most engine tests do, and every year is untaxed). The
+ * exact, bracket-computed tax bill for each year (`cashFlow.federalTaxTotal`)
+ * is always calculated fresh at year-end regardless of the estimate's
+ * accuracy -- see `projectScenario` below, which iterates this function to
+ * converge the estimates onto the real numbers before returning.
+ */
+export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<number, YearTaxRates>): ProjectionResult {
   const { settings } = scenario;
   const moneyFlow = settings.moneyFlow;
-  const taxRates = settings.withdrawalTaxRates;
+  const ratesForYear = (year: number): YearTaxRates => ratesByYearOverride?.get(year) ?? ZERO_TAX_RATES;
   const resolved = resolveEvents(scenario);
   const accounts = resolved.accounts;
   const accountIds = accounts.map((a) => a.id);
   const accountById = new Map(accounts.map((a) => [a.id, a]));
+  const incomeSourceById = new Map(scenario.incomeSources.map((s) => [s.id, s]));
   // Excluded accounts stay in the resolved list (so the UI can still render
   // them as a static line) but are skipped everywhere in the simulation: no
   // growth, no postings, no RMDs, no routing, no totals. Their balance simply
@@ -212,6 +228,12 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
   const hubIds = new Set(spendingHubs.map((h) => h.account.id));
 
   const balances = new Map<Id, number>(accounts.map((a) => [a.id, 0]));
+  // Cost basis for taxable_investment accounts (average-cost method -- no
+  // per-lot tracking): starting balance + every dollar of new money that's
+  // landed in the account since (contributions, routed surplus, rebalanced
+  // transfers). Growth never touches it. Only read for "taxable"-treatment
+  // accounts; harmless bookkeeping for everything else.
+  const basis = new Map<Id, number>(accounts.map((a) => [a.id, 0]));
   const priorYearEndBalances = new Map<Id, number>();
 
   const years: YearSnapshot[] = [];
@@ -229,18 +251,66 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
   let acc = freshAccumulator(accountIds);
   const yearStartBalances = new Map<Id, number>(balances);
 
+  // New money landing in a taxable_investment account (a contribution, a
+  // routed surplus sweep, a rebalanced transfer) is basis, not gain --
+  // called at every credit site for such an account.
+  const creditBasisIfTaxable = (accountId: Id, amount: number): void => {
+    if (amount <= 0) return;
+    const account = accountById.get(accountId);
+    if (account && effectiveTaxTreatment(account) === "taxable") {
+      basis.set(accountId, (basis.get(accountId) ?? 0) + amount);
+    }
+  };
+
+  // The rate used to size a withdrawal BEFORE any balance mutation (the
+  // deficit cascade needs this to know how much it can safely pull without
+  // overdrawing once tax is realized). For a taxable account this is the
+  // gain fraction of the CURRENT (pre-withdrawal) balance times the LTCG
+  // rate, since only the gain portion is ever taxed.
+  const estimatedWithdrawalRate = (account: EngineAccount): number => {
+    const treatment = effectiveTaxTreatment(account);
+    const rates = ratesForYear(currentYear);
+    if (treatment === "tax_deferred") return rates.ordinaryMarginalRate;
+    if (treatment === "taxable") {
+      const bal = balances.get(account.id) ?? 0;
+      const bas = basis.get(account.id) ?? 0;
+      const gainFraction = bal > 0 ? Math.max(0, bal - bas) / bal : 0;
+      return gainFraction * rates.ltcgMarginalRate;
+    }
+    return 0;
+  };
+
   // Single source of truth for withdrawal tax. Any time `amount` leaves a
   // taxable / tax-deferred account -- a transfer or sale out of it, an RMD, a
   // draw to cover spending, a cap-overflow rebalance -- that sale realizes
-  // tax = amount * rate, deducted from the same account and tallied on the
-  // "Taxes on withdrawals & RMDs" cash-flow line. Cash and Roth carry a 0 rate.
-  // Deposits and moving *cash* into investments are never taxed.
+  // tax, deducted from the same account and tallied on the "Taxes on
+  // withdrawals & RMDs" cash-flow line. Cash and Roth realize no tax. A
+  // tax-deferred withdrawal is taxed in full (ordinary income, no basis
+  // concept); a taxable-account withdrawal is taxed only on its realized-gain
+  // portion (average-cost basis, reduced proportionally). Deposits and moving
+  // *cash* into investments are never taxed. Note: `balances.get(sourceId)`
+  // is already net of `amount` at every call site below, so gain-fraction
+  // math reconstructs the pre-withdrawal balance as `balance + amount`.
   const realizeWithdrawalTax = (sourceId: Id, amount: number): number => {
     if (amount <= 0) return 0;
     const src = accountById.get(sourceId);
-    const rate = src ? withdrawalTaxRate(src, taxRates) : 0;
-    if (rate <= 0) return 0;
-    const tax = amount * rate;
+    if (!src) return 0;
+    const treatment = effectiveTaxTreatment(src);
+    const rates = ratesForYear(currentYear);
+    let tax = 0;
+    if (treatment === "tax_deferred") {
+      tax = amount * rates.ordinaryMarginalRate;
+    } else if (treatment === "taxable") {
+      const balBefore = (balances.get(sourceId) ?? 0) + amount;
+      const bas = basis.get(sourceId) ?? 0;
+      const gainFraction = balBefore > 0 ? Math.max(0, balBefore - bas) / balBefore : 0;
+      const gain = amount * gainFraction;
+      const basisPortion = balBefore > 0 ? amount * (bas / balBefore) : 0;
+      basis.set(sourceId, Math.max(0, bas - basisPortion));
+      acc.capitalGainsRealized += gain;
+      tax = gain * rates.ltcgMarginalRate;
+    }
+    if (tax <= 0) return 0;
     balances.set(sourceId, (balances.get(sourceId) ?? 0) - tax);
     const bucket = acc.rollforward.get(sourceId);
     if (bucket) bucket.withdrawals += tax;
@@ -268,6 +338,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         // than counting it as a deposit.
         balances.set(account.id, account.startingBalance);
         yearStartBalances.set(account.id, account.startingBalance);
+        basis.set(account.id, account.startingBalance);
         continue;
       }
       if (account.isExcluded) continue;
@@ -300,6 +371,26 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         // itemized list, but never reached cash on hand -- track separately
         // so it doesn't inflate the reconciled Net.
         if (!hubIds.has(posting.accountId)) acc.directIncomeToOtherAccounts += posting.amount;
+
+        // Social Security and pension income are entered GROSS (unlike every
+        // other income category, which is take-home) so their real
+        // taxability can be computed -- withhold an estimate now at this
+        // year's converged rate; the exact bracket-computed bill overrides
+        // this at year-end regardless (see federalTaxTotal below).
+        const incomeSrc = incomeSourceById.get(posting.sourceId);
+        if (posting.amount > 0 && (incomeSrc?.category === "social_security" || incomeSrc?.category === "pension")) {
+          const rates = ratesForYear(currentYear);
+          const taxableFraction = incomeSrc.category === "social_security" ? rates.ssTaxableFraction : 1;
+          if (incomeSrc.category === "social_security") acc.grossSocialSecurity += posting.amount;
+          else acc.grossPension += posting.amount;
+          const withheld = posting.amount * taxableFraction * rates.ordinaryMarginalRate;
+          if (withheld > 0.005) {
+            balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) - withheld);
+            const withheldBucket = acc.rollforward.get(posting.accountId);
+            if (withheldBucket) withheldBucket.withdrawals += withheld;
+            acc.taxesPaid += withheld;
+          }
+        }
       } else if (posting.category === "expense") {
         acc.totalExpenses += -posting.amount;
         addTo(acc.expenseByItem, posting.sourceId, -posting.amount);
@@ -313,6 +404,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         // posting handles the spending-account balance, so we only tally the
         // total here (avoids double counting). Payroll-deducted ones cost nothing.
         if (!fromPaycheck) acc.afterTaxContributions += posting.amount;
+        creditBasisIfTaxable(posting.accountId, posting.amount);
       } else if (posting.category === "transfer" && hubIds.has(posting.accountId)) {
         // A transfer leg landing on or leaving a hub directly (a custom
         // transfer to/from checking, or a buy_home down payment sourced from
@@ -458,6 +550,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         acc.rollforward.get(target.id)!.deposits += take;
         acc.surplusRouted += take;
         addTo(acc.surplusByAccount, target.id, take);
+        creditBasisIfTaxable(target.id, take);
         remaining -= take;
       }
     }
@@ -488,6 +581,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         acc.rollforward.get(dest.account.id)!.deposits += move;
         // Overflowing out of a taxable account is still a sale -- tax it.
         realizeWithdrawalTax(over.account.id, move);
+        creditBasisIfTaxable(dest.account.id, move);
         excess -= move;
       }
       // Any excess still left here had nowhere to go (every downstream target is
@@ -507,7 +601,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         // Pulling `provide` to cover spending also realizes `provide * rate` in
         // tax, both out of this account, so the two together can't exceed what's
         // there: provide <= available / (1 + rate).
-        const rate = withdrawalTaxRate(source, taxRates);
+        const rate = estimatedWithdrawalRate(source);
         const provide = Math.min(shortfall, available / (1 + rate));
         if (provide <= 0) continue;
         balances.set(source.id, (balances.get(source.id) ?? 0) - provide);
@@ -627,6 +721,40 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         .filter((w) => w.gross > 0.005)
         .sort((a, b) => b.gross - a.gross);
 
+      // Exact federal tax for the year, from real 2026 brackets on the year's
+      // actually-realized income -- independent of however approximate the
+      // rate used to size withholding during the monthly loop above was.
+      const grossOrdinaryWithdrawals = withdrawalsByAccount
+        .filter((w) => w.taxTreatment === "tax_deferred")
+        .reduce((s, w) => s + w.gross, 0);
+      const taxableSocialSecurityAmount = taxableSocialSecurity(
+        acc.grossSocialSecurity,
+        grossOrdinaryWithdrawals + acc.grossPension,
+        settings.filingStatus
+      );
+      const grossOrdinaryIncome = grossOrdinaryWithdrawals + acc.grossPension + taxableSocialSecurityAmount;
+      const standardDeduction = standardDeductionForYear(
+        scenario.household.people,
+        settings.filingStatus,
+        currentYear,
+        settings.inflationRatePct,
+        grossOrdinaryIncome
+      );
+      const ordinaryTaxableIncome = Math.max(0, grossOrdinaryIncome - standardDeduction);
+      const { ordinary: ordinaryBrackets, ltcg: ltcgBrackets } = bracketsForYear(
+        currentYear,
+        settings.filingStatus,
+        settings.inflationRatePct
+      );
+      const federalOrdinaryTax = progressiveTax(ordinaryTaxableIncome, ordinaryBrackets);
+      const { tax: federalLtcgTax } = stackedLtcgTax(ordinaryTaxableIncome, acc.capitalGainsRealized, ltcgBrackets);
+      // The flat add-on (state/local, or anything else not modeled) applies
+      // to the same combined base; 0 by default (e.g. correct as-is in a
+      // no-income-tax state).
+      const additionalTax =
+        (ordinaryTaxableIncome + acc.capitalGainsRealized) * settings.additionalFlatTaxRatePct;
+      const federalTaxTotal = federalOrdinaryTax + federalLtcgTax + additionalTax;
+
       const operatingCashFlow = acc.totalIncome - acc.totalExpenses;
       // Cash that flowed in from accounts to cover the operating gap: deficit
       // draws + RMD proceeds, plus any expense paid directly from an investment
@@ -666,6 +794,11 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
           .sort((a, b) => b.amount - a.amount),
         surplusByAccount: toAccountItems(acc.surplusByAccount),
         withdrawalsByAccount,
+        federalTaxTotal,
+        ordinaryTaxableIncome,
+        capitalGainsRealized: acc.capitalGainsRealized,
+        grossSocialSecurity: acc.grossSocialSecurity,
+        taxableSocialSecurityAmount,
       };
 
       years.push({
@@ -727,4 +860,68 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
     },
     warnings,
   };
+}
+
+const MAX_TAX_CONVERGENCE_ITERATIONS = 3;
+/** Stop iterating once no year's rate moves by more than this (0.1 percentage point). */
+const RATE_CONVERGENCE_TOLERANCE = 0.001;
+
+/**
+ * The real entry point for the app (see useProjection.ts): runs
+ * `forecastScenario` repeatedly, refining each year's withdrawal/withholding
+ * rate estimate from that year's own actual realized income each time, until
+ * the estimates stop moving (or the iteration cap is hit -- this is a
+ * well-behaved monotonic function, converges in 1-2 passes almost always).
+ * Because the simulation is deterministic (no Monte Carlo), a whole year's
+ * income picture is fully knowable, so this whole-horizon iteration is
+ * simpler and more robust than trying to solve each year's tax circularity
+ * inline. The final pass's result -- already carrying the exact
+ * bracket-computed `federalTaxTotal` per year -- is returned as-is.
+ */
+export function projectScenario(scenario: Scenario): ProjectionResult {
+  const { settings } = scenario;
+  const startYear = yearOf(settings.startDate);
+  const endYear = yearOf(settings.horizonEndDate);
+
+  let ratesByYear = new Map<number, YearTaxRates>();
+  for (let y = startYear; y <= endYear; y++) ratesByYear.set(y, SEED_TAX_RATES);
+
+  let result = forecastScenario(scenario, ratesByYear);
+
+  for (let iteration = 0; iteration < MAX_TAX_CONVERGENCE_ITERATIONS; iteration++) {
+    const nextRates = new Map<number, YearTaxRates>();
+    let maxDelta = 0;
+
+    for (const snapshot of result.years) {
+      const prev = ratesByYear.get(snapshot.year) ?? SEED_TAX_RATES;
+      const { ordinary, ltcg } = bracketsForYear(snapshot.year, settings.filingStatus, settings.inflationRatePct);
+      const nextOrdinary = marginalRate(snapshot.cashFlow.ordinaryTaxableIncome, ordinary);
+      const { marginalRate: nextLtcg } = stackedLtcgTax(
+        snapshot.cashFlow.ordinaryTaxableIncome,
+        snapshot.cashFlow.capitalGainsRealized,
+        ltcg
+      );
+      const nextSsFraction =
+        snapshot.cashFlow.grossSocialSecurity > 0
+          ? snapshot.cashFlow.taxableSocialSecurityAmount / snapshot.cashFlow.grossSocialSecurity
+          : prev.ssTaxableFraction;
+
+      maxDelta = Math.max(
+        maxDelta,
+        Math.abs(nextOrdinary - prev.ordinaryMarginalRate),
+        Math.abs(nextLtcg - prev.ltcgMarginalRate)
+      );
+      nextRates.set(snapshot.year, {
+        ordinaryMarginalRate: nextOrdinary,
+        ltcgMarginalRate: nextLtcg,
+        ssTaxableFraction: nextSsFraction,
+      });
+    }
+
+    ratesByYear = nextRates;
+    if (maxDelta < RATE_CONVERGENCE_TOLERANCE) break;
+    result = forecastScenario(scenario, ratesByYear);
+  }
+
+  return result;
 }

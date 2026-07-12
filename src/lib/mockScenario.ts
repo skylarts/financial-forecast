@@ -249,6 +249,7 @@ export const mockScenario: Scenario = {
       splitMode: "priority_fill",
     },
     rmdEnabled: true,
-    withdrawalTaxRates: { taxDeferredPct: 0.22, taxablePct: 0.15, taxFreePct: 0 },
+    filingStatus: "marriedFilingJointly",
+    additionalFlatTaxRatePct: 0,
   },
 };

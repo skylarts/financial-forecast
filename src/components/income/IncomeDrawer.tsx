@@ -122,9 +122,23 @@ export function IncomeDrawer({
             options={[{ value: "", label: "Joint / none" }, ...people.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </Field>
-        <Field label="Amount (per occurrence, today's dollars)">
+        <Field
+          label={
+            category === "social_security" || category === "pension"
+              ? "Amount (per occurrence, today's dollars, GROSS -- before tax)"
+              : "Amount (per occurrence, today's dollars)"
+          }
+        >
           <TextInput reg={register("amount", { valueAsNumber: true, required: true })} type="number" step="0.01" />
         </Field>
+        {(category === "social_security" || category === "pension") && (
+          <p className="-mt-1 text-xs text-dim">
+            Unlike other income categories (entered take-home), {category === "social_security" ? "Social Security" : "pension"}{" "}
+            should be the gross benefit -- what&rsquo;s on your SSA statement{category === "pension" ? " or pension paperwork" : ""},
+            before any tax withholding. The engine computes real tax on it each year (Social Security only as far as it&rsquo;s
+            actually taxable) rather than taking it as already net.
+          </p>
+        )}
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
         </Field>

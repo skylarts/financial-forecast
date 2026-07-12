@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { nanoid } from "nanoid";
-import { forecastScenario } from "./forecastScenario";
+import { forecastScenario, projectScenario } from "./forecastScenario";
 import { makeAccount, makeIncome, makeExpense, makeScenario } from "./testHelpers";
 import { mockScenario } from "@/lib/mockScenario";
 import { elapsedYears } from "./dateMath";
@@ -877,105 +877,7 @@ describe("forecastScenario -- recurring expense every N years", () => {
 });
 
 describe("forecastScenario -- withdrawal taxes", () => {
-  it("taxes a shortfall withdrawal at the source", () => {
-    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
-    const ira = makeAccount({
-      class: "tax_deferred",
-      name: "IRA",
-      taxTreatment: "tax_deferred",
-      withdrawalPriority: 1,
-      startingBalance: 100_000,
-    });
-    const scenario = makeScenario({
-      accounts: [checking, ira],
-      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 1000 })], // $12k/yr shortfall
-      withdrawalTaxRates: { taxDeferredPct: 0.25, taxablePct: 0, taxFreePct: 0 },
-      horizonEndDate: "2026-12-31",
-    });
-    const result = forecastScenario(scenario);
-    const year = result.years[0];
-
-    // $12k drawn to cover spending realizes $3k tax (25%), both out of the IRA.
-    expect(year.accountBalances[ira.id]).toBeCloseTo(85_000, 0);
-    expect(year.cashFlow.withdrawalsToCashNet).toBeCloseTo(12_000, 0);
-    expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(3_000, 0);
-    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
-    expect(year.cashFlow.totalExpenses).toBeCloseTo(12_000, 0);
-    // The withdrawal section shows the IRA outflow gross ($15k), split into the
-    // $12k that funded spending and the $3k tax.
-    const iraWithdrawal = year.cashFlow.withdrawalsByAccount.find((w) => w.id === ira.id)!;
-    expect(iraWithdrawal.gross).toBeCloseTo(15_000, 0);
-    expect(iraWithdrawal.net).toBeCloseTo(12_000, 0);
-    expect(iraWithdrawal.tax).toBeCloseTo(3_000, 0);
-    // Reconciling Net: operating shortfall (-$12k) is exactly covered by the
-    // $12k after-tax draw, so cash on hand nets to ~$0.
-    expect(year.cashFlow.operatingCashFlow).toBeCloseTo(-12_000, 0);
-    expect(year.cashFlow.netCashFlow).toBeCloseTo(0, 0);
-  });
-
-  it("taxes a transfer out of a taxable account as a withdrawal", () => {
-    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
-    const brokerage = makeAccount({
-      class: "taxable_investment",
-      name: "Brokerage",
-      taxTreatment: "taxable",
-      startingBalance: 100_000,
-    });
-    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0 });
-    const scenario = makeScenario({
-      accounts: [checking, brokerage, savings],
-      events: [
-        {
-          id: nanoid(),
-          type: "custom_transfer",
-          name: "Move to savings",
-          startDate: "2026-06-01",
-          amount: 50_000,
-          fromAccountId: brokerage.id,
-          toAccountId: savings.id,
-          frequency: "one_time",
-        },
-      ],
-      withdrawalTaxRates: { taxDeferredPct: 0, taxablePct: 0.15, taxFreePct: 0 },
-      horizonEndDate: "2026-12-31",
-    });
-    const result = forecastScenario(scenario);
-    const year = result.years[0];
-
-    // $50k moves to savings; the sale realizes $7.5k tax out of the brokerage.
-    expect(year.accountBalances[savings.id]).toBeCloseTo(50_000, 0);
-    expect(year.accountBalances[brokerage.id]).toBeCloseTo(42_500, 0);
-    expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(7_500, 0);
-  });
-
-  it("taxes an RMD at the tax-deferred rate", () => {
-    const personId = nanoid();
-    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
-    const ira = makeAccount({
-      class: "tax_deferred",
-      name: "IRA",
-      ownerId: personId,
-      taxTreatment: "tax_deferred",
-      subjectToRMD: true,
-      startingBalance: 500_000,
-    });
-    const scenario = makeScenario({
-      accounts: [checking, ira],
-      people: [{ id: personId, name: "Retiree", birthDate: "1953-01-01", retirementAge: 65, planningEndAge: 95 }],
-      startDate: "2025-01-01",
-      withdrawalTaxRates: { taxDeferredPct: 0.25, taxablePct: 0, taxFreePct: 0 },
-      horizonEndDate: "2026-12-31",
-    });
-    const result = forecastScenario(scenario);
-    // Turns 73 in 2026 -> RMD fires that year off the 2025 year-end balance.
-    const year = result.years[1];
-
-    expect(year.cashFlow.rmdTotal).toBeGreaterThan(0);
-    // Tax is 25% of the forced distribution.
-    expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(year.cashFlow.rmdTotal * 0.25, 2);
-  });
-
-  it("leaves withdrawals untaxed when no rates are configured", () => {
+  it("leaves withdrawals untaxed on a raw forecastScenario() call with no rates supplied", () => {
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
     const ira = makeAccount({
       class: "tax_deferred",
@@ -995,6 +897,174 @@ describe("forecastScenario -- withdrawal taxes", () => {
     // No tax rates -> legacy behavior: pull exactly the shortfall, no tax.
     expect(year.accountBalances[ira.id]).toBeCloseTo(88_000, 0);
     expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(0, 0);
+  });
+
+  it("taxes a $90k sole-income 401k withdrawal using real progressive brackets, not a flat rate", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      withdrawalPriority: 1,
+      startingBalance: 500_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 7_500 })], // $90k/yr, no other income
+      horizonEndDate: "2026-12-31",
+    });
+    const result = projectScenario(scenario);
+    const year = result.years[0];
+    const iraWithdrawal = year.cashFlow.withdrawalsByAccount.find((w) => w.id === ira.id)!;
+
+    // $90k reaches spending net of tax (the deficit cascade sizes withdrawals
+    // to net exactly the shortfall, regardless of the rate estimate).
+    expect(year.cashFlow.withdrawalsToCashNet).toBeCloseTo(90_000, -2);
+    expect(iraWithdrawal.net).toBeCloseTo(90_000, -2);
+    // $90k taxable income minus the $32,200 MFJ standard deduction lands in
+    // the 12% bracket -- real tax is a few thousand dollars, nowhere near
+    // the old flat-22%-of-gross approximation (~$20k+).
+    expect(year.cashFlow.federalTaxTotal).toBeGreaterThan(4_000);
+    expect(year.cashFlow.federalTaxTotal).toBeLessThan(9_000);
+    expect(year.cashFlow.federalTaxTotal / iraWithdrawal.gross).toBeLessThan(0.1);
+  });
+
+  it("realizes zero capital-gains tax on a taxable-account transfer that's pure basis (no gain yet)", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 100_000,
+      growthRatePct: 0,
+    });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, savings],
+      events: [
+        {
+          id: nanoid(),
+          type: "custom_transfer",
+          name: "Move to savings",
+          startDate: "2026-06-01",
+          amount: 50_000,
+          fromAccountId: brokerage.id,
+          toAccountId: savings.id,
+          frequency: "one_time",
+        },
+      ],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = projectScenario(scenario);
+    const year = result.years[0];
+
+    // No growth, no contributions -> the whole balance is basis, so the
+    // draw carries no gain and realizes no tax (old flat-15%-of-everything
+    // proxy would have charged $7,500 regardless).
+    expect(year.accountBalances[savings.id]).toBeCloseTo(50_000, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(50_000, 0);
+    expect(year.cashFlow.capitalGainsRealized).toBeCloseTo(0, 2);
+    expect(year.cashFlow.federalTaxTotal).toBeCloseTo(0, 0);
+  });
+
+  it("taxes only the realized-gain portion of a taxable-account draw once the account has grown", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 100_000,
+      growthRatePct: 0.2,
+    });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, savings],
+      events: [
+        {
+          id: nanoid(),
+          type: "custom_transfer",
+          name: "Move to savings",
+          startDate: "2027-06-01", // after a full year of 20% growth on top of the $100k basis
+          amount: 60_000,
+          fromAccountId: brokerage.id,
+          toAccountId: savings.id,
+          frequency: "one_time",
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = projectScenario(scenario);
+    const year2 = result.years[1];
+
+    // The account has clearly grown past its $100k basis by mid-2027, so
+    // some -- but not all -- of the $60k draw is a realized gain.
+    expect(year2.cashFlow.capitalGainsRealized).toBeGreaterThan(0);
+    expect(year2.cashFlow.capitalGainsRealized).toBeLessThan(60_000);
+    // The gain here (well under $98,900 MFJ) sits entirely in the 0% LTCG
+    // bracket, so real tax is $0 -- the old flat-15%-of-the-whole-draw proxy
+    // would have charged $9,000 regardless of there being no meaningful gain.
+    expect(year2.cashFlow.federalTaxTotal).toBeLessThan(500);
+  });
+
+  it("taxes an RMD using real progressive brackets -- $0 when it's below the standard deduction", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      ownerId: personId,
+      taxTreatment: "tax_deferred",
+      subjectToRMD: true,
+      startingBalance: 500_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      people: [{ id: personId, name: "Retiree", birthDate: "1953-01-01", retirementAge: 65, planningEndAge: 95 }],
+      startDate: "2025-01-01",
+      horizonEndDate: "2026-12-31",
+    });
+    const result = projectScenario(scenario);
+    // Turns 73 in 2026 -> RMD fires that year off the 2025 year-end balance.
+    const year = result.years[1];
+
+    expect(year.cashFlow.rmdTotal).toBeGreaterThan(0);
+    // $500k / ~26.5 divisor =~ $18.9k RMD, comfortably under the $32,200 MFJ
+    // standard deduction with no other income -- real tax is $0. The old
+    // flat-rate model would have charged real money regardless.
+    expect(year.cashFlow.federalTaxTotal).toBeCloseTo(0, 0);
+  });
+
+  it("computes Social Security's partial taxability alongside a tax-deferred withdrawal", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      ownerId: personId,
+      taxTreatment: "tax_deferred",
+      withdrawalPriority: 1,
+      startingBalance: 500_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      incomeSources: [
+        makeIncome({ depositAccountId: checking.id, amount: 3_000, frequency: "monthly", category: "social_security" }),
+      ], // $36k/yr gross
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 9_000 })], // $108k/yr -> ~$72k/yr from the IRA
+      people: [{ id: personId, name: "Retiree", birthDate: "1953-01-01", retirementAge: 65, planningEndAge: 95 }],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = projectScenario(scenario);
+    const year = result.years[0];
+
+    expect(year.cashFlow.grossSocialSecurity).toBeCloseTo(36_000, 0);
+    // Combined with a sizeable IRA draw, provisional income clears the $44k
+    // MFJ threshold, so a meaningful (but not necessarily the full 85% cap)
+    // share of the benefit ends up taxable.
+    expect(year.cashFlow.taxableSocialSecurityAmount).toBeGreaterThan(0);
+    expect(year.cashFlow.taxableSocialSecurityAmount).toBeLessThanOrEqual(36_000 * 0.85 + 0.5);
+    expect(year.cashFlow.federalTaxTotal).toBeGreaterThan(0);
   });
 });
 

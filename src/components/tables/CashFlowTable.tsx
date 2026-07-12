@@ -266,6 +266,11 @@ export function CashFlowTable({
                   ))
                 : emptyRow("No withdrawals in this range."))}
 
+            {/* Federal tax -- the exact bracket-computed bill for the year (RMDs/withdrawals,
+                taxable Social Security, pension, and capital gains combined), not a sum of the
+                approximate per-withdrawal figures above. */}
+            {summaryRow("Federal tax", (yi) => -years[yi].cashFlow.federalTaxTotal)}
+
             {/* Saved to accounts */}
             {hasSaved &&
               sectionHeader(
@@ -329,8 +334,12 @@ export function CashFlowTable({
         gross by account and grouped by tax treatment, with the tax each draw triggers. <strong>Net change in cash</strong> =
         operating result + the after-tax withdrawals that reached your spending &minus; money saved into accounts; it lands
         near $0 in a year where you draw just what you need (your cash buffer holds steady). Moving money between your own
-        accounts (a transfer) appears under Withdrawals for visibility but doesn&apos;t change your total cash. The Total column
-        sums each row across the selected range; Ending cash is a balance, not a flow, so it isn&apos;t summed.
+        accounts (a transfer) appears under Withdrawals for visibility but doesn&apos;t change your total cash. <strong>Federal
+        tax</strong> is the exact bill for the year computed from real IRS brackets on your actual realized income (RMDs,
+        other tax-deferred withdrawals, taxable Social Security, pension, and capital gains) &mdash; it won&apos;t exactly
+        match the sum of the &ldquo;tax on withdrawals&rdquo; lines above, since those only approximate withholding
+        during the year. The Total column sums each row across the selected range; Ending cash is a balance, not a flow,
+        so it isn&apos;t summed.
       </p>
     </div>
   );

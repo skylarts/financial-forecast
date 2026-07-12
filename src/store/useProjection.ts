@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Scenario } from "@/domain";
-import { forecastScenario } from "@/engine/forecastScenario";
+import { projectScenario } from "@/engine/forecastScenario";
 
 /**
  * Memoized derived value -- the projection is never stored as state, only
@@ -8,5 +8,5 @@ import { forecastScenario } from "@/engine/forecastScenario";
  * reference changes (i.e. an actual edit), not on unrelated re-renders.
  */
 export function useProjection(scenario: Scenario) {
-  return useMemo(() => forecastScenario(scenario), [scenario]);
+  return useMemo(() => projectScenario(scenario), [scenario]);
 }

@@ -99,6 +99,22 @@ export interface CashFlowYearRow {
    * The comprehensive "Withdrawals (Planned, RMDs & taxes)" view.
    */
   withdrawalsByAccount: WithdrawalLineItem[];
+  /**
+   * The exact federal tax bill for the year, computed from real 2026 IRS
+   * brackets (inflated forward) on realized income -- NOT a sum of the
+   * approximate per-withdrawal `tax` figures above, which only size
+   * withholding during the simulation. Includes the optional flat state/local
+   * add-on from settings.additionalFlatTaxRatePct (0 by default).
+   */
+  federalTaxTotal: number;
+  /** Ordinary taxable income for the year (tax-deferred withdrawals + gross pension + taxable Social Security, net of the standard deduction). */
+  ordinaryTaxableIncome: number;
+  /** Realized long-term capital gains from taxable-account withdrawals this year (gain-over-basis portion only). */
+  capitalGainsRealized: number;
+  /** Gross (pre-tax) Social Security benefits received this year. */
+  grossSocialSecurity: number;
+  /** The taxable portion of grossSocialSecurity, per the IRS provisional-income rule. */
+  taxableSocialSecurityAmount: number;
 }
 
 export interface TimelineRow {

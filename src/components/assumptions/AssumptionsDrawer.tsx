@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { Person, Scenario } from "@/domain";
-import { personSchema, forecastSettingsSchema, DEFAULT_WITHDRAWAL_TAX_RATES } from "@/domain";
+import { personSchema, forecastSettingsSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
 import { ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -79,7 +79,6 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
   const [newPersonName, setNewPersonName] = useState("");
 
   const [settingsDraft, setSettingsDraft] = useState(scenario.settings);
-  const taxRates = settingsDraft.withdrawalTaxRates ?? DEFAULT_WITHDRAWAL_TAX_RATES;
 
   const saveSettings = (next: typeof settingsDraft) => {
     setSettingsDraft(next);
@@ -146,34 +145,39 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
           </label>
 
           <div className="rounded-md border border-border p-3">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-dim">Withdrawal tax rates</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-dim">Federal tax</div>
             <p className="mb-2 text-xs text-dim">
-              Applied when money is drawn from accounts (RMDs and covering shortfalls). Income is entered as take-home,
-              so these bite only on retirement-account withdrawals. Enter as decimals (e.g. 0.22 for 22%).
+              Computed automatically each year from real 2026 IRS brackets (inflated forward with the rate above),
+              based on that year&rsquo;s actual realized income -- RMDs, other tax-deferred withdrawals, taxable
+              Social Security, pension, and capital gains on taxable-account withdrawals. Salary and other take-home
+              income aren&rsquo;t re-taxed. See the Cash Flow tab&rsquo;s &ldquo;Federal tax&rdquo; row for the
+              computed dollar amount each year.
             </p>
-            {(
-              [
-                ["taxDeferredPct", "Tax-deferred (401k / traditional IRA)"],
-                ["taxablePct", "Taxable brokerage (capital gains)"],
-                ["taxFreePct", "Tax-free (Roth)"],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="mb-2 flex flex-col gap-1 text-xs text-dim last:mb-0">
-                {label}
-                <input
-                  className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                  type="number"
-                  step="0.01"
-                  value={taxRates[key]}
-                  onChange={(e) =>
-                    saveSettings({
-                      ...settingsDraft,
-                      withdrawalTaxRates: { ...taxRates, [key]: Number(e.target.value) },
-                    })
-                  }
-                />
-              </label>
-            ))}
+            <label className="mb-2 flex flex-col gap-1 text-xs text-dim">
+              Filing status
+              <select
+                className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+                value={settingsDraft.filingStatus}
+                onChange={(e) =>
+                  saveSettings({ ...settingsDraft, filingStatus: e.target.value as typeof settingsDraft.filingStatus })
+                }
+              >
+                <option value="marriedFilingJointly">Married filing jointly</option>
+                <option value="single">Single</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              Additional flat tax rate (state/local, e.g. 0.05 for 5% -- 0 if none)
+              <input
+                className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+                type="number"
+                step="0.01"
+                value={settingsDraft.additionalFlatTaxRatePct}
+                onChange={(e) =>
+                  saveSettings({ ...settingsDraft, additionalFlatTaxRatePct: Number(e.target.value) })
+                }
+              />
+            </label>
           </div>
           <p className="text-xs text-dim">
             Spending accounts, surplus routing, and drain order live in the{" "}

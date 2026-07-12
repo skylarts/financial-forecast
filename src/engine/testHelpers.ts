@@ -138,7 +138,8 @@ export function makeScenario(overrides: {
   horizonEndDate?: string;
   inflationRatePct?: number;
   people?: Scenario["household"]["people"];
-  withdrawalTaxRates?: Scenario["settings"]["withdrawalTaxRates"];
+  filingStatus?: Scenario["settings"]["filingStatus"];
+  additionalFlatTaxRatePct?: number;
   surplusRoutingRule?: { mode: "priority_fill" } | { mode: "fixed_split"; splits: { accountId: string; pct: number }[] };
   moneyFlow?: MoneyFlow;
 }): Scenario {
@@ -156,8 +157,8 @@ export function makeScenario(overrides: {
       inflationRatePct: overrides.inflationRatePct ?? 0,
       moneyFlow: overrides.moneyFlow ?? deriveMoneyFlow(overrides.accounts, overrides.surplusRoutingRule),
       rmdEnabled: true,
-      // Untaxed by default so existing tests stay deterministic; opt in per test.
-      withdrawalTaxRates: overrides.withdrawalTaxRates ?? { taxDeferredPct: 0, taxablePct: 0, taxFreePct: 0 },
+      filingStatus: overrides.filingStatus ?? "marriedFilingJointly",
+      additionalFlatTaxRatePct: overrides.additionalFlatTaxRatePct ?? 0,
     },
   };
 }

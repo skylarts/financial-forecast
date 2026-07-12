@@ -56,31 +56,8 @@ export const DEFAULT_MONEY_FLOW: MoneyFlow = {
   splitMode: "priority_fill",
 };
 
-/**
- * Effective tax rates applied when money is withdrawn from an account, keyed by
- * the account's tax treatment. Income is entered as take-home (already taxed),
- * so these bite only on retirement-account draws -- RMDs and shortfall
- * withdrawals. Withdrawals are grossed up so the after-tax amount covers the
- * need. tax_free (Roth) is typically 0; taxable uses a capital-gains proxy
- * applied to the whole draw (no cost-basis tracking yet).
- */
-export const withdrawalTaxRatesSchema = z.object({
-  taxDeferredPct: z.number().min(0).max(1).default(0),
-  taxablePct: z.number().min(0).max(1).default(0),
-  taxFreePct: z.number().min(0).max(1).default(0),
-});
-export type WithdrawalTaxRates = z.infer<typeof withdrawalTaxRatesSchema>;
-
-/**
- * Sensible starting rates: a blended effective ordinary-income rate on
- * tax-deferred draws, a long-term capital-gains proxy on taxable draws, and 0
- * on Roth. Users override these in Assumptions to match their bracket and state.
- */
-export const DEFAULT_WITHDRAWAL_TAX_RATES: WithdrawalTaxRates = {
-  taxDeferredPct: 0.22,
-  taxablePct: 0.15,
-  taxFreePct: 0,
-};
+export const filingStatusSchema = z.enum(["single", "marriedFilingJointly"]);
+export type FilingStatus = z.infer<typeof filingStatusSchema>;
 
 export const forecastSettingsSchema = z.object({
   startDate: isoDateSchema,
@@ -90,7 +67,16 @@ export const forecastSettingsSchema = z.object({
   inflationRatePct: z.number(),
   moneyFlow: moneyFlowSchema.default(DEFAULT_MONEY_FLOW),
   rmdEnabled: z.boolean().default(true),
-  /** Defaults to DEFAULT_WITHDRAWAL_TAX_RATES; users override in Assumptions. */
-  withdrawalTaxRates: withdrawalTaxRatesSchema.default(DEFAULT_WITHDRAWAL_TAX_RATES),
+  /**
+   * Drives which 2026 IRS bracket table (and Social Security thresholds)
+   * federal tax is computed from -- see engine/taxTables.ts.
+   */
+  filingStatus: filingStatusSchema.default("marriedFilingJointly"),
+  /**
+   * Optional flat add-on (state/local tax, or anything else not modeled)
+   * applied on top of the computed federal tax. Default 0 -- e.g. correct
+   * as-is for a no-income-tax state like Texas.
+   */
+  additionalFlatTaxRatePct: z.number().min(0).max(1).default(0),
 });
 export type ForecastSettings = z.infer<typeof forecastSettingsSchema>;
