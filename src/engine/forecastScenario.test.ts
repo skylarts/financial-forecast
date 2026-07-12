@@ -273,7 +273,11 @@ describe("forecastScenario -- deficit cascade", () => {
 
     expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
     expect(year.accountBalances[savings.id]).toBeCloseTo(50_000 - 24_000, 0);
-    expect(year.cashFlow.deficitCovered).toBeCloseTo(24_000, 0);
+    // No RMDs/direct-payments here, so all withdrawals-to-cash is the deficit draw.
+    expect(year.cashFlow.withdrawalsToCashNet).toBeCloseTo(24_000, 0);
+    const savingsWithdrawal = year.cashFlow.withdrawalsByAccount.find((w) => w.id === savings.id)!;
+    expect(savingsWithdrawal.net).toBeCloseTo(24_000, 0);
+    expect(savingsWithdrawal.tax).toBeCloseTo(0, 0);
   });
 
   it("emits an insufficient_funds warning when every source is exhausted", () => {
@@ -526,6 +530,90 @@ describe("forecastScenario -- account contributions", () => {
     expect(year.cashFlow.netCashFlow).toBeCloseTo(60_000, 0);
     const line = year.cashFlow.contributionsByItem.find((c) => c.id === `${roth401k.id}:contribution`);
     expect(line?.fromPaycheck).toBe(true);
+  });
+});
+
+describe("forecastScenario -- cash flow statement reconciles exactly", () => {
+  it("every itemized bucket sums to the measured change in cash on hand, every year", () => {
+    // The mock scenario includes an edge case on purpose: "Inheritance" income
+    // deposits straight into the brokerage (a non-hub account), never touching
+    // checking. If the itemized rows didn't correctly exclude that from
+    // "reached cash," this test would catch the ~$50k gap the year it lands.
+    const result = forecastScenario(mockScenario);
+    expect(result.years.length).toBeGreaterThan(50);
+    for (const year of result.years) {
+      const cf = year.cashFlow;
+      const explained =
+        cf.operatingCashFlow +
+        cf.withdrawalsToCashNet -
+        cf.afterTaxContributionTotal -
+        cf.surplusRouted +
+        cf.cashInterest +
+        cf.otherAccountActivity;
+      expect(explained, `year ${cf.year}`).toBeCloseTo(cf.netCashFlow, 2);
+    }
+  });
+
+  it("withdrawal gross always equals net + tax, per account per year", () => {
+    const result = forecastScenario(mockScenario);
+    for (const year of result.years) {
+      for (const w of year.cashFlow.withdrawalsByAccount) {
+        expect(w.gross, `${w.label} in ${year.year}`).toBeCloseTo(w.net + w.tax, 6);
+      }
+    }
+  });
+
+  it("catches income landed directly in a non-hub account (the Inheritance edge case)", () => {
+    // Confirms the edge case actually exercises directIncomeToOtherAccounts /
+    // otherAccountActivity, rather than the reconciliation test above passing
+    // vacuously because the scenario never hits that path.
+    const result = forecastScenario(mockScenario);
+    const inheritanceYear = result.years.find((y) => y.year === 2035)!;
+    expect(inheritanceYear.cashFlow.otherAccountActivity).toBeLessThan(-1000);
+  });
+
+  it("reconciles a scenario with a hub-to-hub custom_transfer and a down payment sourced from the hub", () => {
+    // Exercises hubTransferNet directly: both a custom_transfer touching the
+    // hub and a buy_home down payment sourced from the hub.
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 500_000 });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 50_000 });
+    const scenario = makeScenario({
+      accounts: [checking, savings],
+      events: [
+        {
+          id: nanoid(),
+          type: "custom_transfer",
+          name: "Move to savings",
+          startDate: "2026-03-01",
+          amount: 10_000,
+          fromAccountId: checking.id,
+          toAccountId: savings.id,
+          frequency: "one_time",
+        },
+        {
+          id: nanoid(),
+          type: "buy_home",
+          name: "Buy a home",
+          startDate: "2026-06-01",
+          purchasePrice: 200_000,
+          downPaymentAmount: 40_000,
+          downPaymentFromAccountId: checking.id,
+          propertyGrowthRatePct: 0,
+          mortgage: null,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+    const cf = year.cashFlow;
+    const explained =
+      cf.operatingCashFlow + cf.withdrawalsToCashNet - cf.afterTaxContributionTotal - cf.surplusRouted + cf.cashInterest + cf.otherAccountActivity;
+    expect(explained).toBeCloseTo(cf.netCashFlow, 2);
+    // Both outflows left checking directly: -$10k transfer, -$40k down payment.
+    expect(cf.otherAccountActivity).toBeCloseTo(-50_000, 0);
+    expect(cf.netCashFlow).toBeCloseTo(-50_000, 0);
   });
 });
 
@@ -809,13 +897,20 @@ describe("forecastScenario -- withdrawal taxes", () => {
 
     // $12k drawn to cover spending realizes $3k tax (25%), both out of the IRA.
     expect(year.accountBalances[ira.id]).toBeCloseTo(85_000, 0);
-    expect(year.cashFlow.deficitCovered).toBeCloseTo(12_000, 0);
+    expect(year.cashFlow.withdrawalsToCashNet).toBeCloseTo(12_000, 0);
     expect(year.cashFlow.withdrawalTaxes).toBeCloseTo(3_000, 0);
     expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
-    // Tax shows on its own line but still counts against the bottom line:
-    // expenses stay $12k; net cash flow is -$12k spending - $3k tax = -$15k.
     expect(year.cashFlow.totalExpenses).toBeCloseTo(12_000, 0);
-    expect(year.cashFlow.netCashFlow).toBeCloseTo(-15_000, 0);
+    // The withdrawal section shows the IRA outflow gross ($15k), split into the
+    // $12k that funded spending and the $3k tax.
+    const iraWithdrawal = year.cashFlow.withdrawalsByAccount.find((w) => w.id === ira.id)!;
+    expect(iraWithdrawal.gross).toBeCloseTo(15_000, 0);
+    expect(iraWithdrawal.net).toBeCloseTo(12_000, 0);
+    expect(iraWithdrawal.tax).toBeCloseTo(3_000, 0);
+    // Reconciling Net: operating shortfall (-$12k) is exactly covered by the
+    // $12k after-tax draw, so cash on hand nets to ~$0.
+    expect(year.cashFlow.operatingCashFlow).toBeCloseTo(-12_000, 0);
+    expect(year.cashFlow.netCashFlow).toBeCloseTo(0, 0);
   });
 
   it("taxes a transfer out of a taxable account as a withdrawal", () => {

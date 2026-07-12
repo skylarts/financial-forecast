@@ -23,8 +23,29 @@ interface YearAccumulator {
   totalIncome: number;
   totalExpenses: number;
   surplusRouted: number;
+  /** Net (non-tax) cash pulled to cover the operating gap: deficit draws + RMD proceeds. */
   deficitCovered: number;
   rmdTotal: number;
+  /**
+   * Net (non-tax) amount paid/transferred DIRECTLY out of a non-hub asset
+   * account for an expense (bypassing cash). Offsets that expense in the net
+   * cash-flow reconciliation, since cash was never touched. Almost always 0.
+   */
+  directExpenseFromAccounts: number;
+  /**
+   * Income deposited DIRECTLY into a non-hub account (e.g. a windfall landing
+   * straight in a brokerage) -- still counted in totalIncome for the itemized
+   * display, but never reached cash on hand, so it's subtracted back out when
+   * reconciling. Almost always 0.
+   */
+  directIncomeToOtherAccounts: number;
+  /**
+   * Net signed amount of transfer-category postings (custom_transfer, a
+   * buy_home down payment) that land ON or come FROM a hub account directly
+   * -- positive = into the hub, negative = out. The only posting category not
+   * otherwise captured by income/expense/contribution/withdrawal tracking.
+   */
+  hubTransferNet: number;
   /** Taxes paid on RMDs and shortfall withdrawals (cash leaving the household). */
   taxesPaid: number;
   /** Cash outflow from after-tax contributions (reduces net cash flow). */
@@ -37,10 +58,10 @@ interface YearAccumulator {
   contributionsByItem: Map<Id, number>;
   /** Surplus swept into each target account, keyed by accountId. */
   surplusByAccount: Map<Id, number>;
-  /** Shortfall draws pulled from each source account, keyed by accountId. */
-  withdrawalsByAccount: Map<Id, number>;
-  /** RMD draws from each account, keyed by accountId. */
-  rmdByAccount: Map<Id, number>;
+  /** Net (non-tax) outflow from each source account -- ALL mechanisms, keyed by accountId. */
+  withdrawalNetByAccount: Map<Id, number>;
+  /** Tax realized per source account, matching withdrawalNetByAccount. */
+  withdrawalTaxByAccount: Map<Id, number>;
 }
 
 function freshAccumulator(accountIds: Id[]): YearAccumulator {
@@ -51,14 +72,17 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
     surplusRouted: 0,
     deficitCovered: 0,
     rmdTotal: 0,
+    directExpenseFromAccounts: 0,
+    directIncomeToOtherAccounts: 0,
+    hubTransferNet: 0,
     taxesPaid: 0,
     afterTaxContributions: 0,
     incomeByItem: new Map(),
     expenseByItem: new Map(),
     contributionsByItem: new Map(),
     surplusByAccount: new Map(),
-    withdrawalsByAccount: new Map(),
-    rmdByAccount: new Map(),
+    withdrawalNetByAccount: new Map(),
+    withdrawalTaxByAccount: new Map(),
   };
 }
 
@@ -182,6 +206,10 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
     .map((id) => accountById.get(id))
     .filter((a): a is EngineAccount => !!a && a.category === "asset" && !a.isExcluded);
   const primarySpendingAccountId = resolvePrimarySpendingAccountId(activeAccounts, moneyFlow);
+  // Outflows from a spending hub are ordinary expenses; outflows from any
+  // OTHER asset account (a savings/investment) are "withdrawals" for the
+  // Cash Flow tab's Withdrawals section.
+  const hubIds = new Set(spendingHubs.map((h) => h.account.id));
 
   const balances = new Map<Id, number>(accounts.map((a) => [a.id, 0]));
   const priorYearEndBalances = new Map<Id, number>();
@@ -267,6 +295,11 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         acc.totalIncome += posting.amount;
         addTo(acc.incomeByItem, posting.sourceId, posting.amount);
         itemLabels.set(posting.sourceId, posting.label);
+        // Income landing straight in a non-hub account (e.g. a windfall
+        // deposited to a brokerage) still counts in totalIncome for the
+        // itemized list, but never reached cash on hand -- track separately
+        // so it doesn't inflate the reconciled Net.
+        if (!hubIds.has(posting.accountId)) acc.directIncomeToOtherAccounts += posting.amount;
       } else if (posting.category === "expense") {
         acc.totalExpenses += -posting.amount;
         addTo(acc.expenseByItem, posting.sourceId, -posting.amount);
@@ -280,12 +313,34 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         // posting handles the spending-account balance, so we only tally the
         // total here (avoids double counting). Payroll-deducted ones cost nothing.
         if (!fromPaycheck) acc.afterTaxContributions += posting.amount;
+      } else if (posting.category === "transfer" && hubIds.has(posting.accountId)) {
+        // A transfer leg landing on or leaving a hub directly (a custom
+        // transfer to/from checking, or a buy_home down payment sourced from
+        // checking) -- the only posting kind not otherwise captured by
+        // income/expense/contribution tracking, so it needs its own bucket to
+        // reconcile Net exactly.
+        acc.hubTransferNet += posting.amount;
       }
-      // contribution_out / transfer: balance + rollforward already handled above.
+      // contribution_out: balance + rollforward already handled above.
+      // A non-hub-touching transfer leg needs no extra bookkeeping here --
+      // outflows from a non-hub asset account are captured as withdrawals below.
 
       // Any outflow from a taxable / tax-deferred account (a transfer out, or an
       // expense paid straight from it) is a sale that realizes tax.
-      if (posting.amount < 0) realizeWithdrawalTax(posting.accountId, -posting.amount);
+      if (posting.amount < 0) {
+        const outAmount = -posting.amount;
+        const tax = realizeWithdrawalTax(posting.accountId, outAmount);
+        // Money leaving a NON-hub asset account (a savings/investment) counts
+        // as a withdrawal in the Cash Flow tab -- a direct expense paid from it,
+        // or a transfer out of it. (Outflows from a hub are ordinary expenses.)
+        if (targetAccount && targetAccount.category === "asset" && !hubIds.has(posting.accountId)) {
+          addTo(acc.withdrawalNetByAccount, posting.accountId, outAmount);
+          addTo(acc.withdrawalTaxByAccount, posting.accountId, tax);
+          // A direct EXPENSE from an investment bypasses cash: it offsets the
+          // same expense already counted above, so the net cash effect is zero.
+          if (posting.category === "expense") acc.directExpenseFromAccounts += outAmount;
+        }
+      }
     }
 
     // 3. Amortize mortgages/loans.
@@ -343,14 +398,15 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         balances.set(account.id, (balances.get(account.id) ?? 0) - rmdAmount);
         acc.rollforward.get(account.id)!.withdrawals += rmdAmount;
         acc.rmdTotal += rmdAmount;
-        addTo(acc.rmdByAccount, account.id, rmdAmount);
         if (primarySpendingAccountId && primarySpendingAccountId !== account.id) {
           balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) + rmdAmount);
           acc.rollforward.get(primarySpendingAccountId)!.deposits += rmdAmount;
         }
         // Tax on the forced distribution, realized at the source like any other
         // withdrawal from the account.
-        realizeWithdrawalTax(account.id, rmdAmount);
+        const rmdTax = realizeWithdrawalTax(account.id, rmdAmount);
+        addTo(acc.withdrawalNetByAccount, account.id, rmdAmount);
+        addTo(acc.withdrawalTaxByAccount, account.id, rmdTax);
         ledger.push({
           date: month,
           kind: "rmd",
@@ -453,8 +509,9 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
         acc.rollforward.get(source.id)!.withdrawals += provide;
         acc.rollforward.get(spender.id)!.deposits += provide;
         acc.deficitCovered += provide;
-        addTo(acc.withdrawalsByAccount, source.id, provide);
         const tax = realizeWithdrawalTax(source.id, provide);
+        addTo(acc.withdrawalNetByAccount, source.id, provide);
+        addTo(acc.withdrawalTaxByAccount, source.id, tax);
         shortfall -= provide;
         ledger.push({
           date: month,
@@ -518,9 +575,16 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
       const cumulativeInflation = Math.pow(1 + settings.inflationRatePct, currentYear - yearOf(settings.startDate));
       const netWorthReal = netWorthNominal / cumulativeInflation;
 
-      const endingCashBalance = activeAccounts
-        .filter((a) => a.class === "cash")
-        .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
+      // "Cash on hand" is scoped to the spending hub account(s) specifically
+      // (not every class="cash" account) -- a savings/emergency-fund account
+      // is a withdrawal source like any other, not part of your operating
+      // cash. Measuring the hub's actual balance delta directly (rather than
+      // summing itemized buckets) guarantees the statement always reconciles
+      // exactly, with no possibility of an uncaptured mechanism silently
+      // creating a gap.
+      const hubCashStart = [...hubIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
+      const endingCashBalance = [...hubIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
+      const hubCashInterest = [...hubIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
 
       // Sorted line-item arrays; labels come from itemLabels (posting/mortgage
       // ids) or the account name (for account-keyed maps).
@@ -534,17 +598,54 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
           .map(([id, amount]) => ({ id, label: accountById.get(id)?.name ?? id, amount }))
           .sort((a, b) => b.amount - a.amount);
 
+      // Unify every account outflow (drawdowns, RMDs, direct payments) into one
+      // gross/net/tax line per source account, for the Withdrawals section.
+      const withdrawalAccountIds = new Set<Id>([
+        ...acc.withdrawalNetByAccount.keys(),
+        ...acc.withdrawalTaxByAccount.keys(),
+      ]);
+      const withdrawalsByAccount = [...withdrawalAccountIds]
+        .map((id) => {
+          const net = acc.withdrawalNetByAccount.get(id) ?? 0;
+          const tax = acc.withdrawalTaxByAccount.get(id) ?? 0;
+          const account = accountById.get(id);
+          return {
+            id,
+            label: account?.name ?? id,
+            taxTreatment: account ? effectiveTaxTreatment(account) : ("n/a" as const),
+            gross: net + tax,
+            net,
+            tax,
+          };
+        })
+        .filter((w) => w.gross > 0.005)
+        .sort((a, b) => b.gross - a.gross);
+
+      const operatingCashFlow = acc.totalIncome - acc.totalExpenses;
+      // Cash that flowed in from accounts to cover the operating gap: deficit
+      // draws + RMD proceeds, plus any expense paid directly from an investment
+      // (which offsets that expense, since cash was never touched).
+      const withdrawalsToCashNet = acc.deficitCovered + acc.rmdTotal + acc.directExpenseFromAccounts;
+      // Edge-case bucket: transfers touching the hub directly, net of income
+      // that bypassed the hub entirely. Zero in the common case where income
+      // lands on and expenses pay from the hub with no direct hub transfers.
+      const otherAccountActivity = acc.hubTransferNet - acc.directIncomeToOtherAccounts;
+      // Ground truth: the hub's actual measured balance change this year.
+      // Always exactly right, regardless of which mechanism moved the money.
+      const netCashFlow = endingCashBalance - hubCashStart;
+
       const cashFlow: CashFlowYearRow = {
         year: currentYear,
         totalIncome: acc.totalIncome,
         totalExpenses: acc.totalExpenses,
-        // Withdrawal/RMD taxes are a cash outflow -- shown on their own line but
-        // still subtracted here so they count against the bottom line.
-        netCashFlow: acc.totalIncome - acc.totalExpenses - acc.afterTaxContributions - acc.taxesPaid,
+        operatingCashFlow,
+        netCashFlow,
         surplusRouted: acc.surplusRouted,
-        deficitCovered: acc.deficitCovered,
+        withdrawalsToCashNet,
         rmdTotal: acc.rmdTotal,
         withdrawalTaxes: acc.taxesPaid,
+        cashInterest: hubCashInterest,
+        otherAccountActivity,
         endingCashBalance,
         afterTaxContributionTotal: acc.afterTaxContributions,
         incomeByItem: toLineItems(acc.incomeByItem),
@@ -558,8 +659,7 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
           }))
           .sort((a, b) => b.amount - a.amount),
         surplusByAccount: toAccountItems(acc.surplusByAccount),
-        withdrawalsByAccount: toAccountItems(acc.withdrawalsByAccount),
-        rmdByAccount: toAccountItems(acc.rmdByAccount),
+        withdrawalsByAccount,
       };
 
       years.push({

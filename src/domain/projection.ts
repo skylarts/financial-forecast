@@ -1,6 +1,6 @@
 import type { Id, ISODate } from "./common";
 import type { EventType } from "./events";
-import type { Account } from "./account";
+import type { Account, TaxTreatment } from "./account";
 
 /**
  * Everything below is engine OUTPUT -- always freshly computed, never
@@ -33,19 +33,57 @@ export interface ContributionLineItem extends CashFlowLineItem {
   fromPaycheck: boolean;
 }
 
+/**
+ * One source account's total outflow for the year, from ANY mechanism --
+ * planned drawdowns (deficit cascade), RMDs, and money paid/transferred
+ * directly out of the account. `gross` is what left the account; `net` is the
+ * usable portion (funded spending or landed in cash); `tax` is what the
+ * withdrawal cost in tax. Invariant: gross = net + tax.
+ */
+export interface WithdrawalLineItem {
+  /** Source account id. */
+  id: Id;
+  label: string;
+  /** For grouping the withdrawals section (Cash & Other / Taxable / Tax-deferred / Tax-free). */
+  taxTreatment: TaxTreatment;
+  gross: number;
+  net: number;
+  tax: number;
+}
+
 export interface CashFlowYearRow {
   year: number;
   totalIncome: number;
   totalExpenses: number;
-  /** income - (expenses + after-tax contributions). */
+  /** Income - Expenses, before any money is moved into or out of accounts. */
+  operatingCashFlow: number;
+  /**
+   * The actual measured change in cash-on-hand (the spending hub balance)
+   * this year -- always exactly right by construction (it's the real
+   * simulated balance delta, not a sum of categorized buckets). Lands near
+   * zero when you draw exactly what you need (the buffer is maintained).
+   * Equals: operatingCashFlow + withdrawalsToCashNet - afterTaxContributionTotal
+   *         - surplusRouted + cashInterest + otherAccountActivity.
+   */
   netCashFlow: number;
   surplusRouted: number;
-  deficitCovered: number;
+  /** Net (non-tax) cash pulled from accounts to cover the operating gap -- deficit draws + RMDs. */
+  withdrawalsToCashNet: number;
   rmdTotal: number;
-  /** Taxes paid on retirement-account withdrawals & RMDs this year (cash out). */
+  /** Total tax realized on all account withdrawals this year (part of each withdrawal's gross). */
   withdrawalTaxes: number;
+  /** Interest/growth earned directly on the spending hub balance this year. */
+  cashInterest: number;
+  /**
+   * Edge-case reconciling residual: transfers that land on/leave the hub
+   * directly (a custom transfer or a down payment sourced from checking), net
+   * of income that bypassed the hub entirely (e.g. a windfall deposited
+   * straight into a brokerage). Zero in the common case.
+   */
+  otherAccountActivity: number;
+  /** The spending hub account balance (not every class="cash" account -- a savings/emergency-fund account is a withdrawal source, not operating cash). */
   endingCashBalance: number;
-  /** Cash outflow from after-tax contributions (feeds netCashFlow). */
+  /** Cash outflow from after-tax contributions (money saved into accounts). */
   afterTaxContributionTotal: number;
   /** Itemized positive inflows; sums to totalIncome. */
   incomeByItem: CashFlowLineItem[];
@@ -55,10 +93,12 @@ export interface CashFlowYearRow {
   contributionsByItem: ContributionLineItem[];
   /** Surplus swept INTO accounts, by destination account (positive-cash-flow years). */
   surplusByAccount: CashFlowLineItem[];
-  /** Shortfall draws pulled FROM accounts, by source account (negative-cash-flow years). */
-  withdrawalsByAccount: CashFlowLineItem[];
-  /** Forced RMD draws, by source account. */
-  rmdByAccount: CashFlowLineItem[];
+  /**
+   * Every account outflow for the year -- drawdowns, RMDs, and direct
+   * payments/transfers out -- with gross/net/tax, keyed by source account.
+   * The comprehensive "Withdrawals (Planned, RMDs & taxes)" view.
+   */
+  withdrawalsByAccount: WithdrawalLineItem[];
 }
 
 export interface TimelineRow {
