@@ -387,6 +387,12 @@ export function forecastScenario(scenario: Scenario): ProjectionResult {
       const year = yearOf(month);
       for (const account of accounts) {
         if (account.isExcluded || !account.subjectToRMD || !account.ownerId) continue;
+        // Roth accounts (401k or IRA) are never subject to RMDs during the
+        // owner's life -- SECURE 2.0 eliminated the old Roth 401(k) RMD rule
+        // starting in 2024. Guard here regardless of the checkbox above, since
+        // a Roth 401(k) is easy to mis-set as class="tax_deferred" (it's still
+        // a "401k") while carrying taxTreatment="tax_free".
+        if (effectiveTaxTreatment(account) === "tax_free") continue;
         if (compareDates(month, account.effectiveStartDate) < 0) continue;
         const owner = scenario.household.people.find((p) => p.id === account.ownerId);
         if (!owner) continue;

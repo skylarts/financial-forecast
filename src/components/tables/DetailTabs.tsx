@@ -19,7 +19,7 @@ import { CashFlowTable } from "./CashFlowTable";
 import { TimelineTab } from "./TimelineTab";
 import { MoneyFlowEditor } from "@/components/moneyflow/MoneyFlowEditor";
 
-const TABS = ["Accounts", "Timeline", "Routing", "Cash Flow"] as const;
+const TABS = ["Cash Flow", "Accounts", "Timeline", "Routing"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailTabs({

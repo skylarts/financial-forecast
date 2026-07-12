@@ -11,12 +11,18 @@ import { usePlanStore } from "@/store/usePlanStore";
 const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
   { value: "cash", label: "Cash" },
   { value: "taxable_investment", label: "Taxable Investment" },
-  { value: "tax_deferred", label: "Tax-deferred (401k/IRA)" },
-  { value: "tax_free", label: "Tax-free (Roth)" },
+  { value: "tax_deferred", label: "Tax-deferred (Traditional 401k/IRA)" },
+  { value: "tax_free", label: "Tax-free (Roth 401k/IRA)" },
   { value: "other_asset", label: "Other Asset" },
   { value: "credit_card", label: "Credit Card" },
   { value: "loan", label: "Loan" },
 ];
+
+/** Mirrors engine's effectiveTaxTreatment: explicit taxTreatment wins, else infer from class. */
+function isEffectivelyTaxDeferred(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
+  if (taxTreatment !== "n/a") return taxTreatment === "tax_deferred";
+  return cls === "tax_deferred";
+}
 
 const TAX_TREATMENT_OPTIONS: { value: TaxTreatment; label: string }[] = [
   { value: "n/a", label: "N/A" },
@@ -117,8 +123,10 @@ export function AccountDrawer({
   }, [account, open, reset]);
 
   const selectedClass = watch("class");
+  const selectedTaxTreatment = watch("taxTreatment");
   const contributionAmount = watch("contributionAmount");
   const contributionFunding = watch("contributionFunding");
+  const showRmdCheckbox = isEffectivelyTaxDeferred(selectedClass, selectedTaxTreatment);
 
   const onSubmit = (values: FormValues) => {
     const cls = values.class;
@@ -131,7 +139,10 @@ export function AccountDrawer({
       growthRatePct: Number(values.growthRatePct),
       isExcluded: values.isExcluded,
       taxTreatment: values.taxTreatment,
-      subjectToRMD: values.subjectToRMD,
+      // A Roth account (class or explicit taxTreatment) can never be subject
+      // to RMDs -- clear a stale checked box left over from before the
+      // account was marked/reclassed as tax-free.
+      subjectToRMD: values.subjectToRMD && isEffectivelyTaxDeferred(cls, values.taxTreatment),
       contribution:
         values.contributionAmount.trim() === "" || !(Number(values.contributionAmount) > 0)
           ? null
@@ -197,7 +208,7 @@ export function AccountDrawer({
             <Field label="Tax Treatment (blank/N-A infers from class)">
               <SelectInput reg={register("taxTreatment")} options={TAX_TREATMENT_OPTIONS} />
             </Field>
-            {selectedClass === "tax_deferred" && (
+            {showRmdCheckbox && (
               <CheckboxInput reg={register("subjectToRMD")} label="Subject to RMDs (age 73+)" />
             )}
 

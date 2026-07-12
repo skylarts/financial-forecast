@@ -246,7 +246,7 @@ export function CashFlowTable({
                           </tr>
                           {years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5) && (
                             <tr className="text-negative/80">
-                              <td className="py-1 pl-16 text-xs italic">of which tax</td>
+                              <td className="py-1 pl-16 text-xs italic">tax on withdrawals</td>
                               {years.map((y, yi) => {
                                 const v = d(wdTaxMaps[yi].get(a.id) ?? 0, yi);
                                 return (
