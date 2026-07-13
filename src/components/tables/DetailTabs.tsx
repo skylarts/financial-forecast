@@ -19,7 +19,7 @@ import { CashFlowTable } from "./CashFlowTable";
 import { TimelineTab } from "./TimelineTab";
 import { MoneyFlowEditor } from "@/components/moneyflow/MoneyFlowEditor";
 
-const TABS = ["Cash Flow", "Accounts", "Timeline", "Routing"] as const;
+const TABS = ["Timeline", "Accounts", "Routing", "Cash Flow"] as const;
 type Tab = (typeof TABS)[number];
 
 export function DetailTabs({
@@ -47,7 +47,7 @@ export function DetailTabs({
   settings: ForecastSettings;
   dollarMode: DollarMode;
 }) {
-  const [active, setActive] = useState<Tab>("Accounts");
+  const [active, setActive] = useState<Tab>("Cash Flow");
   const editableAccounts = accounts.filter((a) => editableAccountIds.has(a.id));
 
   return (
