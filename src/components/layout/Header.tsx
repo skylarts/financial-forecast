@@ -7,6 +7,7 @@ import { useUiStore } from "@/store/useUiStore";
 import { AssumptionsDrawer } from "@/components/assumptions/AssumptionsDrawer";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { BackupControls } from "@/components/layout/BackupControls";
+import { LoginButton } from "@/components/auth/LoginButton";
 
 function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean }) {
   const setActiveScenarioId = usePlanStore((s) => s.setActiveScenarioId);
@@ -107,6 +108,7 @@ export function Header({ scenario }: { scenario: Scenario }) {
           )}
         </nav>
         <BackupControls />
+        <LoginButton />
         <button
           type="button"
           id="assumptions-button"

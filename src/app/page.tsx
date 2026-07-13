@@ -12,6 +12,7 @@ import { DetailTabs } from "@/components/tables/DetailTabs";
 import { WarningsBanner } from "@/components/layout/WarningsBanner";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useProjection } from "@/store/useProjection";
+import { useCloudSync } from "@/store/useCloudSync";
 
 function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());
@@ -77,6 +78,7 @@ function HomeContent() {
 
 export default function Home() {
   const hasHydrated = usePlanStore((s) => s.hasHydrated);
+  useCloudSync();
   // Next.js SSRs with the default plan; localStorage is only readable
   // client-side, so avoid rendering (and flashing default data) until the
   // real persisted plan has loaded.

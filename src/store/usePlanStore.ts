@@ -53,6 +53,9 @@ interface PlanState {
    * money-flow routing (spending accounts, surplus targets, withdrawal
    * order) or its income_change/expense_change/windfall events. */
   importPlan: (raw: unknown) => { ok: true; migrated: boolean } | { ok: false; error: string };
+  /** Replaces the plan with one already known to be valid (e.g. fetched from
+   * the cloud on sign-in) -- unlike importPlan, no parsing/migration needed. */
+  loadPlan: (plan: Plan) => void;
 
   // Accounts
   addAccount: (account: Omit<Account, "id">) => void;
@@ -188,6 +191,8 @@ export const usePlanStore = create<PlanState>()(
         set({ plan: result.data, lastSavedAt: Date.now() });
         return { ok: true, migrated };
       },
+
+      loadPlan: (plan) => set({ plan, lastSavedAt: Date.now() }),
 
       addAccount: (account) =>
         withActiveScenario(set, (s) => ({ ...s, accounts: [...s.accounts, { ...account, id: nanoid() } as Account] })),
