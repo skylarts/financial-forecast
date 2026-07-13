@@ -1,5 +1,6 @@
 import type {
   Id,
+  ISODate,
   Scenario,
   ForecastSettings,
   AccountYearRollforward,
@@ -9,6 +10,7 @@ import type {
   ProjectionWarning,
   LedgerEvent,
   MoneyFlowStop,
+  DrainStop,
 } from "@/domain";
 import { ageOn, compareDates, eachMonthStart, endOfYear, yearOf } from "./dateMath";
 import { monthlyRateFromAnnual } from "./growth";
@@ -134,6 +136,13 @@ function effectiveAnnualRate(account: EngineAccount, month: string): number {
  * ceiling yearly by maxBalanceGrowthRatePct, defaulting to inflation, so the
  * cap keeps pace in real terms over a long horizon.
  */
+/** Whether a drain stop's optional date window covers this month (both bounds inclusive; null = unbounded). */
+function isDrainStopActive(stop: DrainStop, month: ISODate): boolean {
+  if (stop.startDate && compareDates(month, stop.startDate) < 0) return false;
+  if (stop.endDate && compareDates(month, stop.endDate) > 0) return false;
+  return true;
+}
+
 function effectiveMaxBalance(stop: MoneyFlowStop, yearsSinceStart: number, inflationRatePct: number): number {
   if (stop.maxBalance == null) return Infinity;
   const rate = stop.maxBalanceGrowthRatePct ?? inflationRatePct;
@@ -218,9 +227,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       return account && !account.isExcluded ? { account, stop } : null;
     })
     .filter((x): x is { account: EngineAccount; stop: MoneyFlowStop } => x !== null);
-  const cascadeSources = moneyFlow.drainOrder
-    .map((id) => accountById.get(id))
-    .filter((a): a is EngineAccount => !!a && a.category === "asset" && !a.isExcluded);
+  const drainStops = moneyFlow.drainOrder
+    .map((stop) => {
+      const account = accountById.get(stop.accountId);
+      return account && account.category === "asset" && !account.isExcluded ? { account, stop } : null;
+    })
+    .filter((x): x is { account: EngineAccount; stop: DrainStop } => x !== null);
   const primarySpendingAccountId = resolvePrimarySpendingAccountId(activeAccounts, moneyFlow);
   // Outflows from a spending hub are ordinary expenses; outflows from any
   // OTHER asset account (a savings/investment) are "withdrawals" for the
@@ -243,6 +255,13 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // Display names for the per-item cash-flow breakdown, keyed by Posting.sourceId
   // (and mortgage account id). Stable across the whole run.
   const itemLabels = new Map<Id, string>();
+  // The date each item FIRST posted anywhere in the plan -- its real start
+  // date, since months are simulated in chronological order. Set once, never
+  // overwritten, so a recurring item keeps its true first occurrence.
+  const itemFirstDate = new Map<Id, ISODate>();
+  const markFirstDate = (id: Id, date: ISODate) => {
+    if (!itemFirstDate.has(id)) itemFirstDate.set(id, date);
+  };
   // Whether each contribution line is payroll-deducted (excluded from cash
   // flow) vs funded from take-home, keyed by sourceId.
   const contributionFromPaycheck = new Map<Id, boolean>();
@@ -318,6 +337,38 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     return tax;
   };
 
+  // Pulls up to `requested` from `source` to cover `spender`'s shortfall,
+  // capped by what's actually available once the draw's own tax is realized
+  // (provide <= available / (1 + rate), same as the tax realized on any
+  // other withdrawal). Returns the net (non-tax) amount that actually
+  // reached `spender` -- the single primitive both drain-order modes
+  // (priority_fill and fixed_split) draw from.
+  const drawFromSource = (source: EngineAccount, spender: EngineAccount, requested: number, month: ISODate): number => {
+    if (requested <= 0 || source.id === spender.id) return 0;
+    const available = balances.get(source.id) ?? 0;
+    if (available <= 0) return 0;
+    const rate = estimatedWithdrawalRate(source);
+    const provide = Math.min(requested, available / (1 + rate));
+    if (provide <= 0) return 0;
+    balances.set(source.id, (balances.get(source.id) ?? 0) - provide);
+    balances.set(spender.id, (balances.get(spender.id) ?? 0) + provide);
+    acc.rollforward.get(source.id)!.withdrawals += provide;
+    acc.rollforward.get(spender.id)!.deposits += provide;
+    acc.deficitCovered += provide;
+    const tax = realizeWithdrawalTax(source.id, provide);
+    addTo(acc.withdrawalNetByAccount, source.id, provide);
+    addTo(acc.withdrawalTaxByAccount, source.id, tax);
+    ledger.push({
+      date: month,
+      kind: "deficit_withdrawal",
+      accountId: source.id,
+      toAccountId: spender.id,
+      amount: provide,
+      note: tax > 0.005 ? `Covering shortfall in ${spender.name} (+ ${Math.round(tax)} tax)` : `Covering shortfall in ${spender.name}`,
+    });
+    return provide;
+  };
+
   const months = [...eachMonthStart(settings.startDate, settings.horizonEndDate)];
 
   for (let i = 0; i < months.length; i++) {
@@ -366,6 +417,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         acc.totalIncome += posting.amount;
         addTo(acc.incomeByItem, posting.sourceId, posting.amount);
         itemLabels.set(posting.sourceId, posting.label);
+        markFirstDate(posting.sourceId, posting.date);
         // Income landing straight in a non-hub account (e.g. a windfall
         // deposited to a brokerage) still counts in totalIncome for the
         // itemized list, but never reached cash on hand -- track separately
@@ -395,9 +447,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         acc.totalExpenses += -posting.amount;
         addTo(acc.expenseByItem, posting.sourceId, -posting.amount);
         itemLabels.set(posting.sourceId, posting.label);
+        markFirstDate(posting.sourceId, posting.date);
       } else if (posting.category === "contribution_in") {
         addTo(acc.contributionsByItem, posting.sourceId, posting.amount);
         itemLabels.set(posting.sourceId, posting.label);
+        markFirstDate(posting.sourceId, posting.date);
         const fromPaycheck = accountById.get(posting.accountId)?.contribution?.payrollDeducted ?? false;
         contributionFromPaycheck.set(posting.sourceId, fromPaycheck);
         // Take-home-funded contributions cost cash; the matching contribution_out
@@ -463,6 +517,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         acc.totalExpenses += actualPayment;
         addTo(acc.expenseByItem, account.id, actualPayment);
         itemLabels.set(account.id, `Mortgage payment (${account.name})`);
+        markFirstDate(account.id, month);
         ledger.push({
           date: month,
           kind: "mortgage_payment",
@@ -541,7 +596,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         const room = cap - (balances.get(target.id) ?? 0);
         if (room <= 0) continue; // target already at/over its ceiling -- spill onward
         const requested =
-          moneyFlow.splitMode === "fixed_split" ? splitBase * (stop.splitPct ?? 0) : remaining; // priority_fill: this target takes all it can hold
+          moneyFlow.fillSplitMode === "fixed_split" ? splitBase * (stop.splitPct ?? 0) : remaining; // priority_fill: this target takes all it can hold
         const take = Math.min(requested, room, remaining);
         if (take <= 0) continue;
         balances.set(spender.id, (balances.get(spender.id) ?? 0) - take);
@@ -589,41 +644,47 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // money out with no destination.
     }
 
-    // 6. Deficit cascade.
-    for (const { account: spender } of spendingHubs) {
-      let shortfall = -(balances.get(spender.id) ?? 0);
+    // 6. Deficit cascade. Triggers once a hub drops below its OWN configured
+    //    buffer (the same "Keep $" amount section 5 sweeps surplus down to),
+    //    not just once it goes negative -- so a hub with a buffer set stays
+    //    topped up at that floor instead of running down toward $0 before
+    //    getting any help. A hub with no buffer configured (the common case)
+    //    reproduces the original $0-trigger behavior exactly. Only drain
+    //    stops whose optional date window covers this month participate --
+    //    lets e.g. a brokerage fund a shortfall for a few years until a
+    //    later account becomes the active source.
+    for (const { account: spender, hub } of spendingHubs) {
+      const floor = (hub.bufferAmount ?? 0) * inflationFactor;
+      let shortfall = floor - (balances.get(spender.id) ?? 0);
       if (shortfall <= 0) continue;
-      for (const source of cascadeSources) {
-        if (shortfall <= 0) break;
-        if (source.id === spender.id) continue;
-        const available = balances.get(source.id) ?? 0;
-        if (available <= 0) continue;
-        // Pulling `provide` to cover spending also realizes `provide * rate` in
-        // tax, both out of this account, so the two together can't exceed what's
-        // there: provide <= available / (1 + rate).
-        const rate = estimatedWithdrawalRate(source);
-        const provide = Math.min(shortfall, available / (1 + rate));
-        if (provide <= 0) continue;
-        balances.set(source.id, (balances.get(source.id) ?? 0) - provide);
-        balances.set(spender.id, (balances.get(spender.id) ?? 0) + provide);
-        acc.rollforward.get(source.id)!.withdrawals += provide;
-        acc.rollforward.get(spender.id)!.deposits += provide;
-        acc.deficitCovered += provide;
-        const tax = realizeWithdrawalTax(source.id, provide);
-        addTo(acc.withdrawalNetByAccount, source.id, provide);
-        addTo(acc.withdrawalTaxByAccount, source.id, tax);
-        shortfall -= provide;
-        ledger.push({
-          date: month,
-          kind: "deficit_withdrawal",
-          accountId: source.id,
-          toAccountId: spender.id,
-          amount: provide,
-          note:
-            tax > 0.005
-              ? `Covering shortfall in ${spender.name} (+ ${Math.round(tax)} tax)`
-              : `Covering shortfall in ${spender.name}`,
-        });
+      const active = drainStops.filter(({ stop }) => isDrainStopActive(stop, month));
+      const totalSplit = active.reduce((s, { stop }) => s + (stop.splitPct ?? 0), 0);
+
+      if (moneyFlow.drainSplitMode === "fixed_split" && totalSplit > 0) {
+        // Pass 1: each active source's target share of the ORIGINAL
+        // shortfall (not a shrinking remainder, so ratios stay meaningful
+        // regardless of draw order).
+        const originalShortfall = shortfall;
+        for (const { account: source, stop } of active) {
+          const target = originalShortfall * ((stop.splitPct ?? 0) / totalSplit);
+          shortfall -= drawFromSource(source, spender, target, month);
+        }
+        // Pass 2: top up any unmet remainder from active sources in list
+        // order -- the split is a target ratio, not a hard cap, so the
+        // shortfall still gets fully covered whenever the combined active
+        // balance allows it, rather than leaving the household short
+        // because one bucket ran low this month.
+        for (const { account: source } of active) {
+          if (shortfall <= 0) break;
+          shortfall -= drawFromSource(source, spender, shortfall, month);
+        }
+      } else {
+        // priority_fill (default): drain each active source fully before
+        // moving to the next, in list order.
+        for (const { account: source } of active) {
+          if (shortfall <= 0) break;
+          shortfall -= drawFromSource(source, spender, shortfall, month);
+        }
       }
     }
 
@@ -690,12 +751,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // ids) or the account name (for account-keyed maps).
       const toLineItems = (map: Map<Id, number>) =>
         [...map.entries()]
-          .map(([id, amount]) => ({ id, label: itemLabels.get(id) ?? id, amount }))
+          .map(([id, amount]) => ({ id, label: itemLabels.get(id) ?? id, amount, startDate: itemFirstDate.get(id) ?? null }))
           .sort((a, b) => b.amount - a.amount);
       const toAccountItems = (map: Map<Id, number>) =>
         [...map.entries()]
           .filter(([, amount]) => amount > 0.005)
-          .map(([id, amount]) => ({ id, label: accountById.get(id)?.name ?? id, amount }))
+          .map(([id, amount]) => ({ id, label: accountById.get(id)?.name ?? id, amount, startDate: null }))
           .sort((a, b) => b.amount - a.amount);
 
       // Unify every account outflow (drawdowns, RMDs, direct payments) into one
@@ -789,6 +850,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
             id,
             label: itemLabels.get(id) ?? id,
             amount,
+            startDate: itemFirstDate.get(id) ?? null,
             fromPaycheck: contributionFromPaycheck.get(id) ?? false,
           }))
           .sort((a, b) => b.amount - a.amount),

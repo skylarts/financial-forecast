@@ -12,19 +12,37 @@ const TAX_GROUPS: { key: TaxTreatment; label: string }[] = [
   { key: "tax_free", label: "Tax-free (Roth)" },
 ];
 
-/** Union of line-item ids across all visible years, ordered by total magnitude. */
-function unionItems(perYear: CashFlowLineItem[][]): { id: string; label: string }[] {
+/**
+ * Union of line-item ids across all visible years. Ordered by total
+ * magnitude by default, or chronologically by each item's real first-posted
+ * date (items with no known date sort last) when sortBy = "date".
+ */
+function unionItems(
+  perYear: CashFlowLineItem[][],
+  sortBy: "magnitude" | "date" = "magnitude"
+): { id: string; label: string }[] {
   const labels = new Map<string, string>();
   const totals = new Map<string, number>();
+  const firstDates = new Map<string, string | null>();
   for (const arr of perYear) {
     for (const it of arr) {
       labels.set(it.id, it.label);
       totals.set(it.id, (totals.get(it.id) ?? 0) + it.amount);
+      if (!firstDates.has(it.id)) firstDates.set(it.id, it.startDate);
     }
   }
-  return [...labels.entries()]
-    .map(([id, label]) => ({ id, label }))
-    .sort((a, b) => (totals.get(b.id) ?? 0) - (totals.get(a.id) ?? 0));
+  const items = [...labels.entries()].map(([id, label]) => ({ id, label }));
+  if (sortBy === "date") {
+    return items.sort((a, b) => {
+      const da = firstDates.get(a.id);
+      const db = firstDates.get(b.id);
+      if (da && db) return da < db ? -1 : da > db ? 1 : 0;
+      if (da) return -1;
+      if (db) return 1;
+      return 0;
+    });
+  }
+  return items.sort((a, b) => (totals.get(b.id) ?? 0) - (totals.get(a.id) ?? 0));
 }
 
 /** Union of withdrawal source accounts across visible years, with tax treatment, by gross magnitude. */
@@ -84,7 +102,7 @@ export function CashFlowTable({
   const wdTaxMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.withdrawalsByAccount.map((w) => [w.id, w.tax]))), [years]);
 
   const incomeItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.incomeByItem)), [years]);
-  const expenseItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.expenseByItem)), [years]);
+  const expenseItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.expenseByItem), "date"), [years]);
   const contribItems = useMemo(() => {
     const fromPay = new Map<string, boolean>();
     for (const y of years) for (const c of y.cashFlow.contributionsByItem) fromPay.set(c.id, c.fromPaycheck);
@@ -181,7 +199,7 @@ export function CashFlowTable({
 
   const itemRows = (items: { id: string; label: string }[], maps: Map<string, number>[], indent = "pl-10") =>
     items.map((item) => (
-      <tr key={item.id} className="text-dim hover:bg-background/40">
+      <tr key={item.id} className="text-dim hover:bg-accent/15">
         <td className={`py-1.5 ${indent}`}>{item.label}</td>
         {cells((yi) => maps[yi].get(item.id) ?? 0)}
       </tr>
@@ -240,7 +258,7 @@ export function CashFlowTable({
                       </tr>
                       {g.accounts.map((a) => (
                         <Fragment key={a.id}>
-                          <tr className="text-dim hover:bg-background/40">
+                          <tr className="text-dim hover:bg-accent/15">
                             <td className="py-1.5 pl-12">{a.label}</td>
                             {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
                           </tr>
@@ -281,7 +299,7 @@ export function CashFlowTable({
             {hasSaved && isOpen("saved") && (
               <>
                 {contribItems.map((item) => (
-                  <tr key={item.id} className={`hover:bg-background/40 ${item.fromPaycheck ? "text-dim/60" : "text-dim"}`}>
+                  <tr key={item.id} className={`hover:bg-accent/15 ${item.fromPaycheck ? "text-dim/60" : "text-dim"}`}>
                     <td className="py-1.5 pl-10">
                       {item.label}
                       {item.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}

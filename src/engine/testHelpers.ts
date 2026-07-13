@@ -108,8 +108,14 @@ function deriveMoneyFlow(
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
     .sort((a, b) => (a.withdrawalPriority as number) - (b.withdrawalPriority as number))
-    .map((a) => a.id);
-  return { hubs, fillOrder, drainOrder, splitMode: surplusRoutingRule?.mode ?? "priority_fill" };
+    .map((a) => ({ id: nanoid(), accountId: a.id, startDate: null, endDate: null, splitPct: null }));
+  return {
+    hubs,
+    fillOrder,
+    drainOrder,
+    fillSplitMode: surplusRoutingRule?.mode ?? "priority_fill",
+    drainSplitMode: "priority_fill",
+  };
 }
 
 const MONEY_FLOW_HINT_KEYS = [

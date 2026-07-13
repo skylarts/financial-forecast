@@ -56,7 +56,7 @@ function AccountRow({
   const [expanded, setExpanded] = useState(false);
   return (
     <>
-      <tr className="hover:bg-background/40">
+      <tr className="hover:bg-accent/15">
         <td className="cursor-pointer py-1.5 pl-10" onClick={() => setExpanded((v) => !v)}>
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}

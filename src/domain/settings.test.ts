@@ -42,7 +42,13 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
 
   it("defaults to an empty waterfall (no hubs, no fill/drain order) when omitted", () => {
     const parsed = forecastSettingsSchema.parse(base);
-    expect(parsed.moneyFlow).toEqual({ hubs: [], fillOrder: [], drainOrder: [], splitMode: "priority_fill" });
+    expect(parsed.moneyFlow).toEqual({
+      hubs: [],
+      fillOrder: [],
+      drainOrder: [],
+      fillSplitMode: "priority_fill",
+      drainSplitMode: "priority_fill",
+    });
   });
 
   it("keeps an explicit moneyFlow configuration", () => {
@@ -51,11 +57,34 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
       moneyFlow: {
         hubs: [{ accountId: "checking", bufferAmount: 5000 }],
         fillOrder: [{ accountId: "savings", maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
-        drainOrder: ["savings"],
-        splitMode: "priority_fill",
+        drainOrder: [{ accountId: "savings", startDate: null, endDate: null, splitPct: null }],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
       },
     });
     expect(parsed.moneyFlow.hubs).toHaveLength(1);
     expect(parsed.moneyFlow.hubs[0].bufferAmount).toBe(5000);
+  });
+
+  it("migrates a legacy plain-string drainOrder and the old splitMode key without losing data", () => {
+    const parsed = forecastSettingsSchema.parse({
+      ...base,
+      moneyFlow: {
+        hubs: [{ accountId: "checking", bufferAmount: 5000 }],
+        fillOrder: [],
+        drainOrder: ["savings", "brokerage"],
+        splitMode: "fixed_split",
+      },
+    });
+    expect(parsed.moneyFlow.drainOrder.map((d) => ({ ...d, id: undefined }))).toEqual([
+      { id: undefined, accountId: "savings", startDate: null, endDate: null, splitPct: null },
+      { id: undefined, accountId: "brokerage", startDate: null, endDate: null, splitPct: null },
+    ]);
+    // Each migrated entry gets its own freshly-generated, non-empty id.
+    const ids = parsed.moneyFlow.drainOrder.map((d) => d.id);
+    expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(parsed.moneyFlow.fillSplitMode).toBe("fixed_split");
+    expect(parsed.moneyFlow.drainSplitMode).toBe("priority_fill");
   });
 });

@@ -230,7 +230,7 @@ export const usePlanStore = create<PlanState>()(
               ...s.settings.moneyFlow,
               hubs: s.settings.moneyFlow.hubs.filter((h) => h.accountId !== id),
               fillOrder: s.settings.moneyFlow.fillOrder.filter((f) => f.accountId !== id),
-              drainOrder: s.settings.moneyFlow.drainOrder.filter((a) => a !== id),
+              drainOrder: s.settings.moneyFlow.drainOrder.filter((stop) => stop.accountId !== id),
             },
           },
         }));

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { nanoid } from "nanoid";
 import type { Account, ForecastSettings, MoneyFlow } from "@/domain";
 import { forecastSettingsSchema } from "@/domain";
 import { ErrorBanner } from "@/components/ui/formFields";
@@ -67,26 +68,37 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
     [next[index], next[target]] = [next[target], next[index]];
     save({ ...moneyFlow, fillOrder: next });
   };
-  const setSplitMode = (splitMode: MoneyFlow["splitMode"]) => {
+  const setFillSplitMode = (fillSplitMode: MoneyFlow["fillSplitMode"]) => {
     // Seed an even split across current fill stops the moment the user
     // switches into fixed_split, so it does something sensible immediately
     // instead of defaulting to a broken/empty 0%-everywhere state.
     const fillOrder =
-      splitMode === "fixed_split"
+      fillSplitMode === "fixed_split"
         ? moneyFlow.fillOrder.map((f) => ({ ...f, splitPct: f.splitPct ?? 1 / Math.max(1, moneyFlow.fillOrder.length) }))
         : moneyFlow.fillOrder;
-    save({ ...moneyFlow, splitMode, fillOrder });
+    save({ ...moneyFlow, fillSplitMode, fillOrder });
   };
   const splitTotal = moneyFlow.fillOrder.reduce((s, f) => s + (f.splitPct ?? 0), 0);
 
   // --- Drain order (deficit cascade) ---
-  const drainIds = new Set(moneyFlow.drainOrder);
+  // Unlike hubs/fill order, the SAME account can appear more than once here
+  // (different date windows) -- so entries are keyed by their own `id`, not
+  // by accountId, and the "add" list intentionally doesn't exclude accounts
+  // already in the list.
   const addDrainSource = (accountId: string) => {
     if (!accountId) return;
-    save({ ...moneyFlow, drainOrder: [...moneyFlow.drainOrder, accountId] });
+    save({
+      ...moneyFlow,
+      drainOrder: [...moneyFlow.drainOrder, { id: nanoid(), accountId, startDate: null, endDate: null, splitPct: null }],
+    });
   };
-  const removeDrainSource = (accountId: string) =>
-    save({ ...moneyFlow, drainOrder: moneyFlow.drainOrder.filter((id) => id !== accountId) });
+  const updateDrainStop = (id: string, patch: Partial<MoneyFlow["drainOrder"][number]>) =>
+    save({
+      ...moneyFlow,
+      drainOrder: moneyFlow.drainOrder.map((d) => (d.id === id ? { ...d, ...patch } : d)),
+    });
+  const removeDrainSource = (id: string) =>
+    save({ ...moneyFlow, drainOrder: moneyFlow.drainOrder.filter((d) => d.id !== id) });
   const moveDrainSource = (index: number, dir: -1 | 1) => {
     const next = [...moneyFlow.drainOrder];
     const target = index + dir;
@@ -94,6 +106,14 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
     [next[index], next[target]] = [next[target], next[index]];
     save({ ...moneyFlow, drainOrder: next });
   };
+  const setDrainSplitMode = (drainSplitMode: MoneyFlow["drainSplitMode"]) => {
+    const drainOrder =
+      drainSplitMode === "fixed_split"
+        ? moneyFlow.drainOrder.map((d) => ({ ...d, splitPct: d.splitPct ?? 1 / Math.max(1, moneyFlow.drainOrder.length) }))
+        : moneyFlow.drainOrder;
+    save({ ...moneyFlow, drainSplitMode, drainOrder });
+  };
+  const drainSplitTotal = moneyFlow.drainOrder.reduce((s, d) => s + (d.splitPct ?? 0), 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -141,8 +161,8 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
           <input
             type="checkbox"
             className="h-4 w-4"
-            checked={moneyFlow.splitMode === "fixed_split"}
-            onChange={(e) => setSplitMode(e.target.checked ? "fixed_split" : "priority_fill")}
+            checked={moneyFlow.fillSplitMode === "fixed_split"}
+            onChange={(e) => setFillSplitMode(e.target.checked ? "fixed_split" : "priority_fill")}
           />
           Split by fixed percentages instead of filling one at a time
         </label>
@@ -183,7 +203,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 />
                 /yr
               </label>
-              {moneyFlow.splitMode === "fixed_split" && (
+              {moneyFlow.fillSplitMode === "fixed_split" && (
                 <label className="flex items-center gap-1">
                   Share
                   <input
@@ -201,7 +221,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
           </div>
         ))}
         <AddAccountSelect options={availableAccounts(fillIds)} onAdd={addFillStop} placeholder="+ Add fill target" />
-        {moneyFlow.splitMode === "fixed_split" && (
+        {moneyFlow.fillSplitMode === "fixed_split" && (
           <div className={`text-xs ${Math.abs(splitTotal - 1) < 0.001 ? "text-dim" : "text-negative"}`}>
             Total allocated: {(splitTotal * 100).toFixed(0)}%
             {Math.abs(splitTotal - 1) >= 0.001 && " (the remainder stays in the spending account)"}
@@ -216,20 +236,77 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       {/* Drain order */}
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">When I&rsquo;m short, drain in this order</h3>
+        <p className="text-xs text-dim">
+          Each source can have a Start/End date -- leave either blank for &ldquo;always&rdquo;. Useful for a phased
+          drawdown across retirement, and the same account can be added more than once with different windows (e.g.
+          drain it, switch to another source for a stretch, then come back to it later).
+        </p>
+        <label className="flex items-center gap-2 text-xs text-dim">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={moneyFlow.drainSplitMode === "fixed_split"}
+            onChange={(e) => setDrainSplitMode(e.target.checked ? "fixed_split" : "priority_fill")}
+          />
+          Split by fixed percentages instead of draining one at a time
+        </label>
         {moneyFlow.drainOrder.length === 0 && <p className="text-xs text-dim">No drain sources configured yet.</p>}
-        {moneyFlow.drainOrder.map((accountId, i) => (
-          <div key={accountId} className="flex items-center gap-2 rounded-md border border-border p-2">
-            <div className="flex flex-col">
-              <button type="button" disabled={i === 0} onClick={() => moveDrainSource(i, -1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▲</button>
-              <button type="button" disabled={i === moneyFlow.drainOrder.length - 1} onClick={() => moveDrainSource(i, 1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▼</button>
+        {moneyFlow.drainOrder.map((stop, i) => (
+          <div key={stop.id} className="flex flex-col gap-2 rounded-md border border-border p-2">
+            <div className="flex items-center gap-2">
+              <div className="flex flex-col">
+                <button type="button" disabled={i === 0} onClick={() => moveDrainSource(i, -1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▲</button>
+                <button type="button" disabled={i === moneyFlow.drainOrder.length - 1} onClick={() => moveDrainSource(i, 1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▼</button>
+              </div>
+              <span className="flex-1 truncate text-sm">{i + 1}. {accountName(stop.accountId)}</span>
+              <button type="button" onClick={() => removeDrainSource(stop.id)} className="text-xs text-negative hover:underline">
+                Remove
+              </button>
             </div>
-            <span className="flex-1 truncate text-sm">{i + 1}. {accountName(accountId)}</span>
-            <button type="button" onClick={() => removeDrainSource(accountId)} className="text-xs text-negative hover:underline">
-              Remove
-            </button>
+            <div className="ml-6 flex flex-wrap items-center gap-3 text-xs text-dim">
+              <label className="flex items-center gap-1">
+                Start
+                <input
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="date"
+                  value={stop.startDate ?? ""}
+                  onChange={(e) => updateDrainStop(stop.id, { startDate: e.target.value === "" ? null : e.target.value })}
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                End
+                <input
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="date"
+                  value={stop.endDate ?? ""}
+                  onChange={(e) => updateDrainStop(stop.id, { endDate: e.target.value === "" ? null : e.target.value })}
+                />
+              </label>
+              {moneyFlow.drainSplitMode === "fixed_split" && (
+                <label className="flex items-center gap-1">
+                  Share
+                  <input
+                    className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value={stop.splitPct ?? 0}
+                    onChange={(e) => updateDrainStop(stop.id, { splitPct: Number(e.target.value) })}
+                  />
+                </label>
+              )}
+            </div>
           </div>
         ))}
-        <AddAccountSelect options={availableAccounts(drainIds)} onAdd={addDrainSource} placeholder="+ Add drain source" />
+        <AddAccountSelect options={accounts} onAdd={addDrainSource} placeholder="+ Add drain source" />
+        {moneyFlow.drainSplitMode === "fixed_split" && (
+          <div className={`text-xs ${Math.abs(drainSplitTotal - 1) < 0.001 ? "text-dim" : "text-negative"}`}>
+            Total allocated: {(drainSplitTotal * 100).toFixed(0)}%
+            {Math.abs(drainSplitTotal - 1) >= 0.001 &&
+              " (shares are a target, not a hard cap -- an underfunded share tops up from the next active source)"}
+          </div>
+        )}
       </section>
     </div>
   );

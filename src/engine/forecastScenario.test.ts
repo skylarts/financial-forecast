@@ -1142,7 +1142,8 @@ describe("forecastScenario -- moneyFlow (multiple hubs, expressed directly)", ()
         ],
         fillOrder: [{ accountId: savings.id, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
         drainOrder: [],
-        splitMode: "priority_fill",
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
       },
     });
     const result = forecastScenario(scenario);
@@ -1152,5 +1153,364 @@ describe("forecastScenario -- moneyFlow (multiple hubs, expressed directly)", ()
     expect(year.accountBalances[checkingA.id]).toBeCloseTo(0, 0);
     expect(year.accountBalances[checkingB.id]).toBeCloseTo(0, 0);
     expect(year.accountBalances[savings.id]).toBeCloseTo((3000 + 2000) * 12, 0);
+  });
+});
+
+describe("forecastScenario -- drain order date windows and splitting", () => {
+  it("only drains a stop within its date window, then the next stop picks up", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 200_000,
+      growthRatePct: 0,
+    });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 200_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 5_000 })], // $60k/yr shortfall
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        drainOrder: [
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2027-12-31", splitPct: null },
+          { id: nanoid(), accountId: ira.id, startDate: "2028-01-01", endDate: null, splitPct: null },
+        ],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const byYear = (y: number) => result.years.find((row) => row.year === y)!;
+
+    // Brokerage funds 2026-2027 (its window); IRA untouched during that time.
+    expect(byYear(2026).accountBalances[brokerage.id]).toBeCloseTo(140_000, 0);
+    expect(byYear(2027).accountBalances[brokerage.id]).toBeCloseTo(80_000, 0);
+    expect(byYear(2026).accountBalances[ira.id]).toBeCloseTo(200_000, 0);
+    expect(byYear(2027).accountBalances[ira.id]).toBeCloseTo(200_000, 0);
+    // IRA takes over starting 2028; brokerage is outside its window and untouched from here.
+    expect(byYear(2028).accountBalances[brokerage.id]).toBeCloseTo(80_000, 0);
+    expect(byYear(2028).accountBalances[ira.id]).toBeCloseTo(140_000, 0);
+    expect(byYear(2029).accountBalances[brokerage.id]).toBeCloseTo(80_000, 0);
+    expect(byYear(2029).accountBalances[ira.id]).toBeCloseTo(80_000, 0);
+  });
+
+  it("flags insufficient funds for a shortfall month with no active drain stop", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 200_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 1_000 })],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        // IRA isn't active until 2027 -- 2026's shortfall has nowhere to go.
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: null, splitPct: null }],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.year === 2026)).toBe(true);
+    // 2027 onward the IRA is active and catches up: 2026's whole accumulated
+    // shortfall ($12k) plus all of 2027's own shortfall ($12k) = $24k drawn.
+    const y2027 = result.years.find((y) => y.year === 2027)!;
+    expect(y2027.accountBalances[ira.id]).toBeCloseTo(200_000 - 24_000, 0);
+    expect(y2027.accountBalances[checking.id]).toBeCloseTo(0, 0);
+  });
+
+  it("fixed_split divides a shortfall across active accounts by their configured percentages", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 10_000 })], // $120k/yr shortfall
+      horizonEndDate: "2026-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        drainOrder: [
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 },
+        ],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "fixed_split",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+    // $120k shortfall split 40/60 -> $48k from brokerage, $72k from IRA.
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(500_000 - 48_000, 0);
+    expect(year.accountBalances[ira.id]).toBeCloseTo(500_000 - 72_000, 0);
+  });
+
+  it("tops up from the other active source when one can't cover its full split target", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    // Only enough for 3 months at its $4,000/mo target (40% of the $10k/mo shortfall).
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 12_000,
+      growthRatePct: 0,
+    });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 10_000 })], // $120k/yr shortfall
+      horizonEndDate: "2026-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        drainOrder: [
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 },
+        ],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "fixed_split",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+    // Brokerage fully drains (only ever had $12k against a $48k annual target);
+    // the IRA tops up the rest so the full $120k shortfall is still covered.
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[ira.id]).toBeCloseTo(500_000 - 108_000, 0);
+    expect(year.cashFlow.operatingCashFlow + year.cashFlow.withdrawalsToCashNet).toBeCloseTo(0, 0);
+  });
+
+  it("renormalizes split percentages across only the currently-active stops", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    // A Roth with a 40% share that never becomes active during the simulated
+    // horizon -- shouldn't leave 40% of the shortfall uncovered.
+    const roth = makeAccount({
+      class: "tax_free",
+      name: "Roth",
+      taxTreatment: "tax_free",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, ira, roth],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 8_333.33 })], // ~$100k/yr shortfall
+      horizonEndDate: "2026-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        drainOrder: [
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.3 },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.3 },
+          { id: nanoid(), accountId: roth.id, startDate: "2030-01-01", endDate: null, splitPct: 0.4 },
+        ],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "fixed_split",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+    // Only brokerage and IRA are active (0.3 : 0.3 -> renormalized to 50/50),
+    // so each covers about half of the ~$100k shortfall; Roth is untouched.
+    const brokerageDrawn = 500_000 - year.accountBalances[brokerage.id];
+    const iraDrawn = 500_000 - year.accountBalances[ira.id];
+    expect(brokerageDrawn).toBeCloseTo(iraDrawn, -2);
+    expect(brokerageDrawn + iraDrawn).toBeCloseTo(100_000, -1);
+    expect(year.accountBalances[roth.id]).toBeCloseTo(500_000, 0);
+  });
+
+  it("supports the same account appearing more than once with different windows", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 5_000 })], // $60k/yr shortfall
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        drainOrder: [
+          // Brokerage funds 2026, IRA takes 2027-2028, then Brokerage again from 2029.
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2026-12-31", splitPct: null },
+          { id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: "2028-12-31", splitPct: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: "2029-01-01", endDate: null, splitPct: null },
+        ],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const byYear = (y: number) => result.years.find((row) => row.year === y)!;
+
+    expect(byYear(2026).accountBalances[brokerage.id]).toBeCloseTo(440_000, 0);
+    expect(byYear(2026).accountBalances[ira.id]).toBeCloseTo(500_000, 0);
+    // IRA covers 2027-2028; brokerage's first window has ended and its
+    // second hasn't started yet, so it's untouched through this stretch.
+    expect(byYear(2027).accountBalances[ira.id]).toBeCloseTo(440_000, 0);
+    expect(byYear(2027).accountBalances[brokerage.id]).toBeCloseTo(440_000, 0);
+    expect(byYear(2028).accountBalances[ira.id]).toBeCloseTo(380_000, 0);
+    expect(byYear(2028).accountBalances[brokerage.id]).toBeCloseTo(440_000, 0);
+    // Brokerage's second window picks back up in 2029; IRA untouched from here.
+    expect(byYear(2029).accountBalances[brokerage.id]).toBeCloseTo(380_000, 0);
+    expect(byYear(2029).accountBalances[ira.id]).toBeCloseTo(380_000, 0);
+  });
+
+  it("replenishes a spending hub at its configured buffer floor, not just at $0", () => {
+    const checking = makeAccount({
+      class: "cash",
+      name: "Checking",
+      isSpendingAccount: true,
+      startingBalance: 100_000,
+      growthRatePct: 0,
+    });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 2_000 })], // $24k/yr, no income
+      horizonEndDate: "2026-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 100_000 }],
+        fillOrder: [],
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null }],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+    // Checking stays at its $100k floor all year, replenished from the IRA
+    // each month instead of being drawn down toward $0 first.
+    expect(year.accountBalances[checking.id]).toBeCloseTo(100_000, 0);
+    expect(year.accountBalances[ira.id]).toBeCloseTo(500_000 - 24_000, 0);
+  });
+
+  it("leaves a hub with no configured buffer draining down to $0, same as before this feature", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0, growthRatePct: 0 });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 2_000 })],
+      horizonEndDate: "2026-12-31",
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: null }],
+        fillOrder: [],
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null }],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[ira.id]).toBeCloseTo(500_000 - 24_000, 0);
+  });
+});
+
+describe("forecastScenario -- cash-flow line item start dates", () => {
+  it("tags each expense/income/contribution line item with its true first-posted date", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0, isSurplusTarget: true, surplusTargetPriority: 1 });
+    const rent = makeExpense({ paymentAccountId: checking.id, name: "Rent", amount: 2_000, startDate: "2026-01-01" });
+    const carRepair = makeExpense({
+      paymentAccountId: checking.id,
+      name: "Car repair",
+      amount: 3_000,
+      frequency: "one_time",
+      startDate: "2026-06-01",
+    });
+    const salary = makeIncome({ depositAccountId: checking.id, name: "Salary", amount: 10_000, startDate: "2026-01-01" });
+    const scenario = makeScenario({
+      accounts: [checking, savings],
+      incomeSources: [salary],
+      expenses: [rent, carRepair],
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    const rentItem = year.cashFlow.expenseByItem.find((i) => i.label === "Rent")!;
+    const carItem = year.cashFlow.expenseByItem.find((i) => i.label === "Car repair")!;
+    const salaryItem = year.cashFlow.incomeByItem.find((i) => i.label === "Salary")!;
+
+    expect(rentItem.startDate).toBe("2026-01-01");
+    expect(carItem.startDate).toBe("2026-06-01");
+    expect(salaryItem.startDate).toBe("2026-01-01");
+    // Chronological, not magnitude order: Rent ($24k/yr) outweighs the
+    // one-time $3k Car repair, but Rent still starts first.
+    expect(rentItem.startDate! < carItem.startDate!).toBe(true);
   });
 });

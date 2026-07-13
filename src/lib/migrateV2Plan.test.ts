@@ -193,8 +193,8 @@ describe("migrateV2PlanToV3", () => {
     expect(mf.fillOrder.map((f: { accountId: string }) => f.accountId)).toEqual(["savings", "brokerage"]);
     expect(mf.fillOrder[0].maxBalance).toBe(20_000);
     expect(mf.fillOrder[0].maxBalanceGrowthRatePct).toBe(0.03);
-    expect(mf.drainOrder).toEqual(["savings", "brokerage"]);
-    expect(mf.splitMode).toBe("priority_fill");
+    expect(mf.drainOrder.map((d: { accountId: string }) => d.accountId)).toEqual(["savings", "brokerage"]);
+    expect(mf.fillSplitMode).toBe("priority_fill");
   });
 
   it("folds income_change into an adjustment on the target income source", () => {

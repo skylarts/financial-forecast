@@ -70,8 +70,14 @@ function migrateMoneyFlow(accounts: Json[], surplusRoutingRule: Json | undefined
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
     .sort((a, b) => a.withdrawalPriority - b.withdrawalPriority)
-    .map((a) => a.id);
-  return { hubs, fillOrder, drainOrder, splitMode: surplusRoutingRule?.mode ?? "priority_fill" };
+    .map((a) => ({ accountId: a.id, startDate: null, endDate: null, splitPct: null }));
+  return {
+    hubs,
+    fillOrder,
+    drainOrder,
+    fillSplitMode: surplusRoutingRule?.mode ?? "priority_fill",
+    drainSplitMode: "priority_fill",
+  };
 }
 
 const LEGACY_ACCOUNT_FIELDS = [

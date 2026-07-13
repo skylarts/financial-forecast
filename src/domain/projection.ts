@@ -25,6 +25,8 @@ export interface CashFlowLineItem {
   id: Id;
   label: string;
   amount: number;
+  /** The date this item first posted anywhere in the plan (its real start date, since months are simulated in order); null if never posted. */
+  startDate: ISODate | null;
 }
 
 /** A contribution line, tagged by how it's funded for cash-flow treatment. */
