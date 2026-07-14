@@ -251,6 +251,7 @@ export const mockScenario: Scenario = {
         startDate: null,
         endDate: null,
         splitPct: null,
+        minBalance: null,
       })),
       fillSplitMode: "priority_fill",
       drainSplitMode: "priority_fill",

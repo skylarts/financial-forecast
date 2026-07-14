@@ -55,6 +55,8 @@ export const drainStopSchema = z.object({
   endDate: isoDateSchema.nullable().default(null),
   /** Only used when drainSplitMode = "fixed_split": this stop's share of the shortfall (0..1). */
   splitPct: z.number().min(0).max(1).nullable().default(null),
+  /** Minimum balance (today's dollars, grown by inflation) this stop won't be drained below; null = no floor. */
+  minBalance: z.number().nonnegative().nullable().default(null),
 });
 export type DrainStop = z.infer<typeof drainStopSchema>;
 

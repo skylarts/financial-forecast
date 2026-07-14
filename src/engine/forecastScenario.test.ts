@@ -1218,8 +1218,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
         hubs: [{ accountId: checking.id, bufferAmount: 0 }],
         fillOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2027-12-31", splitPct: null },
-          { id: nanoid(), accountId: ira.id, startDate: "2028-01-01", endDate: null, splitPct: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2027-12-31", splitPct: null, minBalance: null },
+          { id: nanoid(), accountId: ira.id, startDate: "2028-01-01", endDate: null, splitPct: null, minBalance: null },
         ],
         fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
@@ -1258,7 +1258,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
         hubs: [{ accountId: checking.id, bufferAmount: 0 }],
         fillOrder: [],
         // IRA isn't active until 2027 -- 2026's shortfall has nowhere to go.
-        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: null, splitPct: null }],
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: null, splitPct: null, minBalance: null }],
         fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
@@ -1296,8 +1296,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
         hubs: [{ accountId: checking.id, bufferAmount: 0 }],
         fillOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 },
-          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null },
         ],
         fillSplitMode: "priority_fill",
         drainSplitMode: "fixed_split",
@@ -1335,8 +1335,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
         hubs: [{ accountId: checking.id, bufferAmount: 0 }],
         fillOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 },
-          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null },
         ],
         fillSplitMode: "priority_fill",
         drainSplitMode: "fixed_split",
@@ -1384,9 +1384,9 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
         hubs: [{ accountId: checking.id, bufferAmount: 0 }],
         fillOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.3 },
-          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.3 },
-          { id: nanoid(), accountId: roth.id, startDate: "2030-01-01", endDate: null, splitPct: 0.4 },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null },
+          { id: nanoid(), accountId: roth.id, startDate: "2030-01-01", endDate: null, splitPct: 0.4 , minBalance: null },
         ],
         fillSplitMode: "priority_fill",
         drainSplitMode: "fixed_split",
@@ -1429,9 +1429,9 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
         fillOrder: [],
         drainOrder: [
           // Brokerage funds 2026, IRA takes 2027-2028, then Brokerage again from 2029.
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2026-12-31", splitPct: null },
-          { id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: "2028-12-31", splitPct: null },
-          { id: nanoid(), accountId: brokerage.id, startDate: "2029-01-01", endDate: null, splitPct: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2026-12-31", splitPct: null, minBalance: null },
+          { id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: "2028-12-31", splitPct: null, minBalance: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: "2029-01-01", endDate: null, splitPct: null, minBalance: null },
         ],
         fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
@@ -1475,7 +1475,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         hubs: [{ accountId: checking.id, bufferAmount: 100_000 }],
         fillOrder: [],
-        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null }],
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null }],
         fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
@@ -1504,7 +1504,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         hubs: [{ accountId: checking.id, bufferAmount: null }],
         fillOrder: [],
-        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null }],
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null }],
         fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
@@ -1513,6 +1513,77 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
     const year = result.years[0];
     expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
     expect(year.accountBalances[ira.id]).toBeCloseTo(500_000 - 24_000, 0);
+  });
+
+  it("stops draining a source once it hits its inflation-grown floor, spilling the rest to the next source", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0, growthRatePct: 0 });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 110_000,
+      growthRatePct: 0,
+    });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      taxTreatment: "tax_deferred",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, ira],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 5_000 })], // $60k/yr shortfall
+      startDate: "2026-01-01",
+      horizonEndDate: "2026-12-31",
+      inflationRatePct: 0, // keep the floor flat at exactly $100k for a clean assertion
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        drainOrder: [
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000 },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null },
+        ],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const year = result.years[0];
+
+    // Brokerage only has $10k of room above its $100k floor -- covers $10k of
+    // the $60k shortfall, then stops; the remaining $50k spills to the IRA.
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(100_000, 0);
+    expect(year.accountBalances[ira.id]).toBeCloseTo(500_000 - 50_000, 0);
+  });
+
+  it("raises the insufficient-funds warning when a floor blocks coverage with no other source", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0, growthRatePct: 0 });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 110_000,
+      growthRatePct: 0,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage],
+      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 5_000 })], // $60k/yr shortfall
+      startDate: "2026-01-01",
+      horizonEndDate: "2026-12-31",
+      inflationRatePct: 0,
+      moneyFlow: {
+        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
+        fillOrder: [],
+        // Only source, floored at $100k -- can only ever cover $10k of the $60k shortfall.
+        drainOrder: [{ id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000 }],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.year === 2026)).toBe(true);
+    expect(result.years[0].accountBalances[brokerage.id]).toBeCloseTo(100_000, 0);
   });
 });
 

@@ -89,7 +89,10 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
     if (!accountId) return;
     save({
       ...moneyFlow,
-      drainOrder: [...moneyFlow.drainOrder, { id: nanoid(), accountId, startDate: null, endDate: null, splitPct: null }],
+      drainOrder: [
+        ...moneyFlow.drainOrder,
+        { id: nanoid(), accountId, startDate: null, endDate: null, splitPct: null, minBalance: null },
+      ],
     });
   };
   const updateDrainStop = (id: string, patch: Partial<MoneyFlow["drainOrder"][number]>) =>
@@ -239,7 +242,9 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
         <p className="text-xs text-dim">
           Each source can have a Start/End date -- leave either blank for &ldquo;always&rdquo;. Useful for a phased
           drawdown across retirement, and the same account can be added more than once with different windows (e.g.
-          drain it, switch to another source for a stretch, then come back to it later).
+          drain it, switch to another source for a stretch, then come back to it later). &ldquo;Keep at least $&rdquo;
+          (today&rsquo;s dollars, grown with inflation) stops this source from being drained below that floor -- once
+          it's hit, the remaining shortfall spills to the next active source.
         </p>
         <label className="flex items-center gap-2 text-xs text-dim">
           <input
@@ -280,6 +285,17 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   type="date"
                   value={stop.endDate ?? ""}
                   onChange={(e) => updateDrainStop(stop.id, { endDate: e.target.value === "" ? null : e.target.value })}
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                Keep at least $
+                <input
+                  className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="number"
+                  step="0.01"
+                  placeholder="0"
+                  value={stop.minBalance ?? ""}
+                  onChange={(e) => updateDrainStop(stop.id, { minBalance: e.target.value === "" ? null : Number(e.target.value) })}
                 />
               </label>
               {moneyFlow.drainSplitMode === "fixed_split" && (
