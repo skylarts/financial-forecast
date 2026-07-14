@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type {
   Account,
   ExpenseBaseline,
@@ -11,6 +11,7 @@ import type {
   TimelineRow,
 } from "@/domain";
 import { formatMoney } from "@/lib/format";
+import { groupLedgerByYear } from "@/lib/groupLedger";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { EventDrawer } from "@/components/events/EventDrawer";
@@ -101,6 +102,16 @@ export function TimelineTab({
   const [incomeDrawer, setIncomeDrawer] = useState<{ open: boolean; item?: IncomeSource }>({ open: false });
   const [expenseDrawer, setExpenseDrawer] = useState<{ open: boolean; item?: ExpenseBaseline }>({ open: false });
   const [eventDrawer, setEventDrawer] = useState<{ open: boolean; item?: ScenarioEvent }>({ open: false });
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const ownerName = (id: string | null) => (id ? people.find((p) => p.id === id)?.name ?? "" : "Joint");
   const timelineById = new Map(timeline.map((t) => [t.eventId, t]));
@@ -173,7 +184,7 @@ export function TimelineTab({
 
   rows.sort((a, b) => a.date.localeCompare(b.date) || TONE_SORT[a.tone] - TONE_SORT[b.tone]);
 
-  const sortedLedger = [...ledger].sort((a, b) => a.date.localeCompare(b.date));
+  const ledgerGroups = groupLedgerByYear(ledger);
   const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "an account";
 
   return (
@@ -250,29 +261,51 @@ export function TimelineTab({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-dim">
-              <th className="py-2 pl-2 font-medium">Date</th>
+              <th className="py-2 pl-2 font-medium">Year</th>
               <th className="py-2 font-medium">Kind</th>
-              <th className="py-2 font-medium">Detail</th>
-              <th className="py-2 pr-2 text-right font-medium">Amount</th>
+              <th className="py-2 font-medium">Account</th>
+              <th className="py-2 pr-2 text-right font-medium">Total</th>
             </tr>
           </thead>
           <tbody>
-            {sortedLedger.slice(0, 500).map((entry, i) => (
-              <tr key={i} className="border-t border-border hover:bg-background/40">
-                <td className="py-1.5 pl-2 text-dim">{entry.date}</td>
-                <td className="py-1.5">
-                  <span className="rounded bg-positive/20 px-2 py-0.5 text-xs text-positive">
-                    {LEDGER_KIND_LABELS[entry.kind]}
-                  </span>
-                </td>
-                <td className="py-1.5 text-dim">
-                  {accountName(entry.accountId)}
-                  {entry.toAccountId ? ` → ${accountName(entry.toAccountId)}` : ""} — {entry.note}
-                </td>
-                <td className="py-1.5 pr-2 text-right">{fmt(entry.amount)}</td>
-              </tr>
-            ))}
-            {sortedLedger.length === 0 && (
+            {ledgerGroups.map((group) => {
+              const expanded = expandedGroups.has(group.key);
+              return (
+                <Fragment key={group.key}>
+                  <tr
+                    className="cursor-pointer border-t border-border hover:bg-background/40"
+                    onClick={() => toggleGroup(group.key)}
+                  >
+                    <td className="py-1.5 pl-2 text-dim">
+                      <span className="mr-1 inline-block w-3 text-xs text-dim">{expanded ? "▾" : "▸"}</span>
+                      {group.year}
+                    </td>
+                    <td className="py-1.5">
+                      <span className="rounded bg-positive/20 px-2 py-0.5 text-xs text-positive">
+                        {LEDGER_KIND_LABELS[group.kind]}
+                      </span>
+                    </td>
+                    <td className="py-1.5 text-dim">
+                      {accountName(group.accountId)}
+                      {group.toAccountId ? ` → ${accountName(group.toAccountId)}` : ""}
+                      {" · "}
+                      {group.entries.length} payment{group.entries.length === 1 ? "" : "s"}
+                    </td>
+                    <td className="py-1.5 pr-2 text-right">{fmt(group.totalAmount)}</td>
+                  </tr>
+                  {expanded &&
+                    group.entries.map((entry, i) => (
+                      <tr key={`${group.key}-${i}`} className="border-t border-border/50 bg-background/20">
+                        <td className="py-1 pl-6 text-xs text-dim">{entry.date}</td>
+                        <td className="py-1" />
+                        <td className="py-1 text-xs text-dim">{entry.note}</td>
+                        <td className="py-1 pr-2 text-right text-xs text-dim">{fmt(entry.amount)}</td>
+                      </tr>
+                    ))}
+                </Fragment>
+              );
+            })}
+            {ledgerGroups.length === 0 && (
               <tr>
                 <td colSpan={4} className="py-8 text-center text-dim">
                   None in this scenario.
@@ -281,11 +314,6 @@ export function TimelineTab({
             )}
           </tbody>
         </table>
-        {sortedLedger.length > 500 && (
-          <p className="border-t border-border px-2 py-2 text-xs text-dim">
-            Showing the first 500 of {sortedLedger.length} entries.
-          </p>
-        )}
       </div>
 
       <IncomeDrawer
