@@ -53,6 +53,26 @@ export interface WithdrawalLineItem {
   tax: number;
 }
 
+export type FederalTaxComponentKey =
+  | "tax_deferred"
+  | "pension"
+  | "taxable_social_security"
+  | "capital_gains"
+  | "state_local";
+
+/**
+ * One component of the year's exact federal tax bill, allocated pro-rata by
+ * gross-income share for the ordinary-tax components (tax_deferred/pension/
+ * taxable_social_security), plus capital_gains and state_local computed
+ * directly. Zero-amount components are omitted; the remaining amounts still
+ * sum exactly to federalTaxTotal.
+ */
+export interface FederalTaxComponent {
+  key: FederalTaxComponentKey;
+  label: string;
+  amount: number;
+}
+
 export interface CashFlowYearRow {
   year: number;
   totalIncome: number;
@@ -109,6 +129,8 @@ export interface CashFlowYearRow {
    * add-on from settings.additionalFlatTaxRatePct (0 by default).
    */
   federalTaxTotal: number;
+  /** federalTaxTotal broken into its sources (tax-deferred/RMD withdrawals, pension, taxable SS, capital gains, state/local add-on); sums exactly to federalTaxTotal. */
+  federalTaxByComponent: FederalTaxComponent[];
   /** Ordinary taxable income for the year (tax-deferred withdrawals + gross pension + taxable Social Security, net of the standard deduction). */
   ordinaryTaxableIncome: number;
   /** Realized long-term capital gains from taxable-account withdrawals this year (gain-over-basis portion only). */
