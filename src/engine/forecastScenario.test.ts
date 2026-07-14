@@ -533,6 +533,134 @@ describe("forecastScenario -- account contributions", () => {
   });
 });
 
+describe("forecastScenario -- variable contribution & growth-rate schedules", () => {
+  it("a growth-rate schedule changes the applied rate on the scheduled date, same as a growth_rate_change event", () => {
+    const account = makeAccount({
+      class: "taxable_investment",
+      startingBalance: 100_000,
+      growthRatePct: 0.08,
+      growthRateSchedule: [{ startDate: "2028-01-01", ratePct: 0.02 }],
+    });
+    const scenario = makeScenario({
+      accounts: [account],
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+    });
+    const result = forecastScenario(scenario);
+
+    const oldMonthlyRate = Math.pow(1.08, 1 / 12) - 1;
+    const newMonthlyRate = Math.pow(1.02, 1 / 12) - 1;
+    // Same shape as the growth_rate_change event test above: 23 months at the
+    // base rate (account's own creation month is skipped), then 24 months at
+    // the scheduled rate once it starts.
+    const expected = 100_000 * Math.pow(1 + oldMonthlyRate, 23) * Math.pow(1 + newMonthlyRate, 24);
+    expect(result.years[3].accountBalances[account.id]).toBeCloseTo(expected, 0);
+  });
+
+  it("merges a growth-rate schedule entry with an earlier growth_rate_change event on the same account, both driving the same override list", () => {
+    const account = makeAccount({ class: "taxable_investment", startingBalance: 100_000, growthRatePct: 0.08 });
+    const scenario = makeScenario({
+      accounts: [{ ...account, growthRateSchedule: [{ startDate: "2028-06-01", ratePct: 0.01 }] }],
+      events: [
+        {
+          id: nanoid(),
+          type: "growth_rate_change",
+          name: "De-risk",
+          startDate: "2027-01-01",
+          targetAccountId: account.id,
+          newGrowthRatePct: 0.04,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2029-12-31",
+    });
+    const result = forecastScenario(scenario);
+
+    const m08 = Math.pow(1.08, 1 / 12) - 1;
+    const m04 = Math.pow(1.04, 1 / 12) - 1;
+    const m01 = Math.pow(1.01, 1 / 12) - 1;
+    // 11 months (2026-02..12) at the base 8%, then the event's 4% takes over
+    // 2027-01-01 through 2028-05 (12 + 5 = 17 months), then the schedule
+    // entry's 1% takes over from 2028-06-01 through end of 2029 (7 + 12 = 19 months).
+    const expected = 100_000 * Math.pow(1 + m08, 11) * Math.pow(1 + m04, 17) * Math.pow(1 + m01, 19);
+    expect(result.years[3].accountBalances[account.id]).toBeCloseTo(expected, 0);
+  });
+
+  it("multi-segment contributions post the right amount in each segment's window", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const four01k = makeAccount({
+      class: "tax_deferred",
+      name: "401k",
+      taxTreatment: "tax_deferred",
+      ownerId: nanoid(),
+      startingBalance: 0,
+      growthRatePct: 0,
+      contributionSchedule: [
+        { startDate: "2026-01-01", amount: 1_500, frequency: "monthly", growthRatePct: 0, payrollDeducted: true, endDate: "2027-12-31" },
+        { startDate: "2028-01-01", amount: 2_000, frequency: "monthly", growthRatePct: 0, payrollDeducted: true },
+      ],
+    });
+    const scenario = makeScenario({
+      accounts: [checking, four01k],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      startDate: "2026-01-01",
+      horizonEndDate: "2028-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const byYear = (y: number) => result.years.find((row) => row.year === y)!;
+
+    expect(byYear(2026).accountBalances[four01k.id]).toBeCloseTo(18_000, 0); // $1,500 x 12
+    expect(byYear(2027).accountBalances[four01k.id]).toBeCloseTo(36_000, 0); // + another $1,500 x 12
+    expect(byYear(2028).accountBalances[four01k.id]).toBeCloseTo(60_000, 0); // + $2,000 x 12 from the new segment
+  });
+
+  it("a take-home-funded segment still draws from the spending account, same as the single-value contribution path", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 0,
+      growthRatePct: 0,
+      contributionSchedule: [
+        { startDate: "2026-01-01", amount: 1_000, frequency: "monthly", growthRatePct: 0, payrollDeducted: false },
+      ],
+    });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const year = forecastScenario(scenario).years[0];
+
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(12_000, 0);
+    expect(year.accountBalances[checking.id]).toBeCloseTo(48_000, 0); // 60k income - 12k contributed
+    expect(year.cashFlow.afterTaxContributionTotal).toBeCloseTo(12_000, 0);
+  });
+
+  it("a single-value account with no schedule fields behaves exactly as before this feature", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const four01k = makeAccount({
+      class: "tax_deferred",
+      name: "401k",
+      taxTreatment: "tax_deferred",
+      ownerId: nanoid(),
+      startingBalance: 0,
+      growthRatePct: 0,
+      contribution: { amount: 1000, frequency: "monthly", growthRatePct: 0, payrollDeducted: true },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, four01k],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      horizonEndDate: "2026-12-31",
+    });
+    const year = forecastScenario(scenario).years[0];
+
+    expect(year.accountBalances[four01k.id]).toBeCloseTo(12_000, 0);
+    expect(year.cashFlow.afterTaxContributionTotal).toBe(0);
+  });
+});
+
 describe("forecastScenario -- cash flow statement reconciles exactly", () => {
   it("every itemized bucket sums to the measured change in cash on hand, every year", () => {
     // The mock scenario includes an edge case on purpose: "Inheritance" income

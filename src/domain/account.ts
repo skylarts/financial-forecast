@@ -66,6 +66,33 @@ export const contributionSchema = z.object({
 });
 export type Contribution = z.infer<typeof contributionSchema>;
 
+/** One entry in a growth-rate schedule: the account's rate from `startDate` until the next entry starts (or indefinitely, for the last one). */
+export const growthRateScheduleEntrySchema = z.object({
+  startDate: isoDateSchema,
+  /** Nominal (actual) annual rate, replacing the account's base growthRatePct from this date. */
+  ratePct: z.number(),
+});
+export type GrowthRateScheduleEntry = z.infer<typeof growthRateScheduleEntrySchema>;
+
+/**
+ * One segment of a multi-segment contribution schedule -- same shape as
+ * Contribution, plus its own startDate (and optional endDate; an omitted
+ * endDate runs until the next segment's startDate, or indefinitely for the
+ * last segment). When an account has `contributionSchedule` set, it
+ * supersedes the single `contribution` entirely.
+ */
+export const contributionScheduleSegmentSchema = z.object({
+  startDate: isoDateSchema,
+  amount: z.number().positive(),
+  frequency: recurrenceFrequencySchema,
+  /** Nominal (actual) annual growth of this segment's contribution amount; 0 = flat. */
+  growthRatePct: z.number().default(0),
+  payrollDeducted: z.boolean().default(false),
+  /** null/omitted = runs until the next segment's startDate, or indefinitely for the last segment. */
+  endDate: isoDateSchema.nullable().optional(),
+});
+export type ContributionScheduleSegment = z.infer<typeof contributionScheduleSegmentSchema>;
+
 // Kept separate from accountSchema below because Zod v4 forbids .omit()/.pick()
 // on a refined schema at runtime (throws, despite type-checking) -- callers
 // that need a sub-shape (e.g. a create-account form omitting `id`) should
@@ -101,8 +128,12 @@ export const accountObjectSchema = z
     propertyGrowthRatePct: z.number().optional(),
     /** Present only for real_estate, points at its mortgage Account. */
     linkedLiabilityId: idSchema.optional(),
-    /** Optional recurring contribution into this account. */
+    /** Optional recurring contribution into this account. Ignored when contributionSchedule is set. */
     contribution: contributionSchema.nullable().optional(),
+    /** Optional date-ranged growth-rate schedule; growthRatePct above is the rate before the first entry starts. Merged with growth_rate_change events in the engine (see resolveEvents.ts). */
+    growthRateSchedule: z.array(growthRateScheduleEntrySchema).optional(),
+    /** Optional date-ranged contribution schedule; supersedes the single `contribution` field when present. */
+    contributionSchedule: z.array(contributionScheduleSegmentSchema).optional(),
   });
 
 export const accountSchema = accountObjectSchema.refine(
