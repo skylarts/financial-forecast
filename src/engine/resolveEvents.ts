@@ -45,6 +45,18 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       growthRateOverrides.set(event.targetAccountId, list);
     }
   }
+  // An account's own growthRateSchedule merges into the same override list as
+  // growth_rate_change events -- effectiveAnnualRate just picks whichever
+  // entry (from either source) most recently started, so no engine change is
+  // needed beyond combining the two lists before the sort below.
+  for (const account of scenario.accounts) {
+    if (!account.growthRateSchedule?.length) continue;
+    const list = growthRateOverrides.get(account.id) ?? [];
+    for (const entry of account.growthRateSchedule) {
+      list.push({ startDate: entry.startDate, growthRatePct: entry.ratePct });
+    }
+    growthRateOverrides.set(account.id, list);
+  }
   for (const list of growthRateOverrides.values()) list.sort((a, b) => compareDates(a.startDate, b.startDate));
 
   const accounts: EngineAccount[] = scenario.accounts.map((a) => ({
@@ -159,40 +171,79 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // deducted ones don't, since take-home income was entered net of them. This is
   // independent of tax treatment (a Roth 401k is payroll-deducted but after-tax).
   const contributionSpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts, settings.moneyFlow);
+  const postContribution = (account: (typeof scenario.accounts)[number], occ: ISODate, amount: number, payrollDeducted: boolean) => {
+    if (amount === 0) return;
+    pushPosting({
+      date: occ,
+      yearMonth: occ.slice(0, 7),
+      accountId: account.id,
+      amount,
+      category: "contribution_in",
+      label: `Contribution: ${account.name}`,
+      sourceId: `${account.id}:contribution`,
+    });
+    if (!payrollDeducted && contributionSpendingAccountId && contributionSpendingAccountId !== account.id) {
+      pushPosting({
+        date: occ,
+        yearMonth: occ.slice(0, 7),
+        accountId: contributionSpendingAccountId,
+        amount: -amount,
+        category: "contribution_out",
+        label: `Contribution: ${account.name}`,
+        sourceId: `${account.id}:contribution`,
+      });
+    }
+  };
+
   for (const account of scenario.accounts) {
-    if (!account.contribution || account.isExcluded) continue;
-    const { amount: baseAmount, frequency, growthRatePct, payrollDeducted, endDate } = account.contribution;
+    if (account.isExcluded) continue;
     // Contributions stop the day before the owner's retirement (mirrors how
     // salary is trimmed -- last contribution while still earning). An explicit
     // endDate wins when it lands earlier, and covers jointly-owned accounts
     // that have no single retiree.
     const ownerRetireDate = account.ownerId ? retirementByPerson.get(account.ownerId) : undefined;
     const retireEnd = ownerRetireDate ? addDays(ownerRetireDate, -1) : null;
-    const contributionEnd = earliestDate(endDate ?? null, retireEnd);
-    const occurrences = expandOccurrences(settings.startDate, contributionEnd, frequency, horizonEnd);
-    for (const occ of occurrences) {
-      const years = elapsedYears(settings.startDate, occ);
-      const amount = growthAdjustedAmount(baseAmount, years, growthRatePct);
-      if (amount === 0) continue;
-      pushPosting({
-        date: occ,
-        yearMonth: occ.slice(0, 7),
-        accountId: account.id,
-        amount,
-        category: "contribution_in",
-        label: `Contribution: ${account.name}`,
-        sourceId: `${account.id}:contribution`,
-      });
-      if (!payrollDeducted && contributionSpendingAccountId && contributionSpendingAccountId !== account.id) {
-        pushPosting({
-          date: occ,
-          yearMonth: occ.slice(0, 7),
-          accountId: contributionSpendingAccountId,
-          amount: -amount,
-          category: "contribution_out",
-          label: `Contribution: ${account.name}`,
-          sourceId: `${account.id}:contribution`,
-        });
+
+    if (account.contributionSchedule?.length) {
+      // A schedule supersedes the single `contribution` entirely. Each
+      // segment runs from its own startDate through its own endDate, else the
+      // next segment's startDate, else the retirement/horizon cutoff above --
+      // so segments can either abut (one takes over exactly where the last
+      // left off) or leave a gap (no contribution in between) depending on
+      // whether the user set an explicit endDate.
+      const segments = [...account.contributionSchedule].sort((a, b) => compareDates(a.startDate, b.startDate));
+      for (let i = 0; i < segments.length; i++) {
+        const segment = segments[i];
+        const nextStart = segments[i + 1]?.startDate ?? null;
+        const segmentEnd = earliestDate(
+          earliestDate(segment.endDate ?? null, nextStart ? addDays(nextStart, -1) : null),
+          retireEnd
+        );
+        const occurrences = expandOccurrences(segment.startDate, segmentEnd, segment.frequency, horizonEnd);
+        for (const occ of occurrences) {
+          // Entered in today's dollars; inflates from plan start to this
+          // segment's own start, then grows at its own rate from there --
+          // same two-stage pattern as income/expenses, since (unlike the
+          // single `contribution` field) a segment can start well into the plan.
+          const amount = todaysDollarsAmount(
+            segment.amount,
+            settings.startDate,
+            segment.startDate,
+            occ,
+            settings.inflationRatePct,
+            segment.growthRatePct
+          );
+          postContribution(account, occ, amount, segment.payrollDeducted);
+        }
+      }
+    } else if (account.contribution) {
+      const { amount: baseAmount, frequency, growthRatePct, payrollDeducted, endDate } = account.contribution;
+      const contributionEnd = earliestDate(endDate ?? null, retireEnd);
+      const occurrences = expandOccurrences(settings.startDate, contributionEnd, frequency, horizonEnd);
+      for (const occ of occurrences) {
+        const years = elapsedYears(settings.startDate, occ);
+        const amount = growthAdjustedAmount(baseAmount, years, growthRatePct);
+        postContribution(account, occ, amount, payrollDeducted);
       }
     }
   }
