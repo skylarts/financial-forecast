@@ -1066,6 +1066,42 @@ describe("forecastScenario -- withdrawal taxes", () => {
     expect(year.cashFlow.taxableSocialSecurityAmount).toBeLessThanOrEqual(36_000 * 0.85 + 0.5);
     expect(year.cashFlow.federalTaxTotal).toBeGreaterThan(0);
   });
+
+  it("splits federal tax into components that sum to the total, with pension and SS each getting a sensible share", () => {
+    const personId = nanoid();
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const ira = makeAccount({
+      class: "tax_deferred",
+      name: "IRA",
+      ownerId: personId,
+      taxTreatment: "tax_deferred",
+      subjectToRMD: true,
+      startingBalance: 500_000,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, ira],
+      incomeSources: [
+        makeIncome({ depositAccountId: checking.id, amount: 3_000, frequency: "monthly", category: "social_security" }), // $36k/yr gross
+        makeIncome({ depositAccountId: checking.id, amount: 2_000, frequency: "monthly", category: "pension" }), // $24k/yr gross
+      ],
+      people: [{ id: personId, name: "Retiree", birthDate: "1953-01-01", retirementAge: 65, planningEndAge: 95 }],
+      startDate: "2025-01-01",
+      horizonEndDate: "2026-12-31",
+    });
+    const result = projectScenario(scenario);
+    // Turns 73 in 2026 -> RMD fires that year off the 2025 year-end IRA balance.
+    const year = result.years[1];
+
+    expect(year.cashFlow.rmdTotal).toBeGreaterThan(0);
+
+    const componentSum = year.cashFlow.federalTaxByComponent.reduce((s, c) => s + c.amount, 0);
+    expect(componentSum).toBeCloseTo(year.cashFlow.federalTaxTotal, 2);
+
+    const byKey = new Map(year.cashFlow.federalTaxByComponent.map((c) => [c.key, c.amount]));
+    expect(byKey.get("pension")).toBeGreaterThan(0);
+    expect(byKey.get("taxable_social_security")).toBeGreaterThan(0);
+    expect(byKey.get("tax_deferred")).toBeGreaterThan(0);
+  });
 });
 
 describe("forecastScenario -- isExcluded (real exclusion, not cosmetic)", () => {

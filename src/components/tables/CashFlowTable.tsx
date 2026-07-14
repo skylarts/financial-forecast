@@ -1,8 +1,20 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import type { Account, CashFlowLineItem, TaxTreatment, WithdrawalLineItem, YearSnapshot } from "@/domain";
+import type { Account, CashFlowLineItem, FederalTaxComponentKey, TaxTreatment, WithdrawalLineItem, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
+
+// Fixed display order for the federal tax breakdown -- matches the order
+// components are computed in the engine, and stays stable across years
+// (rather than re-sorting by magnitude, which would shuffle row order as the
+// tax-deferred/pension/SS split shifts from year to year).
+const FEDERAL_TAX_COMPONENT_ORDER: FederalTaxComponentKey[] = [
+  "tax_deferred",
+  "pension",
+  "taxable_social_security",
+  "capital_gains",
+  "state_local",
+];
 
 // Order the withdrawal groups Cash first, then by tax character.
 const TAX_GROUPS: { key: TaxTreatment; label: string }[] = [
@@ -109,6 +121,17 @@ export function CashFlowTable({
     return unionItems(years.map((y) => y.cashFlow.contributionsByItem)).map((it) => ({ ...it, fromPaycheck: fromPay.get(it.id) ?? false }));
   }, [years]);
   const surplusItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.surplusByAccount)), [years]);
+
+  // Federal tax breakdown -- shown as negative (a deduction), same sign convention as the summary row above it.
+  const federalTaxComponentMaps = useMemo(
+    () => years.map((y) => new Map(y.cashFlow.federalTaxByComponent.map((c) => [c.key, -c.amount]))),
+    [years]
+  );
+  const federalTaxComponentItems = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const y of years) for (const c of y.cashFlow.federalTaxByComponent) labels.set(c.key, c.label);
+    return FEDERAL_TAX_COMPONENT_ORDER.filter((k) => labels.has(k)).map((k) => ({ id: k, label: `${labels.get(k)} (actual)` }));
+  }, [years]);
 
   // Withdrawal source accounts, grouped by tax treatment (only groups with data).
   const withdrawalGroups = useMemo(() => {
@@ -264,7 +287,7 @@ export function CashFlowTable({
                           </tr>
                           {years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5) && (
                             <tr className="text-negative/80">
-                              <td className="py-1 pl-16 text-xs italic">tax on withdrawals</td>
+                              <td className="py-1 pl-16 text-xs italic">estimated withholding</td>
                               {years.map((y, yi) => {
                                 const v = d(wdTaxMaps[yi].get(a.id) ?? 0, yi);
                                 return (
@@ -286,8 +309,26 @@ export function CashFlowTable({
 
             {/* Federal tax -- the exact bracket-computed bill for the year (RMDs/withdrawals,
                 taxable Social Security, pension, and capital gains combined), not a sum of the
-                approximate per-withdrawal figures above. */}
-            {summaryRow("Federal tax", (yi) => -years[yi].cashFlow.federalTaxTotal)}
+                approximate per-withdrawal figures above. Expandable into its exact components,
+                which sum to this total. */}
+            <tr className="border-t border-border">
+              <td className="py-2 pl-2 font-bold">
+                <ToggleLabel label="Federal tax" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
+              </td>
+              {years.map((y, yi) => {
+                const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
+                return (
+                  <td key={y.year} className="py-1.5 pr-3 text-right font-semibold tabular-nums">
+                    <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
+                  </td>
+                );
+              })}
+              {totalCell(totalOf((yi) => -years[yi].cashFlow.federalTaxTotal), { signed: true })}
+            </tr>
+            {isOpen("federalTax") &&
+              (federalTaxComponentItems.length
+                ? itemRows(federalTaxComponentItems, federalTaxComponentMaps)
+                : emptyRow("No federal tax in this range."))}
 
             {/* Saved to accounts */}
             {hasSaved &&
@@ -353,11 +394,13 @@ export function CashFlowTable({
         operating result + the after-tax withdrawals that reached your spending &minus; money saved into accounts; it lands
         near $0 in a year where you draw just what you need (your cash buffer holds steady). Moving money between your own
         accounts (a transfer) appears under Withdrawals for visibility but doesn&apos;t change your total cash. <strong>Federal
-        tax</strong> is the exact bill for the year computed from real IRS brackets on your actual realized income (RMDs,
-        other tax-deferred withdrawals, taxable Social Security, pension, and capital gains) &mdash; it won&apos;t exactly
-        match the sum of the &ldquo;tax on withdrawals&rdquo; lines above, since those only approximate withholding
-        during the year. The Total column sums each row across the selected range; Ending cash is a balance, not a flow,
-        so it isn&apos;t summed.
+        tax</strong> is the exact bill for the year computed from real IRS brackets on your actual realized income &mdash;
+        expand it to see exactly which income sources it came from (RMDs/tax-deferred withdrawals, pension, taxable Social
+        Security, capital gains, and any state/local add-on); these components always add up to the total shown. The
+        &ldquo;estimated withholding&rdquo; lines under Withdrawals are a separate, earlier estimate used to size cash
+        withheld during the year as each draw happens &mdash; they won&apos;t exactly match the Federal tax breakdown above,
+        which is the actual year-end bracket calculation, and that mismatch is expected, not a bug. The Total column sums
+        each row across the selected range; Ending cash is a balance, not a flow, so it isn&apos;t summed.
       </p>
     </div>
   );

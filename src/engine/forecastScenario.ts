@@ -816,6 +816,29 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         (ordinaryTaxableIncome + acc.capitalGainsRealized) * settings.additionalFlatTaxRatePct;
       const federalTaxTotal = federalOrdinaryTax + federalLtcgTax + additionalTax;
 
+      // Allocate the ordinary-income tax pro-rata across its gross sources so
+      // the breakdown ties out exactly to federalTaxTotal, however the year's
+      // ordinary tax happens to be split across withdrawals/pension/SS.
+      const [taxDeferredTax, pensionTax, taxableSocialSecurityTax] =
+        grossOrdinaryIncome > 0
+          ? [
+              federalOrdinaryTax * (grossOrdinaryWithdrawals / grossOrdinaryIncome),
+              federalOrdinaryTax * (acc.grossPension / grossOrdinaryIncome),
+              federalOrdinaryTax * (taxableSocialSecurityAmount / grossOrdinaryIncome),
+            ]
+          : [0, 0, 0];
+      const capitalGainsTax = federalLtcgTax;
+      const stateLocalAddOn = additionalTax;
+      const federalTaxByComponent = (
+        [
+          { key: "tax_deferred", label: "Tax on tax-deferred withdrawals & RMDs", amount: taxDeferredTax },
+          { key: "pension", label: "Tax on pension income", amount: pensionTax },
+          { key: "taxable_social_security", label: "Tax on taxable Social Security", amount: taxableSocialSecurityTax },
+          { key: "capital_gains", label: "Capital gains tax", amount: capitalGainsTax },
+          { key: "state_local", label: "State/local add-on", amount: stateLocalAddOn },
+        ] as const
+      ).filter((c) => c.amount > 0.005);
+
       const operatingCashFlow = acc.totalIncome - acc.totalExpenses;
       // Cash that flowed in from accounts to cover the operating gap: deficit
       // draws + RMD proceeds, plus any expense paid directly from an investment
@@ -857,6 +880,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         surplusByAccount: toAccountItems(acc.surplusByAccount),
         withdrawalsByAccount,
         federalTaxTotal,
+        federalTaxByComponent,
         ordinaryTaxableIncome,
         capitalGainsRealized: acc.capitalGainsRealized,
         grossSocialSecurity: acc.grossSocialSecurity,
