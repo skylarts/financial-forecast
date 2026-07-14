@@ -149,6 +149,12 @@ function effectiveMaxBalance(stop: MoneyFlowStop, yearsSinceStart: number, infla
   return stop.maxBalance * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
 }
 
+/** Mirrors effectiveMaxBalance's inflation handling, so a drain floor stays a "today's dollars" amount. */
+function effectiveDrainFloor(stop: DrainStop, yearsSinceStart: number, inflationRatePct: number): number {
+  if (stop.minBalance == null) return 0;
+  return stop.minBalance * Math.pow(1 + inflationRatePct, Math.max(0, yearsSinceStart));
+}
+
 /**
  * How a withdrawal from this account is taxed. Prefers the explicit
  * taxTreatment, but falls back to the account class when it's left at "n/a"
@@ -340,12 +346,20 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // Pulls up to `requested` from `source` to cover `spender`'s shortfall,
   // capped by what's actually available once the draw's own tax is realized
   // (provide <= available / (1 + rate), same as the tax realized on any
-  // other withdrawal). Returns the net (non-tax) amount that actually
-  // reached `spender` -- the single primitive both drain-order modes
-  // (priority_fill and fixed_split) draw from.
-  const drawFromSource = (source: EngineAccount, spender: EngineAccount, requested: number, month: ISODate): number => {
+  // other withdrawal). `floor` (default 0) keeps this source's balance from
+  // being drawn below that amount -- the remaining shortfall is left for the
+  // caller to spill to the next source. Returns the net (non-tax) amount
+  // that actually reached `spender` -- the single primitive both drain-order
+  // modes (priority_fill and fixed_split) draw from.
+  const drawFromSource = (
+    source: EngineAccount,
+    spender: EngineAccount,
+    requested: number,
+    month: ISODate,
+    floor: number = 0
+  ): number => {
     if (requested <= 0 || source.id === spender.id) return 0;
-    const available = balances.get(source.id) ?? 0;
+    const available = Math.max(0, (balances.get(source.id) ?? 0) - floor);
     if (available <= 0) return 0;
     const rate = estimatedWithdrawalRate(source);
     const provide = Math.min(requested, available / (1 + rate));
@@ -667,23 +681,26 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         const originalShortfall = shortfall;
         for (const { account: source, stop } of active) {
           const target = originalShortfall * ((stop.splitPct ?? 0) / totalSplit);
-          shortfall -= drawFromSource(source, spender, target, month);
+          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+          shortfall -= drawFromSource(source, spender, target, month, floor);
         }
         // Pass 2: top up any unmet remainder from active sources in list
         // order -- the split is a target ratio, not a hard cap, so the
         // shortfall still gets fully covered whenever the combined active
         // balance allows it, rather than leaving the household short
         // because one bucket ran low this month.
-        for (const { account: source } of active) {
+        for (const { account: source, stop } of active) {
           if (shortfall <= 0) break;
-          shortfall -= drawFromSource(source, spender, shortfall, month);
+          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+          shortfall -= drawFromSource(source, spender, shortfall, month, floor);
         }
       } else {
-        // priority_fill (default): drain each active source fully before
-        // moving to the next, in list order.
-        for (const { account: source } of active) {
+        // priority_fill (default): drain each active source fully (down to
+        // its floor) before moving to the next, in list order.
+        for (const { account: source, stop } of active) {
           if (shortfall <= 0) break;
-          shortfall -= drawFromSource(source, spender, shortfall, month);
+          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+          shortfall -= drawFromSource(source, spender, shortfall, month, floor);
         }
       }
     }

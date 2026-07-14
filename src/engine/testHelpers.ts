@@ -108,7 +108,7 @@ function deriveMoneyFlow(
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
     .sort((a, b) => (a.withdrawalPriority as number) - (b.withdrawalPriority as number))
-    .map((a) => ({ id: nanoid(), accountId: a.id, startDate: null, endDate: null, splitPct: null }));
+    .map((a) => ({ id: nanoid(), accountId: a.id, startDate: null, endDate: null, splitPct: null, minBalance: null }));
   return {
     hubs,
     fillOrder,
