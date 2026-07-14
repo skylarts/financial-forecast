@@ -26,6 +26,14 @@ const CHART_THEME = {
 
 type ViewMode = "net_worth" | "by_account";
 
+export function nextHiddenAccountIds(
+  hiddenAccountIds: Set<string>,
+  accountIds: string[]
+): Set<string> {
+  const allHidden = accountIds.length > 0 && accountIds.every((id) => hiddenAccountIds.has(id));
+  return allHidden ? new Set() : new Set(accountIds);
+}
+
 export function NetWorthChart({
   accounts: allAccounts,
   years,
@@ -73,6 +81,12 @@ export function NetWorthChart({
     });
   };
 
+  const allHidden = accounts.length > 0 && accounts.every((a) => hiddenAccountIds.has(a.id));
+
+  const toggleAllAccounts = () => {
+    setHiddenAccountIds((prev) => nextHiddenAccountIds(prev, accounts.map((a) => a.id)));
+  };
+
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -112,6 +126,15 @@ export function NetWorthChart({
               Real
             </button>
           </div>
+          {viewMode === "by_account" && (
+            <button
+              type="button"
+              onClick={toggleAllAccounts}
+              className="rounded-md border border-border px-2 py-1 text-xs text-dim"
+            >
+              {allHidden ? "Show all" : "Hide all"}
+            </button>
+          )}
         </div>
       </div>
 
