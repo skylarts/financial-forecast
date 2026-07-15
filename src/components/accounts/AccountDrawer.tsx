@@ -54,22 +54,22 @@ interface FormValues {
   taxTreatment: TaxTreatment;
   subjectToRMD: boolean;
   isExcluded: boolean;
-  contributionStartDate: string;
-  contributionAmount: string;
-  contributionFrequency: RecurrenceFrequency;
-  contributionGrowthRatePct: string;
-  contributionFunding: string;
-  contributionEndDate: string;
 }
 
-/** An additional (beyond the base) growth-rate change, edited as its own row. */
+/** A scheduled growth-rate change, edited as its own row (beyond the base rate above). */
 interface GrowthRow {
   key: string;
   startDate: string;
   ratePct: string;
 }
 
-/** An additional (beyond the base) contribution segment, edited as its own row. */
+/**
+ * One contribution segment. Every contribution -- including the first/only one
+ * -- is edited as one of these uniform rows, so "+ Add" just stamps out another
+ * identical block for a different date range. A single row with a blank start
+ * date is saved back as the simple `contribution` field (no schedule churn);
+ * anything more becomes a `contributionSchedule`.
+ */
 interface ContribRow {
   key: string;
   startDate: string;
@@ -81,11 +81,6 @@ interface ContribRow {
 }
 
 function toFormValues(account?: Account): FormValues {
-  // A contributionSchedule (when present) supersedes `contribution` -- its
-  // first segment fills the same base fields a simple single-value
-  // contribution would, so editing an account with only one segment looks
-  // identical to editing one with a plain `contribution`.
-  const baseContribution = account?.contributionSchedule?.[0] ?? account?.contribution ?? undefined;
   return {
     name: account?.name ?? "",
     class: account?.class ?? "cash",
@@ -95,21 +90,6 @@ function toFormValues(account?: Account): FormValues {
     taxTreatment: account?.taxTreatment ?? "n/a",
     subjectToRMD: account?.subjectToRMD ?? false,
     isExcluded: account?.isExcluded ?? false,
-    contributionStartDate: account?.contributionSchedule?.[0]?.startDate ?? "",
-    contributionAmount: baseContribution?.amount?.toString() ?? "",
-    contributionFrequency: baseContribution?.frequency ?? "monthly",
-    contributionGrowthRatePct: baseContribution?.growthRatePct?.toString() ?? "0",
-    contributionEndDate: baseContribution?.endDate ?? "",
-    // Seed the funding source from the stored value, else suggest one from the
-    // account type (tax-deferred accounts are almost always payroll-deducted).
-    contributionFunding:
-      baseContribution?.payrollDeducted !== undefined
-        ? baseContribution.payrollDeducted
-          ? "paycheck"
-          : "take_home"
-        : account?.taxTreatment === "tax_deferred"
-          ? "paycheck"
-          : "take_home",
   };
 }
 
@@ -117,17 +97,39 @@ function toGrowthRows(account?: Account): GrowthRow[] {
   return (account?.growthRateSchedule ?? []).map((e) => ({ key: nanoid(), startDate: e.startDate, ratePct: e.ratePct.toString() }));
 }
 
-/** Additional rows are every contributionSchedule segment AFTER the first, which fills the base fields instead (see toFormValues). */
+/**
+ * Loads contributions into uniform rows. A multi-segment schedule maps
+ * one-to-one; a plain single `contribution` becomes a single row with a blank
+ * start date (meaning "from the plan start"), so it round-trips back to the
+ * simple `contribution` field on save. No contribution -> no rows.
+ */
 function toContribRows(account?: Account): ContribRow[] {
-  return (account?.contributionSchedule ?? []).slice(1).map((seg) => ({
-    key: nanoid(),
-    startDate: seg.startDate,
-    amount: seg.amount.toString(),
-    frequency: seg.frequency,
-    growthRatePct: seg.growthRatePct.toString(),
-    funding: seg.payrollDeducted ? "paycheck" : "take_home",
-    endDate: seg.endDate ?? "",
-  }));
+  if (account?.contributionSchedule?.length) {
+    return account.contributionSchedule.map((seg) => ({
+      key: nanoid(),
+      startDate: seg.startDate,
+      amount: seg.amount.toString(),
+      frequency: seg.frequency,
+      growthRatePct: (seg.growthRatePct ?? 0).toString(),
+      funding: seg.payrollDeducted ? "paycheck" : "take_home",
+      endDate: seg.endDate ?? "",
+    }));
+  }
+  if (account?.contribution) {
+    const c = account.contribution;
+    return [
+      {
+        key: nanoid(),
+        startDate: "",
+        amount: c.amount.toString(),
+        frequency: c.frequency,
+        growthRatePct: (c.growthRatePct ?? 0).toString(),
+        funding: c.payrollDeducted ? "paycheck" : "take_home",
+        endDate: c.endDate ?? "",
+      },
+    ];
+  }
+  return [];
 }
 
 export function AccountDrawer({
@@ -173,8 +175,6 @@ export function AccountDrawer({
 
   const selectedClass = watch("class");
   const selectedTaxTreatment = watch("taxTreatment");
-  const contributionAmount = watch("contributionAmount");
-  const contributionFunding = watch("contributionFunding");
   const showRmdCheckbox = isEffectivelyTaxDeferred(selectedClass, selectedTaxTreatment);
 
   const addGrowthRow = () => setGrowthRows((rows) => [...rows, { key: nanoid(), startDate: "", ratePct: "" }]);
@@ -183,10 +183,16 @@ export function AccountDrawer({
   const removeGrowthRow = (key: string) => setGrowthRows((rows) => rows.filter((r) => r.key !== key));
 
   const addContribRow = () =>
-    setContribRows((rows) => [
-      ...rows,
-      { key: nanoid(), startDate: "", amount: "", frequency: "monthly", growthRatePct: "0", funding: "take_home", endDate: "" },
-    ]);
+    setContribRows((rows) => {
+      const last = rows[rows.length - 1];
+      // Suggest a funding source: inherit the previous row's, else infer from
+      // the account type (tax-deferred accounts are usually payroll-deducted).
+      const funding = last?.funding ?? (selectedTaxTreatment === "tax_deferred" ? "paycheck" : "take_home");
+      return [
+        ...rows,
+        { key: nanoid(), startDate: "", amount: "", frequency: last?.frequency ?? "monthly", growthRatePct: "0", funding, endDate: "" },
+      ];
+    });
   const updateContribRow = (key: string, patch: Partial<ContribRow>) =>
     setContribRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   const removeContribRow = (key: string) => setContribRows((rows) => rows.filter((r) => r.key !== key));
@@ -198,46 +204,41 @@ export function AccountDrawer({
       .filter((r) => r.startDate && r.ratePct.trim() !== "")
       .map((r) => ({ startDate: r.startDate, ratePct: Number(r.ratePct) }));
 
-    const baseAmount = Number(values.contributionAmount);
-    const hasBaseContribution = values.contributionAmount.trim() !== "" && baseAmount > 0;
-    const validContribRows = contribRows.filter((r) => r.startDate && r.amount.trim() !== "" && Number(r.amount) > 0);
-
-    // A schedule (2+ segments) supersedes the single `contribution` field; a
-    // plain single-value contribution (the common case) keeps using
-    // `contribution` untouched, so simple accounts don't churn their saved shape.
+    // Every contribution segment with a positive amount counts. A single
+    // segment with a blank start date collapses back to the simple
+    // `contribution` field (no schedule churn for the common case); anything
+    // else becomes a `contributionSchedule`.
+    const validContribRows = contribRows.filter((r) => r.amount.trim() !== "" && Number(r.amount) > 0);
     let contribution = null as Account["contribution"];
     let contributionSchedule: Account["contributionSchedule"];
-    if (validContribRows.length > 0) {
-      const segments: NonNullable<Account["contributionSchedule"]> = [];
-      if (hasBaseContribution) {
-        segments.push({
-          startDate: values.contributionStartDate.trim() || planStartDate,
-          amount: baseAmount,
-          frequency: values.contributionFrequency,
-          growthRatePct: Number(values.contributionGrowthRatePct) || 0,
-          payrollDeducted: values.contributionFunding === "paycheck",
-          endDate: values.contributionEndDate.trim() === "" ? null : values.contributionEndDate,
-        });
-      }
-      for (const r of validContribRows) {
-        segments.push({
-          startDate: r.startDate,
-          amount: Number(r.amount),
-          frequency: r.frequency,
-          growthRatePct: Number(r.growthRatePct) || 0,
-          payrollDeducted: r.funding === "paycheck",
-          endDate: r.endDate.trim() === "" ? null : r.endDate,
-        });
-      }
-      contributionSchedule = segments;
-    } else if (hasBaseContribution) {
+
+    if (validContribRows.length === 1 && validContribRows[0].startDate.trim() === "") {
+      const r = validContribRows[0];
       contribution = {
-        amount: baseAmount,
-        frequency: values.contributionFrequency,
-        growthRatePct: Number(values.contributionGrowthRatePct) || 0,
-        payrollDeducted: values.contributionFunding === "paycheck",
-        endDate: values.contributionEndDate.trim() === "" ? null : values.contributionEndDate,
+        amount: Number(r.amount),
+        frequency: r.frequency,
+        growthRatePct: Number(r.growthRatePct) || 0,
+        payrollDeducted: r.funding === "paycheck",
+        endDate: r.endDate.trim() === "" ? null : r.endDate,
       };
+    } else if (validContribRows.length >= 1) {
+      // Only one segment may omit a start date (it begins at the plan start);
+      // the rest need one, or the engine can't tell which window they cover.
+      const blanks = validContribRows.filter((r) => r.startDate.trim() === "").length;
+      if (blanks > 1) {
+        setError(
+          "Only one contribution date range can be left without a start date (it begins at the plan start). Give the others a start date."
+        );
+        return;
+      }
+      contributionSchedule = validContribRows.map((r) => ({
+        startDate: r.startDate.trim() || planStartDate,
+        amount: Number(r.amount),
+        frequency: r.frequency,
+        growthRatePct: Number(r.growthRatePct) || 0,
+        payrollDeducted: r.funding === "paycheck",
+        endDate: r.endDate.trim() === "" ? null : r.endDate,
+      }));
     }
 
     const candidate = {
@@ -353,47 +354,30 @@ export function AccountDrawer({
             )}
 
             <div className="rounded-md border border-border p-3">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">Recurring Contribution</div>
-              {contribRows.length > 0 && (
-                <Field label="Starts on">
-                  <TextInput reg={register("contributionStartDate")} type="date" />
-                </Field>
-              )}
-              <Field label="Contribution Amount (per occurrence, blank = none)">
-                <TextInput reg={register("contributionAmount")} type="number" step="0.01" placeholder="e.g. 1500" />
-              </Field>
-              {contributionAmount?.trim() !== "" && (
-                <>
-                  <Field label="Contribution Frequency">
-                    <SelectInput reg={register("contributionFrequency")} options={FREQUENCY_OPTIONS} />
-                  </Field>
-                  <Field label="Contribution Growth Rate (optional, actual)">
-                    <TextInput reg={register("contributionGrowthRatePct")} type="number" step="0.001" />
-                  </Field>
-                  <Field label="Funded from">
-                    <SelectInput reg={register("contributionFunding")} options={FUNDING_OPTIONS} />
-                  </Field>
-                  <p className="mt-1 text-xs text-dim">
-                    {contributionFunding === "paycheck"
-                      ? "Deducted from your paycheck before take-home (e.g. a 401k or Roth 401k), so it grows this account without reducing your cash flow. Enter your income net of it."
-                      : "Drawn from your spending account each period, on top of your expenses (e.g. a Roth IRA or taxable brokerage)."}
-                  </p>
-                  <Field label={contribRows.length > 0 ? "Ends on (optional; blank = until the next row starts)" : "Stop contributing on (optional)"}>
-                    <TextInput reg={register("contributionEndDate")} type="date" />
-                  </Field>
-                  <p className="mt-1 text-xs text-dim">
-                    Leave blank to stop automatically when the account&rsquo;s owner retires (a paycheck deduction
-                    can&rsquo;t outlive the paycheck). Set a date to stop sooner, or to cap a joint account with no
-                    single retiree.
-                  </p>
-                </>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">Recurring Contributions</div>
+              {contribRows.length === 0 && (
+                <p className="text-xs text-dim">
+                  None yet. Add one to grow this account each period; add more to change the amount over time.
+                </p>
               )}
 
-              {contribRows.map((row) => (
-                <div key={row.key} className="mt-3 flex flex-col gap-2 rounded-md border border-border p-2">
-                  <div className="flex items-end gap-2">
+              {contribRows.map((row, i) => (
+                <div key={row.key} className="mb-2 flex flex-col gap-2 rounded-md border border-border p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-dim">
+                      {i === 0 ? "Contribution" : "Contribution change"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeContribRow(row.key)}
+                      className="text-xs text-negative hover:underline"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
                     <label className={labelClass}>
-                      Starts on
+                      Starts on{i === 0 ? " (blank = plan start)" : ""}
                       <input
                         className={inputClass}
                         type="date"
@@ -402,25 +386,16 @@ export function AccountDrawer({
                       />
                     </label>
                     <label className={labelClass}>
-                      Amount
+                      Amount (per occurrence)
                       <input
                         className={inputClass}
                         type="number"
                         step="0.01"
-                        placeholder="e.g. 2000"
+                        placeholder="e.g. 1500"
                         value={row.amount}
                         onChange={(e) => updateContribRow(row.key, { amount: e.target.value })}
                       />
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => removeContribRow(row.key)}
-                      className="pb-1.5 text-xs text-negative hover:underline"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-2">
                     <label className={labelClass}>
                       Frequency
                       <select
@@ -434,6 +409,19 @@ export function AccountDrawer({
                           </option>
                         ))}
                       </select>
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className={labelClass}>
+                      Growth rate (optional, actual)
+                      <input
+                        className={inputClass}
+                        type="number"
+                        step="0.001"
+                        placeholder="0"
+                        value={row.growthRatePct}
+                        onChange={(e) => updateContribRow(row.key, { growthRatePct: e.target.value })}
+                      />
                     </label>
                     <label className={labelClass}>
                       Funded from
@@ -461,13 +449,24 @@ export function AccountDrawer({
                   </div>
                 </div>
               ))}
+
               <button
                 type="button"
                 onClick={addContribRow}
-                className="mt-2 rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
+                className="mt-1 rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
               >
-                + Add contribution change
+                {contribRows.length === 0 ? "+ Add contribution" : "+ Add contribution change"}
               </button>
+
+              {contribRows.length > 0 && (
+                <p className="mt-2 text-xs text-dim">
+                  <span className="font-medium">Funded from:</span> &ldquo;Paycheck deduction&rdquo; (e.g. a 401k or
+                  Roth 401k) grows this account without reducing your take-home cash &mdash; enter your income net of it.
+                  &ldquo;Take-home pay&rdquo; (e.g. a Roth IRA or taxable brokerage) is drawn from your spending account
+                  each period. Leave a contribution&rsquo;s end date blank to stop automatically when the account&rsquo;s
+                  owner retires; each change takes over when the next one starts.
+                </p>
+              )}
             </div>
 
             <CheckboxInput
