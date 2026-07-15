@@ -79,7 +79,7 @@ export function CashFlowTable({
   dollarMode: DollarMode;
 }) {
   void accounts; // account metadata now travels on each WithdrawalLineItem
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(["withdrawals"]));
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (key: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
