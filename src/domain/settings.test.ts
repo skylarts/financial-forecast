@@ -87,4 +87,37 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
     expect(parsed.moneyFlow.fillSplitMode).toBe("fixed_split");
     expect(parsed.moneyFlow.drainSplitMode).toBe("priority_fill");
   });
+
+  it("folds a hub's dead self-referencing fill-order entry into its ceilingAmount", () => {
+    const parsed = forecastSettingsSchema.parse({
+      ...base,
+      moneyFlow: {
+        hubs: [{ accountId: "checking", bufferAmount: 50000 }],
+        fillOrder: [
+          { accountId: "checking", maxBalance: 100000, maxBalanceGrowthRatePct: null, splitPct: null },
+          { accountId: "brokerage", maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null },
+        ],
+        drainOrder: [],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    expect(parsed.moneyFlow.hubs[0].ceilingAmount).toBe(100000);
+    // The dead self-referencing entry is gone; the real fill target remains.
+    expect(parsed.moneyFlow.fillOrder.map((f) => f.accountId)).toEqual(["brokerage"]);
+  });
+
+  it("leaves an explicit ceilingAmount alone even if a self-referencing entry is also present", () => {
+    const parsed = forecastSettingsSchema.parse({
+      ...base,
+      moneyFlow: {
+        hubs: [{ accountId: "checking", bufferAmount: 50000, ceilingAmount: 75000 }],
+        fillOrder: [{ accountId: "checking", maxBalance: 100000, maxBalanceGrowthRatePct: null, splitPct: null }],
+        drainOrder: [],
+        fillSplitMode: "priority_fill",
+        drainSplitMode: "priority_fill",
+      },
+    });
+    expect(parsed.moneyFlow.hubs[0].ceilingAmount).toBe(75000);
+  });
 });

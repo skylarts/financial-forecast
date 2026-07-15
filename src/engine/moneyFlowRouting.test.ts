@@ -105,6 +105,69 @@ describe("hub buffer vs fill cap on the same account", () => {
   });
 });
 
+describe("hub floor/ceiling (replaces the old self-referencing fill-order trap)", () => {
+  it("sweeps a surplus above the ceiling on day one, without also touching the floor", () => {
+    const { scenario } = buildScenario((checkingId, brokerageId) => ({
+      hubs: [{ accountId: checkingId, bufferAmount: 50_000, ceilingAmount: 100_000, ceilingGrowthRatePct: null }],
+      fillOrder: [{ accountId: brokerageId, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+      drainOrder: [{ id: "d1", accountId: brokerageId, startDate: null, endDate: null, splitPct: null, minBalance: null }],
+      fillSplitMode: "priority_fill",
+      drainSplitMode: "priority_fill",
+    }));
+    // Starting balance ($400k) is above the $100k ceiling, so the very first
+    // month sweeps it down to the ceiling (not all the way to the floor) --
+    // proof the two numbers are independent, not the same trigger point.
+    const result = projectScenario(scenario);
+    const january = result.ledger.find((e) => e.kind === "surplus_route" && e.date === "2026-01-01");
+    expect(january).toBeDefined();
+    // $400k start + $12k income - $20k expense - $100k ceiling = $292k swept.
+    expect(january!.amount).toBeCloseTo(292_000, 0);
+  });
+
+  it("does not churn when expenses drain the hub from the ceiling down toward the floor over the year", () => {
+    const { scenario } = buildScenario((checkingId, brokerageId) => ({
+      hubs: [{ accountId: checkingId, bufferAmount: 50_000, ceilingAmount: 100_000, ceilingGrowthRatePct: null }],
+      fillOrder: [{ accountId: brokerageId, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+      drainOrder: [{ id: "d1", accountId: brokerageId, startDate: null, endDate: null, splitPct: null, minBalance: null }],
+      fillSplitMode: "priority_fill",
+      drainSplitMode: "priority_fill",
+    }));
+    const result = projectScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+    const gross = y2026.cashFlow.withdrawalsByAccount.reduce((s, w) => s + w.gross, 0);
+    expect(gross).toBeLessThan(y2026.cashFlow.totalExpenses); // no phantom churn
+  });
+
+  it("without a ceilingAmount, falls back to the old single-number (floor-is-ceiling) behavior", () => {
+    const { scenario, checking } = buildScenario((checkingId, brokerageId) => ({
+      hubs: [{ accountId: checkingId, bufferAmount: 300_000, ceilingAmount: null, ceilingGrowthRatePct: null }],
+      fillOrder: [{ accountId: brokerageId, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+      drainOrder: [{ id: "d1", accountId: brokerageId, startDate: null, endDate: null, splitPct: null, minBalance: null }],
+      fillSplitMode: "priority_fill",
+      drainSplitMode: "priority_fill",
+    }));
+    const result = projectScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+    expect(y2026.accountBalances[checking.id]).toBeCloseTo(300_000, -1);
+  });
+
+  it("clamps a ceiling set below the floor, rather than letting the two fight each other", () => {
+    const { scenario, checking } = buildScenario((checkingId, brokerageId) => ({
+      hubs: [{ accountId: checkingId, bufferAmount: 300_000, ceilingAmount: 100_000, ceilingGrowthRatePct: null }],
+      fillOrder: [{ accountId: brokerageId, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+      drainOrder: [{ id: "d1", accountId: brokerageId, startDate: null, endDate: null, splitPct: null, minBalance: null }],
+      fillSplitMode: "priority_fill",
+      drainSplitMode: "priority_fill",
+    }));
+    const result = projectScenario(scenario);
+    for (const year of result.years) {
+      const gross = year.cashFlow.withdrawalsByAccount.reduce((s, w) => s + w.gross, 0);
+      expect(gross).toBeLessThan(year.cashFlow.totalExpenses);
+    }
+    expect(result.years[0].accountBalances[checking.id]).toBeCloseTo(300_000, -1);
+  });
+});
+
 describe("deficit cascade with a self-referential drain stop", () => {
   it("cannot cover a shortfall when the hub is its own only drain source", () => {
     const checking = makeAccount({ class: "cash", name: "Checking+Savings", startingBalance: 100_000, growthRatePct: 0 });

@@ -26,11 +26,32 @@ export type MoneyFlowStop = z.infer<typeof moneyFlowStopSchema>;
  * A spending-account hub -- income deposits here, expenses pay from here.
  * Multiple hubs are swept independently (each keeps its own buffer, and
  * shares the same fill/drain order). Replaces isSpendingAccount + targetCashBalance.
+ *
+ * The account floats between `bufferAmount` (the floor -- drop below it and
+ * the deficit cascade pulls money back in) and `ceilingAmount` (the ceiling --
+ * rise above it and the surplus above the ceiling sweeps out). A hub used to
+ * need a SECOND entry in the fill order to express a ceiling different from
+ * its floor -- except a fill-order entry pointing at the account it's being
+ * swept FROM is always a no-op (the engine skips an account sweeping into
+ * itself), so that second entry silently did nothing. `ceilingAmount` puts
+ * both numbers on the same row instead. Omit it (or set it below the floor)
+ * to fall back to the old single-number behavior, where the floor also acts
+ * as the ceiling.
  */
 export const moneyFlowHubSchema = z.object({
   accountId: idSchema,
-  /** Buffer kept here (today's dollars, grown by inflation) before sweeping surplus. null/0 = sweep everything. */
+  /** Floor (today's dollars, grown by inflation): drain-in trigger. null/0 = sweep everything, no floor. */
   bufferAmount: z.number().nonnegative().nullable().default(null),
+  /**
+   * Ceiling (today's dollars, grown by inflation): sweep-out trigger. null =
+   * same as bufferAmount (legacy behavior). Optional (not defaulted) rather
+   * than required-with-default, so every existing hand-built MoneyFlowHub
+   * object literal in the codebase (mockScenario, testHelpers, older tests)
+   * still type-checks without listing it.
+   */
+  ceilingAmount: z.number().nonnegative().nullable().optional(),
+  /** Annual growth of the ceiling; null/omitted = follow settings.inflationRatePct. */
+  ceilingGrowthRatePct: z.number().nullable().optional(),
 });
 export type MoneyFlowHub = z.infer<typeof moneyFlowHubSchema>;
 
@@ -93,6 +114,42 @@ export const moneyFlowSchema = z.preprocess((val) => {
     }
   }
   return val;
+}, z.preprocess((val) => {
+  // A hub used to need a fill-order entry pointing at ITSELF to express a
+  // ceiling -- the engine always skipped it (an account can't sweep into
+  // itself), so it silently had no effect. Fold any such self-referencing
+  // entry into the hub's own ceilingAmount instead, and drop it from
+  // fillOrder, so an already-saved plan with this exact dead configuration
+  // starts behaving the way it looked like it should.
+  if (!val || typeof val !== "object" || Array.isArray(val)) return val;
+  const obj = val as Record<string, unknown>;
+  const hubs = obj.hubs;
+  const fillOrder = obj.fillOrder;
+  if (!Array.isArray(hubs) || !Array.isArray(fillOrder) || hubs.length === 0 || fillOrder.length === 0) return val;
+  const hubAccountIds = new Set(
+    hubs.map((h) => (h && typeof h === "object" ? (h as Record<string, unknown>).accountId : undefined))
+  );
+  let migrated = false;
+  const nextFillOrder: unknown[] = [];
+  const ceilingByAccountId = new Map<unknown, { maxBalance: unknown; maxBalanceGrowthRatePct: unknown }>();
+  for (const entry of fillOrder) {
+    if (entry && typeof entry === "object" && hubAccountIds.has((entry as Record<string, unknown>).accountId)) {
+      migrated = true;
+      const e = entry as Record<string, unknown>;
+      ceilingByAccountId.set(e.accountId, { maxBalance: e.maxBalance, maxBalanceGrowthRatePct: e.maxBalanceGrowthRatePct });
+      continue; // drop the dead self-referencing entry
+    }
+    nextFillOrder.push(entry);
+  }
+  if (!migrated) return val;
+  const nextHubs = hubs.map((h) => {
+    if (!h || typeof h !== "object") return h;
+    const hub = h as Record<string, unknown>;
+    const ceiling = ceilingByAccountId.get(hub.accountId);
+    if (!ceiling || hub.ceilingAmount !== undefined) return hub;
+    return { ...hub, ceilingAmount: ceiling.maxBalance ?? null, ceilingGrowthRatePct: ceiling.maxBalanceGrowthRatePct ?? null };
+  });
+  return { ...obj, hubs: nextHubs, fillOrder: nextFillOrder };
 }, z.object({
   hubs: z.array(moneyFlowHubSchema).default([]),
   /** Ordered surplus targets; first stop filled first, overflow spills onward. */
@@ -101,7 +158,7 @@ export const moneyFlowSchema = z.preprocess((val) => {
   drainOrder: drainOrderSchema.default([]),
   fillSplitMode: z.enum(["priority_fill", "fixed_split"]).default("priority_fill"),
   drainSplitMode: z.enum(["priority_fill", "fixed_split"]).default("priority_fill"),
-}));
+})));
 export type MoneyFlow = z.infer<typeof moneyFlowSchema>;
 
 export const DEFAULT_MONEY_FLOW: MoneyFlow = {

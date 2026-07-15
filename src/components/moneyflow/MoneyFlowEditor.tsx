@@ -40,8 +40,8 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
     if (!accountId) return;
     save({ ...moneyFlow, hubs: [...moneyFlow.hubs, { accountId, bufferAmount: null }] });
   };
-  const updateHubBuffer = (accountId: string, bufferAmount: number | null) =>
-    save({ ...moneyFlow, hubs: moneyFlow.hubs.map((h) => (h.accountId === accountId ? { ...h, bufferAmount } : h)) });
+  const updateHub = (accountId: string, patch: Partial<MoneyFlow["hubs"][number]>) =>
+    save({ ...moneyFlow, hubs: moneyFlow.hubs.map((h) => (h.accountId === accountId ? { ...h, ...patch } : h)) });
   const removeHub = (accountId: string) =>
     save({ ...moneyFlow, hubs: moneyFlow.hubs.filter((h) => h.accountId !== accountId) });
 
@@ -131,22 +131,35 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       <section className="flex flex-col gap-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">Spending accounts</h3>
         <p className="text-xs text-dim">
-          Income deposits here, expenses pay from here. Each keeps its own buffer (today&rsquo;s dollars, grown with
-          inflation) before surplus above it gets swept. Usually just one (e.g. checking), but you can add more.
+          Income deposits here, expenses pay from here. Each floats between a floor and a ceiling (today&rsquo;s
+          dollars, grown with inflation): drop below the floor and it gets refilled from the drain order; rise above
+          the ceiling and the excess sweeps out to the fill order. Leave the ceiling blank to use the floor as the
+          ceiling too (sweep everything above it). Usually just one hub (e.g. checking), but you can add more.
         </p>
         {moneyFlow.hubs.length === 0 && <p className="text-xs text-dim">No spending accounts configured yet.</p>}
         {moneyFlow.hubs.map((hub) => (
           <div key={hub.accountId} className="flex items-center gap-2 rounded-md border border-border p-2">
             <span className="flex-1 truncate text-sm">{accountName(hub.accountId)}</span>
             <label className="flex items-center gap-1 text-xs text-dim">
-              Keep $
+              Floor $
               <input
                 className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
                 type="number"
                 step="0.01"
                 placeholder="0"
                 value={hub.bufferAmount ?? ""}
-                onChange={(e) => updateHubBuffer(hub.accountId, e.target.value === "" ? null : Number(e.target.value))}
+                onChange={(e) => updateHub(hub.accountId, { bufferAmount: e.target.value === "" ? null : Number(e.target.value) })}
+              />
+            </label>
+            <label className="flex items-center gap-1 text-xs text-dim">
+              Ceiling $
+              <input
+                className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                type="number"
+                step="0.01"
+                placeholder="= floor"
+                value={hub.ceilingAmount ?? ""}
+                onChange={(e) => updateHub(hub.accountId, { ceilingAmount: e.target.value === "" ? null : Number(e.target.value) })}
               />
             </label>
             <button type="button" onClick={() => removeHub(hub.accountId)} className="text-xs text-negative hover:underline">
@@ -223,7 +236,9 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
             </div>
           </div>
         ))}
-        <AddAccountSelect options={availableAccounts(fillIds)} onAdd={addFillStop} placeholder="+ Add fill target" />
+        {/* A hub sweeping into itself is always a no-op in the engine -- its ceiling
+            lives on the hub row above instead, so hubs are excluded here. */}
+        <AddAccountSelect options={availableAccounts(new Set([...fillIds, ...hubIds]))} onAdd={addFillStop} placeholder="+ Add fill target" />
         {moneyFlow.fillSplitMode === "fixed_split" && (
           <div className={`text-xs ${Math.abs(splitTotal - 1) < 0.001 ? "text-dim" : "text-negative"}`}>
             Total allocated: {(splitTotal * 100).toFixed(0)}%
