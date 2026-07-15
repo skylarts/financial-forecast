@@ -598,11 +598,13 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       }
     }
 
-    // 5. Surplus routing. Each hub keeps a buffer before sweeping; each fill
-    //    stop has an optional maxBalance ceiling (grown yearly for inflation);
-    //    a stop is filled only up to its ceiling and the overflow spills to
-    //    the next stop in list order. Uncapped stops absorb everything
-    //    (Infinity room), matching the legacy behavior.
+    // 5. Surplus routing. Each hub floats between its floor (bufferAmount)
+    //    and its ceiling (ceilingAmount, defaulting to the floor); only the
+    //    amount above the ceiling sweeps out. Each fill stop has an optional
+    //    maxBalance ceiling (grown yearly for inflation); a stop is filled
+    //    only up to its ceiling and the overflow spills to the next stop in
+    //    list order. Uncapped stops absorb everything (Infinity room),
+    //    matching the legacy behavior.
     const yearsSinceStart = currentYear - yearOf(settings.startDate);
     const inflationFactor = Math.pow(1 + settings.inflationRatePct, Math.max(0, yearsSinceStart));
     // This stop's ceiling, floored at its own hub buffer if the account is also
@@ -618,7 +620,18 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // only sweep what's above it -- prevents zeroing out checking each month
       // and the resulting sweep/withdraw churn.
       const buffer = (hub.bufferAmount ?? 0) * inflationFactor;
-      let remaining = balance - buffer;
+      // A hub's ceiling is the sweep-out trigger and can sit above its floor
+      // (e.g. "keep 50k, sweep anything past 100k"), letting the balance
+      // float in that range without moving money. ceilingAmount defaults to
+      // the floor (legacy single-number behavior: sweep everything past the
+      // buffer) and is clamped so it can never be set below the floor --
+      // otherwise the deficit cascade would immediately refill what the
+      // sweep just pushed out, the same churn a mis-set fill cap used to cause.
+      const ceilingRate = hub.ceilingGrowthRatePct ?? settings.inflationRatePct;
+      const rawCeiling =
+        hub.ceilingAmount == null ? buffer : hub.ceilingAmount * Math.pow(1 + ceilingRate, Math.max(0, yearsSinceStart));
+      const ceiling = Math.max(buffer, rawCeiling);
+      let remaining = balance - ceiling;
       if (remaining <= 0) continue;
       // Fixed-split percentages apply to the whole sweepable surplus, not the
       // running remainder, so each target's share is independent of order.
