@@ -159,10 +159,15 @@ export interface TimelineRow {
  * surfaced; kept as a first-class output here rather than only exposing
  * year-level totals, since it's the kind of detail that made the RMD/cascade
  * behavior legible and trustworthy there.
+ *
+ * `surplus_route` (a hub sweeping cash to a fill target) and `cap_overflow`
+ * (a fill target over its ceiling spilling to the next stop) are logged too:
+ * both are engine-initiated, and without them a routing loop between two
+ * accounts is invisible in the output.
  */
 export interface LedgerEvent {
   date: ISODate;
-  kind: "rmd" | "deficit_withdrawal" | "mortgage_payment";
+  kind: "rmd" | "deficit_withdrawal" | "mortgage_payment" | "surplus_route" | "cap_overflow";
   accountId: Id;
   toAccountId?: Id;
   amount: number;
@@ -186,7 +191,7 @@ export interface YearSnapshot {
 
 export interface ProjectionWarning {
   year: number;
-  kind: "insufficient_funds" | "unlinked_mortgage";
+  kind: "insufficient_funds" | "unlinked_mortgage" | "routing_conflict";
   message: string;
   accountId?: Id;
 }

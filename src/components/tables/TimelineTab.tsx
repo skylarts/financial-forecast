@@ -46,6 +46,8 @@ const LEDGER_KIND_LABELS: Record<LedgerEvent["kind"], string> = {
   rmd: "RMD",
   deficit_withdrawal: "Withdrawal",
   mortgage_payment: "Mortgage",
+  surplus_route: "Surplus routed",
+  cap_overflow: "Cap overflow",
 };
 
 // Visual tone per row type, and a sort tiebreak so items sharing a start date

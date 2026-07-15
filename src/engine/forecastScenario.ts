@@ -239,6 +239,19 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       return account && account.category === "asset" && !account.isExcluded ? { account, stop } : null;
     })
     .filter((x): x is { account: EngineAccount; stop: DrainStop } => x !== null);
+  // A hub's buffer ("keep $X here") and a fill stop's cap ("hold at most $X
+  // here") are contradictory instructions when they name the SAME account and
+  // the cap is the lower of the two: the cap-overflow pass would push cash out
+  // to the next fill stop, and the deficit cascade would immediately drag it
+  // back to refill the buffer -- churning the same dollars every month, with
+  // each round trip booked as a withdrawal (and taxed, for a taxable source).
+  // The buffer wins: it's the floor the cascade actively defends, so a ceiling
+  // below it can never hold. Ceilings are therefore raised to the buffer for
+  // any account that is both, and the conflict is surfaced as a warning rather
+  // than silently resolved.
+  const hubBufferByAccountId = new Map<Id, number>(
+    spendingHubs.map(({ account, hub }) => [account.id, hub.bufferAmount ?? 0])
+  );
   const primarySpendingAccountId = resolvePrimarySpendingAccountId(activeAccounts, moneyFlow);
   // Outflows from a spending hub are ordinary expenses; outflows from any
   // OTHER asset account (a savings/investment) are "withdrawals" for the
@@ -592,6 +605,13 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    (Infinity room), matching the legacy behavior.
     const yearsSinceStart = currentYear - yearOf(settings.startDate);
     const inflationFactor = Math.pow(1 + settings.inflationRatePct, Math.max(0, yearsSinceStart));
+    // This stop's ceiling, floored at its own hub buffer if the account is also
+    // a hub -- see hubBufferByAccountId above for why the buffer wins.
+    const ceilingForStop = (stop: MoneyFlowStop): number => {
+      const cap = effectiveMaxBalance(stop, yearsSinceStart, settings.inflationRatePct);
+      const buffer = (hubBufferByAccountId.get(stop.accountId) ?? 0) * inflationFactor;
+      return Math.max(cap, buffer);
+    };
     for (const { account: spender, hub } of spendingHubs) {
       const balance = balances.get(spender.id) ?? 0;
       // Keep a cash buffer in the spending account (grown for inflation) and
@@ -606,7 +626,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       for (const { account: target, stop } of fillStops) {
         if (remaining <= 0) break;
         if (target.id === spender.id) continue;
-        const cap = effectiveMaxBalance(stop, yearsSinceStart, settings.inflationRatePct);
+        const cap = ceilingForStop(stop);
         const room = cap - (balances.get(target.id) ?? 0);
         if (room <= 0) continue; // target already at/over its ceiling -- spill onward
         const requested =
@@ -621,6 +641,14 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         addTo(acc.surplusByAccount, target.id, take);
         creditBasisIfTaxable(target.id, take);
         remaining -= take;
+        ledger.push({
+          date: month,
+          kind: "surplus_route",
+          accountId: spender.id,
+          toAccountId: target.id,
+          amount: take,
+          note: `Surplus swept from ${spender.name} to ${target.name}`,
+        });
       }
     }
 
@@ -635,12 +663,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //     counted in the surplusRouted headline, which tracks routed income only.
     for (let ti = 0; ti < fillStops.length; ti++) {
       const over = fillStops[ti];
-      const overCap = effectiveMaxBalance(over.stop, yearsSinceStart, settings.inflationRatePct);
+      const overCap = ceilingForStop(over.stop);
       let excess = (balances.get(over.account.id) ?? 0) - overCap;
       if (excess <= 0.005) continue;
       for (let tj = ti + 1; tj < fillStops.length && excess > 0.005; tj++) {
         const dest = fillStops[tj];
-        const destCap = effectiveMaxBalance(dest.stop, yearsSinceStart, settings.inflationRatePct);
+        const destCap = ceilingForStop(dest.stop);
         const room = destCap - (balances.get(dest.account.id) ?? 0);
         if (room <= 0) continue; // next target also full -- keep spilling onward
         const move = Math.min(excess, room);
@@ -649,9 +677,20 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         acc.rollforward.get(over.account.id)!.withdrawals += move;
         acc.rollforward.get(dest.account.id)!.deposits += move;
         // Overflowing out of a taxable account is still a sale -- tax it.
-        realizeWithdrawalTax(over.account.id, move);
+        const overflowTax = realizeWithdrawalTax(over.account.id, move);
         creditBasisIfTaxable(dest.account.id, move);
         excess -= move;
+        ledger.push({
+          date: month,
+          kind: "cap_overflow",
+          accountId: over.account.id,
+          toAccountId: dest.account.id,
+          amount: move,
+          note:
+            overflowTax > 0.005
+              ? `${over.account.name} over its cap -- moved to ${dest.account.name} (+ ${Math.round(overflowTax)} tax)`
+              : `${over.account.name} over its cap -- moved to ${dest.account.name}`,
+        });
       }
       // Any excess still left here had nowhere to go (every downstream target is
       // full and there is no uncapped catch-all); it stays put -- we can't force
@@ -943,6 +982,23 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const unlinkedMortgages = activeAccounts.filter((a) => a.class === "mortgage" && !a.loanTerms?.linkedAssetId);
   for (const m of unlinkedMortgages) {
     warnings.unshift({ year: yearOf(m.effectiveStartDate), kind: "unlinked_mortgage", accountId: m.id, message: `${m.name} has no linked real estate asset.` });
+  }
+
+  // An account that is both a hub and a fill stop, with a cap below its own
+  // buffer, is asking the engine to hold two balances at once. The buffer wins
+  // (see hubBufferByAccountId); say so, since the cap the user typed is being
+  // overridden.
+  const startYear = yearOf(settings.startDate);
+  for (const { account, stop } of fillStops) {
+    if (stop.maxBalance == null) continue;
+    const buffer = hubBufferByAccountId.get(account.id);
+    if (buffer == null || stop.maxBalance >= buffer) continue;
+    warnings.unshift({
+      year: startYear,
+      kind: "routing_conflict",
+      accountId: account.id,
+      message: `${account.name} is set to keep a ${Math.round(buffer).toLocaleString()} spending buffer but also capped at ${Math.round(stop.maxBalance).toLocaleString()} as a surplus target. The buffer wins and the cap is ignored -- remove one of the two.`,
+    });
   }
 
   return {
