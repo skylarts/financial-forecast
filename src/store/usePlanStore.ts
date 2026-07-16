@@ -205,6 +205,12 @@ export const usePlanStore = create<PlanState>()(
 
       removeAccount: (id) => {
         const scenario = get().activeScenario();
+        const account = scenario.accounts.find((a) => a.id === id);
+        // Extra Savings is the one mandatory account in a scenario -- the
+        // engine assumes exactly one always exists (see scenarioSchema's
+        // auto-inject transform), so it can never be deleted, regardless of
+        // whether anything else references it.
+        if (account?.isExtraSavings) return false;
         const referenced =
           scenario.expenses.some((e) => e.paymentAccountId === id) ||
           scenario.incomeSources.some((i) => i.depositAccountId === id) ||
@@ -233,8 +239,7 @@ export const usePlanStore = create<PlanState>()(
             ...s.settings,
             moneyFlow: {
               ...s.settings.moneyFlow,
-              hubs: s.settings.moneyFlow.hubs.filter((h) => h.accountId !== id),
-              fillOrder: s.settings.moneyFlow.fillOrder.filter((f) => f.accountId !== id),
+              splitOrder: s.settings.moneyFlow.splitOrder.filter((stop) => stop.accountId !== id),
               drainOrder: s.settings.moneyFlow.drainOrder.filter((stop) => stop.accountId !== id),
             },
           },

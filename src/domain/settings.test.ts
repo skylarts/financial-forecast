@@ -40,13 +40,11 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
     inflationRatePct: 0.03,
   };
 
-  it("defaults to an empty waterfall (no hubs, no fill/drain order) when omitted", () => {
+  it("defaults to an empty waterfall (no split/drain order) when omitted", () => {
     const parsed = forecastSettingsSchema.parse(base);
     expect(parsed.moneyFlow).toEqual({
-      hubs: [],
-      fillOrder: [],
+      splitOrder: [],
       drainOrder: [],
-      fillSplitMode: "priority_fill",
       drainSplitMode: "priority_fill",
     });
   });
@@ -55,25 +53,23 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
     const parsed = forecastSettingsSchema.parse({
       ...base,
       moneyFlow: {
-        hubs: [{ accountId: "checking", bufferAmount: 5000 }],
-        fillOrder: [{ accountId: "savings", maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+        splitOrder: [
+          { accountId: "savings", kind: "percent_of_remainder", amount: null, pct: 0.5, maxBalance: null, maxBalanceGrowthRatePct: null },
+        ],
         drainOrder: [{ accountId: "savings", startDate: null, endDate: null, splitPct: null }],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });
-    expect(parsed.moneyFlow.hubs).toHaveLength(1);
-    expect(parsed.moneyFlow.hubs[0].bufferAmount).toBe(5000);
+    expect(parsed.moneyFlow.splitOrder).toHaveLength(1);
+    expect(parsed.moneyFlow.splitOrder[0].pct).toBe(0.5);
   });
 
-  it("migrates a legacy plain-string drainOrder and the old splitMode key without losing data", () => {
+  it("migrates a legacy plain-string drainOrder without losing data", () => {
     const parsed = forecastSettingsSchema.parse({
       ...base,
       moneyFlow: {
-        hubs: [{ accountId: "checking", bufferAmount: 5000 }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: ["savings", "brokerage"],
-        splitMode: "fixed_split",
       },
     });
     expect(parsed.moneyFlow.drainOrder.map((d) => ({ ...d, id: undefined }))).toEqual([
@@ -84,40 +80,20 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
     const ids = parsed.moneyFlow.drainOrder.map((d) => d.id);
     expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(parsed.moneyFlow.fillSplitMode).toBe("fixed_split");
-    expect(parsed.moneyFlow.drainSplitMode).toBe("priority_fill");
   });
 
-  it("folds a hub's dead self-referencing fill-order entry into its ceilingAmount", () => {
+  it("defaults a split stop's kind to percent_of_remainder and accepts a flat amount", () => {
     const parsed = forecastSettingsSchema.parse({
       ...base,
       moneyFlow: {
-        hubs: [{ accountId: "checking", bufferAmount: 50000 }],
-        fillOrder: [
-          { accountId: "checking", maxBalance: 100000, maxBalanceGrowthRatePct: null, splitPct: null },
-          { accountId: "brokerage", maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null },
+        splitOrder: [
+          { accountId: "roth_ira", kind: "flat", amount: 7500 },
+          { accountId: "brokerage" },
         ],
         drainOrder: [],
-        fillSplitMode: "priority_fill",
-        drainSplitMode: "priority_fill",
       },
     });
-    expect(parsed.moneyFlow.hubs[0].ceilingAmount).toBe(100000);
-    // The dead self-referencing entry is gone; the real fill target remains.
-    expect(parsed.moneyFlow.fillOrder.map((f) => f.accountId)).toEqual(["brokerage"]);
-  });
-
-  it("leaves an explicit ceilingAmount alone even if a self-referencing entry is also present", () => {
-    const parsed = forecastSettingsSchema.parse({
-      ...base,
-      moneyFlow: {
-        hubs: [{ accountId: "checking", bufferAmount: 50000, ceilingAmount: 75000 }],
-        fillOrder: [{ accountId: "checking", maxBalance: 100000, maxBalanceGrowthRatePct: null, splitPct: null }],
-        drainOrder: [],
-        fillSplitMode: "priority_fill",
-        drainSplitMode: "priority_fill",
-      },
-    });
-    expect(parsed.moneyFlow.hubs[0].ceilingAmount).toBe(75000);
+    expect(parsed.moneyFlow.splitOrder[0]).toMatchObject({ kind: "flat", amount: 7500 });
+    expect(parsed.moneyFlow.splitOrder[1]).toMatchObject({ kind: "percent_of_remainder", pct: null });
   });
 });

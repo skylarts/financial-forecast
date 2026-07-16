@@ -172,11 +172,13 @@ describe("forecastScenario -- income, expenses, and surplus routing", () => {
     expect(year.accountBalances[source.id]).toBeCloseTo(0, 0);
   });
 
-  it("keeps a target cash balance in the spending account and sweeps only the excess", () => {
+  it("Extra Savings has no configurable floor -- the whole surplus sweeps, not just the excess above some target", () => {
     const checking = makeAccount({
       class: "cash",
       name: "Checking",
       isSpendingAccount: true,
+      // targetCashBalance is a legacy hint with no home anymore -- Extra
+      // Savings has no user-configurable floor/ceiling (see testHelpers.ts).
       targetCashBalance: 10_000,
     });
     const brokerage = makeAccount({
@@ -194,12 +196,12 @@ describe("forecastScenario -- income, expenses, and surplus routing", () => {
     const result = forecastScenario(scenario);
     const year = result.years[0];
 
-    // Buffer keeps $10k in checking; the other $14k of surplus is swept.
-    expect(year.accountBalances[checking.id]).toBeCloseTo(10_000, 0);
-    expect(year.accountBalances[brokerage.id]).toBeCloseTo(14_000, 0);
+    // No floor to keep money back -- all $24k of surplus sweeps out.
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(24_000, 0);
   });
 
-  it("routes surplus by fixed percentages when configured", () => {
+  it("routes surplus by fixed percentages, cascading -- each stop takes its share of what's left, not of the original total", () => {
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
     const savings = makeAccount({ class: "cash", name: "Savings", isSurplusTarget: true });
     const brokerage = makeAccount({ class: "taxable_investment", name: "Brokerage", isSurplusTarget: true });
@@ -219,10 +221,12 @@ describe("forecastScenario -- income, expenses, and surplus routing", () => {
     const result = forecastScenario(scenario);
     const year = result.years[0];
 
-    // $24k split 75/25.
+    // $24k surplus: savings takes 75% ($18k) first; brokerage takes 25% of
+    // what's LEFT ($6k), i.e. $1.5k -- not 25% of the original $24k. The
+    // $4.5k neither stop claims stays in Extra Savings.
     expect(year.accountBalances[savings.id]).toBeCloseTo(18_000, 0);
-    expect(year.accountBalances[brokerage.id]).toBeCloseTo(6_000, 0);
-    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[brokerage.id]).toBeCloseTo(1_500, 0);
+    expect(year.accountBalances[checking.id]).toBeCloseTo(4_500, 0);
   });
 
   it("spills income deposited straight into a capped target onto the next priority", () => {
@@ -1287,36 +1291,35 @@ describe("forecastScenario -- isExcluded (real exclusion, not cosmetic)", () => 
   });
 });
 
-describe("forecastScenario -- moneyFlow (multiple hubs, expressed directly)", () => {
-  it("sweeps surplus from two independent spending hubs into a shared fill order", () => {
-    const checkingA = makeAccount({ class: "cash", name: "Checking A", startingBalance: 0, growthRatePct: 0 });
-    const checkingB = makeAccount({ class: "cash", name: "Checking B", startingBalance: 0, growthRatePct: 0 });
+describe("forecastScenario -- moneyFlow (Extra Savings, expressed directly)", () => {
+  it("only sweeps Extra Savings -- income deposited straight into an ordinary account stays put, unswept", () => {
+    const extraSavings = makeAccount({ class: "cash", name: "Extra Savings", startingBalance: 0, growthRatePct: 0, isSpendingAccount: true });
+    const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 0, growthRatePct: 0 });
     const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0, growthRatePct: 0 });
     const scenario = makeScenario({
-      accounts: [checkingA, checkingB, savings],
+      accounts: [extraSavings, checking, savings],
       incomeSources: [
-        makeIncome({ depositAccountId: checkingA.id, amount: 3000 }),
-        makeIncome({ depositAccountId: checkingB.id, amount: 2000 }),
+        makeIncome({ depositAccountId: extraSavings.id, amount: 3000 }),
+        // Deposited directly into an ordinary (non-Extra-Savings) account --
+        // there's only ever one hub now, so this money is never swept.
+        makeIncome({ depositAccountId: checking.id, amount: 2000 }),
       ],
       horizonEndDate: "2026-12-31",
       moneyFlow: {
-        hubs: [
-          { accountId: checkingA.id, bufferAmount: 0 },
-          { accountId: checkingB.id, bufferAmount: 0 },
-        ],
-        fillOrder: [{ accountId: savings.id, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+        splitOrder: [{ id: "s1", accountId: savings.id, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null }],
         drainOrder: [],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });
     const result = forecastScenario(scenario);
     const year = result.years[0];
 
-    // Both hubs sweep everything (no buffer) into the single shared fill target.
-    expect(year.accountBalances[checkingA.id]).toBeCloseTo(0, 0);
-    expect(year.accountBalances[checkingB.id]).toBeCloseTo(0, 0);
-    expect(year.accountBalances[savings.id]).toBeCloseTo((3000 + 2000) * 12, 0);
+    // Extra Savings sweeps everything (no floor) into the split target.
+    expect(year.accountBalances[extraSavings.id]).toBeCloseTo(0, 0);
+    expect(year.accountBalances[savings.id]).toBeCloseTo(3000 * 12, 0);
+    // Checking's direct deposit was never routed through Extra Savings, so
+    // it just accumulates in place.
+    expect(year.accountBalances[checking.id]).toBeCloseTo(2000 * 12, 0);
   });
 });
 
@@ -1343,13 +1346,11 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       startDate: "2026-01-01",
       horizonEndDate: "2029-12-31",
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: [
           { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2027-12-31", splitPct: null, minBalance: null },
           { id: nanoid(), accountId: ira.id, startDate: "2028-01-01", endDate: null, splitPct: null, minBalance: null },
         ],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });
@@ -1383,11 +1384,9 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       startDate: "2026-01-01",
       horizonEndDate: "2027-12-31",
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         // IRA isn't active until 2027 -- 2026's shortfall has nowhere to go.
         drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: null, splitPct: null, minBalance: null }],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });
@@ -1421,13 +1420,11 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       expenses: [makeExpense({ paymentAccountId: checking.id, amount: 10_000 })], // $120k/yr shortfall
       horizonEndDate: "2026-12-31",
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: [
           { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null },
           { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null },
         ],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "fixed_split",
       },
     });
@@ -1460,13 +1457,11 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       expenses: [makeExpense({ paymentAccountId: checking.id, amount: 10_000 })], // $120k/yr shortfall
       horizonEndDate: "2026-12-31",
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: [
           { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null },
           { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null },
         ],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "fixed_split",
       },
     });
@@ -1509,14 +1504,12 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       expenses: [makeExpense({ paymentAccountId: checking.id, amount: 8_333.33 })], // ~$100k/yr shortfall
       horizonEndDate: "2026-12-31",
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: [
           { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null },
           { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null },
           { id: nanoid(), accountId: roth.id, startDate: "2030-01-01", endDate: null, splitPct: 0.4 , minBalance: null },
         ],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "fixed_split",
       },
     });
@@ -1553,15 +1546,13 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       startDate: "2026-01-01",
       horizonEndDate: "2029-12-31",
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: [
           // Brokerage funds 2026, IRA takes 2027-2028, then Brokerage again from 2029.
           { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2026-12-31", splitPct: null, minBalance: null },
           { id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: "2028-12-31", splitPct: null, minBalance: null },
           { id: nanoid(), accountId: brokerage.id, startDate: "2029-01-01", endDate: null, splitPct: null, minBalance: null },
         ],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });
@@ -1581,42 +1572,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
     expect(byYear(2029).accountBalances[ira.id]).toBeCloseTo(380_000, 0);
   });
 
-  it("replenishes a spending hub at its configured buffer floor, not just at $0", () => {
-    const checking = makeAccount({
-      class: "cash",
-      name: "Checking",
-      isSpendingAccount: true,
-      startingBalance: 100_000,
-      growthRatePct: 0,
-    });
-    const ira = makeAccount({
-      class: "tax_deferred",
-      name: "IRA",
-      taxTreatment: "tax_deferred",
-      startingBalance: 500_000,
-      growthRatePct: 0,
-    });
-    const scenario = makeScenario({
-      accounts: [checking, ira],
-      expenses: [makeExpense({ paymentAccountId: checking.id, amount: 2_000 })], // $24k/yr, no income
-      horizonEndDate: "2026-12-31",
-      moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 100_000 }],
-        fillOrder: [],
-        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null }],
-        fillSplitMode: "priority_fill",
-        drainSplitMode: "priority_fill",
-      },
-    });
-    const result = forecastScenario(scenario);
-    const year = result.years[0];
-    // Checking stays at its $100k floor all year, replenished from the IRA
-    // each month instead of being drawn down toward $0 first.
-    expect(year.accountBalances[checking.id]).toBeCloseTo(100_000, 0);
-    expect(year.accountBalances[ira.id]).toBeCloseTo(500_000 - 24_000, 0);
-  });
-
-  it("leaves a hub with no configured buffer draining down to $0, same as before this feature", () => {
+  it("replenishes Extra Savings to exactly its hardcoded $0 floor, not below", () => {
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0, growthRatePct: 0 });
     const ira = makeAccount({
       class: "tax_deferred",
@@ -1630,10 +1586,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       expenses: [makeExpense({ paymentAccountId: checking.id, amount: 2_000 })],
       horizonEndDate: "2026-12-31",
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: null }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null }],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });
@@ -1666,13 +1620,11 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       horizonEndDate: "2026-12-31",
       inflationRatePct: 0, // keep the floor flat at exactly $100k for a clean assertion
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         drainOrder: [
           { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000 },
           { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null },
         ],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });
@@ -1701,11 +1653,9 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       horizonEndDate: "2026-12-31",
       inflationRatePct: 0,
       moneyFlow: {
-        hubs: [{ accountId: checking.id, bufferAmount: 0 }],
-        fillOrder: [],
+        splitOrder: [],
         // Only source, floored at $100k -- can only ever cover $10k of the $60k shortfall.
         drainOrder: [{ id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000 }],
-        fillSplitMode: "priority_fill",
         drainSplitMode: "priority_fill",
       },
     });

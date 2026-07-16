@@ -7,6 +7,13 @@ import type { Account, AccountClass, Scenario, ScenarioEvent, IncomeSource, Expe
  * makeAccount/makeScenario translate them into the real moneyFlow shape so
  * the many existing engine tests didn't need a mechanical rewrite when the
  * routing model moved off the account object.
+ *
+ * `isSpendingAccount` now means "this account IS Extra Savings" (isExtraSavings:
+ * true on the real Account) -- there's only ever one mandatory hub now, not a
+ * configurable list, so the hint marks which test account plays that role
+ * instead of building a separate synthetic one. `targetCashBalance` has no
+ * home anymore (Extra Savings has no user-configurable floor/ceiling -- its
+ * deficit-trigger floor is hardcoded at $0) and is accepted but ignored.
  */
 interface MoneyFlowHints {
   isSpendingAccount?: boolean;
@@ -85,35 +92,43 @@ export function makeExpense(overrides: Partial<ExpenseBaseline> & { paymentAccou
   };
 }
 
-/** Derives settings.moneyFlow from the legacy per-account hints on `accounts`. */
+/**
+ * Derives settings.moneyFlow from the legacy per-account hints on `accounts`.
+ * `isSurplusTarget` maps onto the new cascading splitOrder as kind =
+ * "percent_of_remainder", pct = 1 (take everything it can hold, up to its own
+ * maxBalance, spilling the rest onward) -- the exact cascading equivalent of
+ * the old priority_fill "absorb everything in list order" behavior. When
+ * `surplusRoutingRule.mode === "fixed_split"`, the old splitPct is carried
+ * over directly as `pct`, which is now a share of the CASCADING remainder
+ * rather than the original total -- the closest sensible translation, not a
+ * precise behavioral match (see the same tradeoff in migrateV2Plan.ts).
+ */
 function deriveMoneyFlow(
   accounts: TestAccount[],
   surplusRoutingRule?: { mode: "priority_fill" } | { mode: "fixed_split"; splits: { accountId: string; pct: number }[] }
 ): MoneyFlow {
-  const hubs = accounts
-    .filter((a) => a.isSpendingAccount)
-    .map((a) => ({ accountId: a.id, bufferAmount: a.targetCashBalance ?? null }));
-  const fillOrder = accounts
+  const splitOrder = accounts
     .filter((a) => a.isSurplusTarget)
     .sort((a, b) => (a.surplusTargetPriority ?? 0) - (b.surplusTargetPriority ?? 0))
     .map((a) => ({
+      id: nanoid(),
       accountId: a.id,
+      kind: "percent_of_remainder" as const,
+      amount: null,
+      pct:
+        surplusRoutingRule?.mode === "fixed_split"
+          ? surplusRoutingRule.splits.find((s) => s.accountId === a.id)?.pct ?? 0
+          : 1,
       maxBalance: a.maxBalance ?? null,
       maxBalanceGrowthRatePct: a.maxBalanceGrowthRatePct ?? null,
-      splitPct:
-        surplusRoutingRule?.mode === "fixed_split"
-          ? surplusRoutingRule.splits.find((s) => s.accountId === a.id)?.pct ?? null
-          : null,
     }));
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
     .sort((a, b) => (a.withdrawalPriority as number) - (b.withdrawalPriority as number))
     .map((a) => ({ id: nanoid(), accountId: a.id, startDate: null, endDate: null, splitPct: null, minBalance: null }));
   return {
-    hubs,
-    fillOrder,
+    splitOrder,
     drainOrder,
-    fillSplitMode: surplusRoutingRule?.mode ?? "priority_fill",
     drainSplitMode: "priority_fill",
   };
 }
@@ -128,11 +143,30 @@ const MONEY_FLOW_HINT_KEYS = [
   "maxBalanceGrowthRatePct",
 ] as const satisfies readonly (keyof MoneyFlowHints)[];
 
-/** Strips the test-only money-flow hints back off, leaving a real Account. */
+/** Strips the test-only money-flow hints back off, translating isSpendingAccount into isExtraSavings on the real Account. */
 function cleanAccount(a: TestAccount): Account {
   const account = { ...a };
+  const isExtraSavings = account.isSpendingAccount === true;
   for (const key of MONEY_FLOW_HINT_KEYS) delete account[key];
-  return account;
+  return isExtraSavings ? { ...account, isExtraSavings: true } : account;
+}
+
+/** A blank, always-eligible Extra Savings account -- mirrors scenarioSchema's
+ *  auto-inject transform, which makeScenario below can't rely on since it
+ *  builds a Scenario object directly rather than going through `.parse()`. */
+function freshExtraSavingsAccount(): Account {
+  return {
+    id: nanoid(),
+    name: "Extra Savings",
+    class: "cash",
+    category: "asset",
+    ownerId: null,
+    startingBalance: 0,
+    growthRatePct: 0,
+    taxTreatment: "n/a",
+    subjectToRMD: false,
+    isExtraSavings: true,
+  };
 }
 
 export function makeScenario(overrides: {
@@ -149,11 +183,15 @@ export function makeScenario(overrides: {
   surplusRoutingRule?: { mode: "priority_fill" } | { mode: "fixed_split"; splits: { accountId: string; pct: number }[] };
   moneyFlow?: MoneyFlow;
 }): Scenario {
+  const accounts = overrides.accounts.map(cleanAccount);
+  // Guarantee exactly one Extra Savings account exists, same invariant
+  // scenarioSchema's transform enforces on real (parsed) plans.
+  if (!accounts.some((a) => a.isExtraSavings)) accounts.unshift(freshExtraSavingsAccount());
   return {
     id: nanoid(),
     name: "Test Scenario",
     household: { people: overrides.people ?? [{ id: nanoid(), name: "Test Person", birthDate: "1960-01-01", retirementAge: 65, planningEndAge: 95 }] },
-    accounts: overrides.accounts.map(cleanAccount),
+    accounts,
     incomeSources: overrides.incomeSources ?? [],
     expenses: overrides.expenses ?? [],
     events: overrides.events ?? [],

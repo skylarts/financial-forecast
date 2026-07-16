@@ -8,18 +8,21 @@ import { ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
 
 /**
- * The "waterfall": two ordered lists replacing the old scattered per-account
- * fields (isSpendingAccount, targetCashBalance, withdrawalPriority,
- * isSurplusTarget, surplusTargetPriority, maxBalance, maxBalanceGrowthRatePct)
- * and the global surplusRoutingRule. Every one of those values still exists --
- * it's just attached to a stop in one of these lists instead of to the
- * account itself, so it's edited from one place instead of hunting through
- * every account's form.
+ * Cash-flow routing, edited from one place instead of scattered per-account
+ * fields. There's no user-configurable "spending account" here anymore --
+ * Extra Savings (see the Accounts tab; it can't be deleted) is the one
+ * mandatory hub: income deposits there, expenses pay from there, it captures
+ * 100% of net income-minus-expenses every month with a floor hardcoded at
+ * $0. The two lists below decide what happens with that money: `splitOrder`
+ * is where surplus goes (each stop a flat $ amount or a cascading % of
+ * what's left after the stops above it), `drainOrder` is what covers a
+ * shortfall, unchanged from before.
  */
 export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; settings: ForecastSettings }) {
   const updateSettings = usePlanStore((s) => s.updateSettings);
   const [error, setError] = useState<string | null>(null);
   const moneyFlow = settings.moneyFlow;
+  const extraSavingsId = accounts.find((a) => a.isExtraSavings)?.id;
 
   const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "(deleted account)";
   const availableAccounts = (excludeIds: Set<string>) => accounts.filter((a) => !excludeIds.has(a.id));
@@ -34,54 +37,38 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
     updateSettings(result.data);
   };
 
-  // --- Hubs (spending accounts) ---
-  const hubIds = new Set(moneyFlow.hubs.map((h) => h.accountId));
-  const addHub = (accountId: string) => {
-    if (!accountId) return;
-    save({ ...moneyFlow, hubs: [...moneyFlow.hubs, { accountId, bufferAmount: null }] });
-  };
-  const updateHub = (accountId: string, patch: Partial<MoneyFlow["hubs"][number]>) =>
-    save({ ...moneyFlow, hubs: moneyFlow.hubs.map((h) => (h.accountId === accountId ? { ...h, ...patch } : h)) });
-  const removeHub = (accountId: string) =>
-    save({ ...moneyFlow, hubs: moneyFlow.hubs.filter((h) => h.accountId !== accountId) });
-
-  // --- Fill order (surplus targets) ---
-  const fillIds = new Set(moneyFlow.fillOrder.map((f) => f.accountId));
-  const addFillStop = (accountId: string) => {
+  // --- Extra Savings split (surplus routing) ---
+  // A stop pointing at Extra Savings itself would always be a no-op (the
+  // engine skips an account sweeping into itself), so it's excluded from the
+  // add list, same as any other self-reference guard in this editor.
+  const splitIds = new Set(moneyFlow.splitOrder.map((f) => f.accountId));
+  const addSplitStop = (accountId: string) => {
     if (!accountId) return;
     save({
       ...moneyFlow,
-      fillOrder: [...moneyFlow.fillOrder, { accountId, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null }],
+      splitOrder: [
+        ...moneyFlow.splitOrder,
+        { id: nanoid(), accountId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null },
+      ],
     });
   };
-  const updateFillStop = (accountId: string, patch: Partial<MoneyFlow["fillOrder"][number]>) =>
+  const updateSplitStop = (id: string, patch: Partial<MoneyFlow["splitOrder"][number]>) =>
     save({
       ...moneyFlow,
-      fillOrder: moneyFlow.fillOrder.map((f) => (f.accountId === accountId ? { ...f, ...patch } : f)),
+      splitOrder: moneyFlow.splitOrder.map((s) => (s.id === id ? { ...s, ...patch } : s)),
     });
-  const removeFillStop = (accountId: string) =>
-    save({ ...moneyFlow, fillOrder: moneyFlow.fillOrder.filter((f) => f.accountId !== accountId) });
-  const moveFillStop = (index: number, dir: -1 | 1) => {
-    const next = [...moneyFlow.fillOrder];
+  const removeSplitStop = (id: string) =>
+    save({ ...moneyFlow, splitOrder: moneyFlow.splitOrder.filter((s) => s.id !== id) });
+  const moveSplitStop = (index: number, dir: -1 | 1) => {
+    const next = [...moneyFlow.splitOrder];
     const target = index + dir;
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
-    save({ ...moneyFlow, fillOrder: next });
+    save({ ...moneyFlow, splitOrder: next });
   };
-  const setFillSplitMode = (fillSplitMode: MoneyFlow["fillSplitMode"]) => {
-    // Seed an even split across current fill stops the moment the user
-    // switches into fixed_split, so it does something sensible immediately
-    // instead of defaulting to a broken/empty 0%-everywhere state.
-    const fillOrder =
-      fillSplitMode === "fixed_split"
-        ? moneyFlow.fillOrder.map((f) => ({ ...f, splitPct: f.splitPct ?? 1 / Math.max(1, moneyFlow.fillOrder.length) }))
-        : moneyFlow.fillOrder;
-    save({ ...moneyFlow, fillSplitMode, fillOrder });
-  };
-  const splitTotal = moneyFlow.fillOrder.reduce((s, f) => s + (f.splitPct ?? 0), 0);
 
   // --- Drain order (deficit cascade) ---
-  // Unlike hubs/fill order, the SAME account can appear more than once here
+  // Unlike the split list, the SAME account can appear more than once here
   // (different date windows) -- so entries are keyed by their own `id`, not
   // by accountId, and the "add" list intentionally doesn't exclude accounts
   // already in the list.
@@ -122,80 +109,79 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
     <div className="flex flex-col gap-6">
       <ErrorBanner message={error} />
       <p className="text-xs text-dim">
-        This is where cash-flow routing lives -- which account(s) income deposits into and expenses pay from, where
-        extra cash goes when there&rsquo;s a surplus, and what gets drawn down first when there&rsquo;s a shortfall.
-        Order is priority: the first stop in a list is filled (or drained) first.
+        This is where cash-flow routing lives. Extra Savings (see the Accounts tab) is the one mandatory spending
+        account -- income deposits there, expenses pay from there, and it captures 100% of net income-minus-expenses
+        every month. The lists below decide where that surplus goes, and what gets drawn down first when there&rsquo;s
+        a shortfall. Order is priority: the first stop in a list is offered first.
       </p>
 
-      {/* Spending hubs */}
+      {/* Extra Savings split */}
       <section className="flex flex-col gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">Spending accounts</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">When there&rsquo;s extra cash, split it</h3>
         <p className="text-xs text-dim">
-          Income deposits here, expenses pay from here. Each floats between a floor and a ceiling (today&rsquo;s
-          dollars, grown with inflation): drop below the floor and it gets refilled from the drain order; rise above
-          the ceiling and the excess sweeps out to the fill order. Leave the ceiling blank to use the floor as the
-          ceiling too (sweep everything above it). Usually just one hub (e.g. checking), but you can add more.
+          Each stop is either a flat dollar amount or a percentage of whatever&rsquo;s left after the stops above it
+          (cascading, not a share of the total). Whatever the whole list doesn&rsquo;t claim simply stays in Extra
+          Savings and keeps accumulating.
         </p>
-        {moneyFlow.hubs.length === 0 && <p className="text-xs text-dim">No spending accounts configured yet.</p>}
-        {moneyFlow.hubs.map((hub) => (
-          <div key={hub.accountId} className="flex items-center gap-2 rounded-md border border-border p-2">
-            <span className="flex-1 truncate text-sm">{accountName(hub.accountId)}</span>
-            <label className="flex items-center gap-1 text-xs text-dim">
-              Floor $
-              <input
-                className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                type="number"
-                step="0.01"
-                placeholder="0"
-                value={hub.bufferAmount ?? ""}
-                onChange={(e) => updateHub(hub.accountId, { bufferAmount: e.target.value === "" ? null : Number(e.target.value) })}
-              />
-            </label>
-            <label className="flex items-center gap-1 text-xs text-dim">
-              Ceiling $
-              <input
-                className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                type="number"
-                step="0.01"
-                placeholder="= floor"
-                value={hub.ceilingAmount ?? ""}
-                onChange={(e) => updateHub(hub.accountId, { ceilingAmount: e.target.value === "" ? null : Number(e.target.value) })}
-              />
-            </label>
-            <button type="button" onClick={() => removeHub(hub.accountId)} className="text-xs text-negative hover:underline">
-              Remove
-            </button>
-          </div>
-        ))}
-        <AddAccountSelect options={availableAccounts(hubIds)} onAdd={addHub} placeholder="+ Add spending account" />
-      </section>
-
-      {/* Fill order */}
-      <section className="flex flex-col gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">When there&rsquo;s extra cash, fill in this order</h3>
-        <label className="flex items-center gap-2 text-xs text-dim">
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            checked={moneyFlow.fillSplitMode === "fixed_split"}
-            onChange={(e) => setFillSplitMode(e.target.checked ? "fixed_split" : "priority_fill")}
-          />
-          Split by fixed percentages instead of filling one at a time
-        </label>
-        {moneyFlow.fillOrder.length === 0 && <p className="text-xs text-dim">No surplus targets configured yet.</p>}
-        {moneyFlow.fillOrder.map((stop, i) => (
-          <div key={stop.accountId} className="flex flex-col gap-2 rounded-md border border-border p-2">
+        {moneyFlow.splitOrder.length === 0 && <p className="text-xs text-dim">No surplus targets configured yet.</p>}
+        {moneyFlow.splitOrder.map((stop, i) => (
+          <div key={stop.id} className="flex flex-col gap-2 rounded-md border border-border p-2">
             <div className="flex items-center gap-2">
               <div className="flex flex-col">
-                <button type="button" disabled={i === 0} onClick={() => moveFillStop(i, -1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▲</button>
-                <button type="button" disabled={i === moneyFlow.fillOrder.length - 1} onClick={() => moveFillStop(i, 1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▼</button>
+                <button type="button" disabled={i === 0} onClick={() => moveSplitStop(i, -1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▲</button>
+                <button type="button" disabled={i === moneyFlow.splitOrder.length - 1} onClick={() => moveSplitStop(i, 1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▼</button>
               </div>
               <span className="flex-1 truncate text-sm">{i + 1}. {accountName(stop.accountId)}</span>
-              <button type="button" onClick={() => removeFillStop(stop.accountId)} className="text-xs text-negative hover:underline">
+              <button type="button" onClick={() => removeSplitStop(stop.id)} className="text-xs text-negative hover:underline">
                 Remove
               </button>
             </div>
             <div className="ml-6 flex flex-wrap items-center gap-3 text-xs text-dim">
+              <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                <button
+                  type="button"
+                  onClick={() => updateSplitStop(stop.id, { kind: "flat" })}
+                  className={`rounded px-2 py-0.5 ${stop.kind === "flat" ? "bg-accent text-white" : "text-dim"}`}
+                >
+                  $
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateSplitStop(stop.id, { kind: "percent_of_remainder" })}
+                  className={`rounded px-2 py-0.5 ${stop.kind === "percent_of_remainder" ? "bg-accent text-white" : "text-dim"}`}
+                >
+                  %
+                </button>
+              </div>
+              {stop.kind === "flat" ? (
+                <label className="flex items-center gap-1">
+                  Amount $
+                  <input
+                    className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                    type="number"
+                    step="0.01"
+                    placeholder="0"
+                    value={stop.amount ?? ""}
+                    onChange={(e) => updateSplitStop(stop.id, { amount: e.target.value === "" ? null : Number(e.target.value) })}
+                  />
+                </label>
+              ) : (
+                <label className="flex items-center gap-1">
+                  Share
+                  <input
+                    className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                    type="number"
+                    step="1"
+                    min="0"
+                    max="100"
+                    value={stop.pct == null ? "" : Math.round(stop.pct * 100)}
+                    onChange={(e) =>
+                      updateSplitStop(stop.id, { pct: e.target.value === "" ? null : Number(e.target.value) / 100 })
+                    }
+                  />
+                  % of remainder
+                </label>
+              )}
               <label className="flex items-center gap-1">
                 Cap $
                 <input
@@ -204,7 +190,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   step="0.01"
                   placeholder="no cap"
                   value={stop.maxBalance ?? ""}
-                  onChange={(e) => updateFillStop(stop.accountId, { maxBalance: e.target.value === "" ? null : Number(e.target.value) })}
+                  onChange={(e) => updateSplitStop(stop.id, { maxBalance: e.target.value === "" ? null : Number(e.target.value) })}
                 />
               </label>
               <label className="flex items-center gap-1">
@@ -215,39 +201,21 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   step="0.001"
                   placeholder="inflation"
                   value={stop.maxBalanceGrowthRatePct ?? ""}
-                  onChange={(e) => updateFillStop(stop.accountId, { maxBalanceGrowthRatePct: e.target.value === "" ? null : Number(e.target.value) })}
+                  onChange={(e) => updateSplitStop(stop.id, { maxBalanceGrowthRatePct: e.target.value === "" ? null : Number(e.target.value) })}
                 />
                 /yr
               </label>
-              {moneyFlow.fillSplitMode === "fixed_split" && (
-                <label className="flex items-center gap-1">
-                  Share
-                  <input
-                    className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                    type="number"
-                    step="0.05"
-                    min="0"
-                    max="1"
-                    value={stop.splitPct ?? 0}
-                    onChange={(e) => updateFillStop(stop.accountId, { splitPct: Number(e.target.value) })}
-                  />
-                </label>
-              )}
             </div>
           </div>
         ))}
-        {/* A hub sweeping into itself is always a no-op in the engine -- its ceiling
-            lives on the hub row above instead, so hubs are excluded here. */}
-        <AddAccountSelect options={availableAccounts(new Set([...fillIds, ...hubIds]))} onAdd={addFillStop} placeholder="+ Add fill target" />
-        {moneyFlow.fillSplitMode === "fixed_split" && (
-          <div className={`text-xs ${Math.abs(splitTotal - 1) < 0.001 ? "text-dim" : "text-negative"}`}>
-            Total allocated: {(splitTotal * 100).toFixed(0)}%
-            {Math.abs(splitTotal - 1) >= 0.001 && " (the remainder stays in the spending account)"}
-          </div>
-        )}
+        <AddAccountSelect
+          options={availableAccounts(new Set([...splitIds, ...(extraSavingsId ? [extraSavingsId] : [])]))}
+          onAdd={addSplitStop}
+          placeholder="+ Add split target"
+        />
         <p className="text-xs text-dim">
           Cap = how much this account absorbs before overflow spills to the next stop. Leave the last stop uncapped
-          as a catch-all, or surplus with nowhere to go simply stays put.
+          as a catch-all, or surplus with nowhere else to go simply stays in Extra Savings.
         </p>
       </section>
 
@@ -259,7 +227,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
           drawdown across retirement, and the same account can be added more than once with different windows (e.g.
           drain it, switch to another source for a stretch, then come back to it later). &ldquo;Keep at least $&rdquo;
           (today&rsquo;s dollars, grown with inflation) stops this source from being drained below that floor -- once
-          it's hit, the remaining shortfall spills to the next active source.
+          it&rsquo;s hit, the remaining shortfall spills to the next active source.
         </p>
         <label className="flex items-center gap-2 text-xs text-dim">
           <input
@@ -330,7 +298,11 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
             </div>
           </div>
         ))}
-        <AddAccountSelect options={accounts} onAdd={addDrainSource} placeholder="+ Add drain source" />
+        <AddAccountSelect
+          options={availableAccounts(extraSavingsId ? new Set([extraSavingsId]) : new Set())}
+          onAdd={addDrainSource}
+          placeholder="+ Add drain source"
+        />
         {moneyFlow.drainSplitMode === "fixed_split" && (
           <div className={`text-xs ${Math.abs(drainSplitTotal - 1) < 0.001 ? "text-dim" : "text-negative"}`}>
             Total allocated: {(drainSplitTotal * 100).toFixed(0)}%

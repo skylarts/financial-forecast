@@ -10,6 +10,7 @@ import type { Scenario, Account } from "@/domain";
 const alexId = nanoid();
 const jordanId = nanoid();
 
+const extraSavingsId = nanoid();
 const checkingId = nanoid();
 const emergencyFundId = nanoid();
 const brokerageId = nanoid();
@@ -18,6 +19,18 @@ const jordan401kId = nanoid();
 const alexRothId = nanoid();
 
 const accounts: Account[] = [
+  {
+    id: extraSavingsId,
+    name: "Extra Savings",
+    class: "cash",
+    category: "asset",
+    ownerId: null,
+    startingBalance: 0,
+    growthRatePct: 0,
+    taxTreatment: "n/a",
+    subjectToRMD: false,
+    isExtraSavings: true,
+  },
   {
     id: checkingId,
     name: "Joint Checking",
@@ -111,7 +124,7 @@ export const mockScenario: Scenario = {
       startDate: "2026-01-01",
       endDate: null,
       growthRatePct: 0.05, // nominal: ~3% inflation + ~2% real raises
-      depositAccountId: checkingId,
+      depositAccountId: extraSavingsId,
       category: "salary",
     },
     {
@@ -123,7 +136,7 @@ export const mockScenario: Scenario = {
       startDate: "2026-01-01",
       endDate: null,
       growthRatePct: 0.05, // nominal: ~3% inflation + ~2% real raises
-      depositAccountId: checkingId,
+      depositAccountId: extraSavingsId,
       category: "salary",
     },
     {
@@ -150,7 +163,7 @@ export const mockScenario: Scenario = {
       startDate: "2057-05-15",
       endDate: null,
       growthRatePct: 0.03, // COLA tracks inflation
-      depositAccountId: checkingId,
+      depositAccountId: extraSavingsId,
       category: "social_security",
     },
     {
@@ -162,7 +175,7 @@ export const mockScenario: Scenario = {
       startDate: "2059-09-22",
       endDate: null,
       growthRatePct: 0.03, // COLA tracks inflation
-      depositAccountId: checkingId,
+      depositAccountId: extraSavingsId,
       category: "social_security",
     },
   ],
@@ -175,7 +188,7 @@ export const mockScenario: Scenario = {
       startDate: "2026-01-01",
       endDate: null,
       growthRatePct: 0.03, // nominal: tracks inflation
-      paymentAccountId: checkingId,
+      paymentAccountId: extraSavingsId,
       category: "discretionary",
     },
     {
@@ -190,7 +203,7 @@ export const mockScenario: Scenario = {
       // authoring-flow affordance (auto-suggest ending rent on a Buy a Home event).
       endDate: "2032-05-31",
       growthRatePct: 0.03, // nominal: tracks inflation
-      paymentAccountId: checkingId,
+      paymentAccountId: extraSavingsId,
       category: "housing",
     },
   ],
@@ -203,7 +216,7 @@ export const mockScenario: Scenario = {
       childcareMonthlyExpense: 1_800,
       childcareEndDate: "2033-09-01",
       additionalOneTimeCost: 5_000,
-      paymentAccountId: checkingId,
+      paymentAccountId: extraSavingsId,
     },
     {
       id: nanoid(),
@@ -238,14 +251,18 @@ export const mockScenario: Scenario = {
     horizonEndDate: "2087-12-31",
     inflationRatePct: 0.03,
     moneyFlow: {
-      hubs: [{ accountId: checkingId, bufferAmount: 10_000 }],
-      // Filled first, but only up to a cap that keeps pace with inflation; once
-      // it's topped off, surplus spills to the uncapped brokerage catch-all.
-      fillOrder: [
-        { accountId: emergencyFundId, maxBalance: 30_000, maxBalanceGrowthRatePct: null, splitPct: null },
-        { accountId: brokerageId, maxBalance: null, maxBalanceGrowthRatePct: null, splitPct: null },
+      // Extra Savings (see the account above) is the mandatory hub -- income
+      // deposits there, expenses pay from there. Each stop below takes
+      // everything it can hold (up to its own cap), cascading to the next --
+      // checking is topped up first (a real spending buffer), then the
+      // emergency fund up to a cap that keeps pace with inflation, then
+      // whatever's left spills to the uncapped brokerage catch-all.
+      splitOrder: [
+        { id: nanoid(), accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 20_000, maxBalanceGrowthRatePct: null },
+        { id: nanoid(), accountId: emergencyFundId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 30_000, maxBalanceGrowthRatePct: null },
+        { id: nanoid(), accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null },
       ],
-      drainOrder: [emergencyFundId, brokerageId, alex401kId, jordan401kId, alexRothId].map((accountId) => ({
+      drainOrder: [checkingId, emergencyFundId, brokerageId, alex401kId, jordan401kId, alexRothId].map((accountId) => ({
         id: nanoid(),
         accountId,
         startDate: null,
@@ -253,7 +270,6 @@ export const mockScenario: Scenario = {
         splitPct: null,
         minBalance: null,
       })),
-      fillSplitMode: "priority_fill",
       drainSplitMode: "priority_fill",
     },
     rmdEnabled: true,

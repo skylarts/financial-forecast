@@ -477,7 +477,9 @@ export function AccountDrawer({
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">
-          {account ? (
+          {account && account.isExtraSavings ? (
+            <span className="text-xs text-dim">Extra Savings is a system account and can&rsquo;t be deleted.</span>
+          ) : account ? (
             <button
               type="button"
               onClick={() => {

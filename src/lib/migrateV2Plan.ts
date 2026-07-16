@@ -51,31 +51,44 @@ export function looksLikeV2Plan(raw: unknown): boolean {
   });
 }
 
+/**
+ * v2's hub concept (isSpendingAccount + a bufferAmount) has no home in v3 --
+ * the mandatory Extra Savings system account (see scenarioSchema's
+ * auto-inject transform) is now the only hub, and it's created fresh, not
+ * migrated. A v2 spending account's bufferAmount is therefore best-effort
+ * dropped; the account itself just becomes an ordinary splitOrder/drainOrder
+ * participant if it was also a surplus target or withdrawal source.
+ *
+ * v2's fillOrder (isSurplusTarget) maps onto the new cascading splitOrder:
+ * old priority_fill ("absorb everything you can hold, in list order") is
+ * EXACTLY equivalent to every row getting kind="percent_of_remainder" with
+ * pct=1 under the new cascading semantics (each row still takes 100% of
+ * what's left after its own maxBalance caps it, and spills the rest
+ * onward) -- so that mapping is exact, not approximate. Old fixed_split
+ * (a splitPct of the ORIGINAL total) maps to the new pct of the CASCADING
+ * remainder, which is the closest sensible translation but not a precise
+ * behavioral match -- reasonable for a best-effort restore of an old backup.
+ */
 function migrateMoneyFlow(accounts: Json[], surplusRoutingRule: Json | undefined) {
-  const hubs = accounts
-    .filter((a) => a.isSpendingAccount === true)
-    .map((a) => ({ accountId: a.id, bufferAmount: a.targetCashBalance ?? null }));
-  const fillOrder = accounts
+  const wasFixedSplit = surplusRoutingRule?.mode === "fixed_split";
+  const splitOrder = accounts
     .filter((a) => a.isSurplusTarget === true)
     .sort((a, b) => (a.surplusTargetPriority ?? 0) - (b.surplusTargetPriority ?? 0))
     .map((a) => ({
       accountId: a.id,
+      kind: "percent_of_remainder" as const,
+      amount: null,
+      pct: wasFixedSplit ? (surplusRoutingRule.splits ?? []).find((s: Json) => s.accountId === a.id)?.pct ?? 0 : 1,
       maxBalance: a.maxBalance ?? null,
       maxBalanceGrowthRatePct: a.maxBalanceGrowthRatePct ?? null,
-      splitPct:
-        surplusRoutingRule?.mode === "fixed_split"
-          ? (surplusRoutingRule.splits ?? []).find((s: Json) => s.accountId === a.id)?.pct ?? null
-          : null,
     }));
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
     .sort((a, b) => a.withdrawalPriority - b.withdrawalPriority)
-    .map((a) => ({ accountId: a.id, startDate: null, endDate: null, splitPct: null }));
+    .map((a) => ({ accountId: a.id, startDate: null, endDate: null, splitPct: null, minBalance: null }));
   return {
-    hubs,
-    fillOrder,
+    splitOrder,
     drainOrder,
-    fillSplitMode: surplusRoutingRule?.mode ?? "priority_fill",
     drainSplitMode: "priority_fill",
   };
 }
@@ -103,7 +116,17 @@ function migrateScenario(scenario: Json): Json {
   // legacy per-account fields are dropped from the accounts themselves.
   const rawAccounts: Json[] = scenario.accounts ?? [];
   const moneyFlow = migrateMoneyFlow(rawAccounts, scenario.settings?.surplusRoutingRule);
-  const accounts = rawAccounts.map(stripLegacyAccountFields);
+  // v3 allows exactly one mandatory Extra Savings account, not a list of
+  // hubs -- only the FIRST v2 account flagged isSpendingAccount becomes it;
+  // any others just lose their hub status (best-effort, matches v3's
+  // single-hub model). If none were flagged, scenarioSchema's auto-inject
+  // transform creates a fresh Extra Savings account when this is parsed.
+  const extraSavingsId = rawAccounts.find((a) => a.isSpendingAccount === true)?.id;
+  const accounts = rawAccounts.map((a) => {
+    const clean = stripLegacyAccountFields(a);
+    if (extraSavingsId !== undefined && a.id === extraSavingsId) clean.isExtraSavings = true;
+    return clean;
+  });
   const incomeSources: Json[] = [...(scenario.incomeSources ?? [])];
   const expenses: Json[] = [...(scenario.expenses ?? [])];
   const remainingEvents: Json[] = [];
