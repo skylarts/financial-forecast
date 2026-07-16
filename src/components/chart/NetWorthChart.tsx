@@ -29,6 +29,33 @@ const CLICK_MOVE_THRESHOLD = 4;
 const CHART_COLORS = ["#5b8def", "#3ecf8e", "#e8555a", "#f4b740", "#a97bea", "#3ec7cf", "#f2789f", "#8fd14f"];
 const PINK_CHART_COLORS = ["#ff4fa3", "#c874e8", "#ff8fab", "#f4a63b", "#8a6bea", "#3ec7cf", "#e8555a", "#5b8def"];
 
+/** One base hue per account class, so "By Account" reads as a color family
+ *  per class (e.g. every blue is cash) with individual accounts as shades
+ *  of that hue rather than unrelated colors. */
+const ACCOUNT_CLASS_HUE: Record<AccountClass, number> = {
+  cash: 212,
+  taxable_investment: 152,
+  tax_free: 268,
+  tax_deferred: 32,
+  real_estate: 176,
+  other_asset: 48,
+  credit_card: 355,
+  loan: 15,
+  mortgage: 335,
+};
+
+/** Evenly spread lightness across a class's accounts so shades stay visually
+ *  distinct even with several accounts in the same class; a single account
+ *  gets a mid-range shade. Ranges differ per theme since dark backgrounds
+ *  need brighter lines and the light pink theme needs darker ones. */
+function accountClassColor(hue: number, index: number, count: number, isPink: boolean): string {
+  const saturation = isPink ? 70 : 72;
+  const [minL, maxL] = isPink ? [32, 56] : [42, 78];
+  const t = count <= 1 ? 0.5 : index / (count - 1);
+  const lightness = Math.round(maxL - t * (maxL - minL));
+  return `hsl(${hue} ${saturation}% ${lightness}%)`;
+}
+
 // Recharts needs concrete color strings, so mirror the two palettes here.
 const CHART_THEME = {
   dark: { grid: "#2a3245", axis: "#9aa4b8", tooltipBg: "#171d2b", tooltipBorder: "#2a3245", label: "#e6e9f0" },
@@ -218,6 +245,18 @@ export function NetWorthChart({
     [allAccounts]
   );
 
+  /** Per-account line/legend color -- a shade of its class's base hue. */
+  const accountColors = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of groupAccountsByClass(accounts)) {
+      const hue = ACCOUNT_CLASS_HUE[group.cls];
+      group.accounts.forEach((a, i) => {
+        map.set(a.id, accountClassColor(hue, i, group.accounts.length, isPink));
+      });
+    }
+    return map;
+  }, [accounts, isPink]);
+
   const compareByYear = useMemo(() => {
     if (!compareScenario) return null;
     const map = new Map<number, YearSnapshot>();
@@ -371,7 +410,6 @@ export function NetWorthChart({
   // mount, which doesn't reliably track our sort order -- render our own
   // legend for "By Account" straight from the sorted `accounts` array instead.
   const renderAccountLegend = () => {
-    const colorIndex = new Map(accounts.map((a, i) => [a.id, i]));
     const groups = groupAccountsByClass(accounts);
     return (
       <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs">
@@ -395,7 +433,7 @@ export function NetWorthChart({
                   >
                     <span
                       className="inline-block h-2.5 w-2.5 rounded-full"
-                      style={{ background: palette[(colorIndex.get(a.id) ?? 0) % palette.length] }}
+                      style={{ background: accountColors.get(a.id) }}
                     />
                     <span>{a.name}</span>
                   </li>
@@ -546,12 +584,12 @@ export function NetWorthChart({
                 )}
               </>
             ) : (
-              accounts.map((a, i) => (
+              accounts.map((a) => (
                 <Line
                   key={a.id}
                   type="monotone"
                   dataKey={a.id}
-                  stroke={palette[i % palette.length]}
+                  stroke={accountColors.get(a.id)}
                   dot={false}
                   strokeWidth={2}
                   hide={hiddenAccountIds.has(a.id)}
