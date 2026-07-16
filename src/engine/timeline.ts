@@ -1,5 +1,6 @@
 import type { Scenario, ScenarioEvent, TimelineRow } from "@/domain";
-import { ageOn, yearOf } from "./dateMath";
+import { ageOn, elapsedYears, yearOf } from "./dateMath";
+import { freqLabel } from "@/lib/timelineFormat";
 
 export function buildTimeline(scenario: Scenario): TimelineRow[] {
   const personName = (id: string | null) =>
@@ -16,19 +17,34 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
         description = `${personName(event.personId)} retires${age !== null ? ` at age ${age}` : ""}`;
         break;
       }
-      case "buy_home":
-        description = `Buy a home for $${event.purchasePrice.toLocaleString()}${
-          event.mortgage ? " (financed)" : " (cash)"
-        }`;
+      case "buy_home": {
+        const financing = event.mortgage
+          ? ` financed over ${Math.round(event.mortgage.termMonths / 12)} yrs at ${(
+              event.mortgage.annualInterestRatePct * 100
+            ).toFixed(2)}%`
+          : " paid in cash";
+        description = `Buy a home for $${event.purchasePrice.toLocaleString()},${financing}`;
         break;
-      case "have_a_kid":
-        description = `New dependent — childcare $${event.childcareMonthlyExpense.toLocaleString()}/mo`;
+      }
+      case "have_a_kid": {
+        const end = event.childcareEndDate;
+        const duration = end
+          ? `for ${Math.round(elapsedYears(event.startDate, end))} yrs (through ${yearOf(end)})`
+          : "through end of plan";
+        const oneTime = event.additionalOneTimeCost
+          ? ` · $${event.additionalOneTimeCost.toLocaleString()} upfront`
+          : "";
+        description = `Childcare $${event.childcareMonthlyExpense.toLocaleString()}/mo ${duration}${oneTime}`;
         break;
-      case "custom_transfer":
-        description = `Transfer $${event.amount.toLocaleString()}/${event.frequency} from ${accountName(
+      }
+      case "custom_transfer": {
+        const freq = freqLabel(event.frequency, event.intervalYears);
+        const until = event.endDate ? ` until ${yearOf(event.endDate)}` : "";
+        description = `Transfer $${event.amount.toLocaleString()}${freq} from ${accountName(
           event.fromAccountId
-        )} to ${accountName(event.toAccountId)}`;
+        )} to ${accountName(event.toAccountId)}${until}`;
         break;
+      }
     }
     return {
       eventId: event.id,

@@ -9,6 +9,7 @@ import {
   haveAKidEventSchema,
   customTransferEventSchema,
 } from "@/domain";
+import { addMonths, elapsedYears } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -48,9 +49,9 @@ interface FormValues {
   propertyGrowthRatePct: string;
   financed: boolean;
   mortgageRate: string;
-  mortgageTermMonths: string;
+  mortgageTermYears: string;
   childcareMonthlyExpense: string;
-  childcareEndDate: string;
+  childcareYears: string;
   additionalOneTimeCost: string;
   kidPaymentAccountId: string;
   transferAmount: string;
@@ -74,9 +75,9 @@ const DEFAULTS: FormValues = {
   propertyGrowthRatePct: "0.03",
   financed: true,
   mortgageRate: "0.06",
-  mortgageTermMonths: "360",
+  mortgageTermYears: "30",
   childcareMonthlyExpense: "",
-  childcareEndDate: "",
+  childcareYears: "",
   additionalOneTimeCost: "",
   kidPaymentAccountId: "",
   transferAmount: "",
@@ -107,13 +108,15 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         propertyGrowthRatePct: event.propertyGrowthRatePct.toString(),
         financed: event.mortgage !== null,
         mortgageRate: event.mortgage?.annualInterestRatePct.toString() ?? "0.06",
-        mortgageTermMonths: event.mortgage?.termMonths.toString() ?? "360",
+        mortgageTermYears: event.mortgage ? Math.round(event.mortgage.termMonths / 12).toString() : "30",
       };
     case "have_a_kid":
       return {
         ...base,
         childcareMonthlyExpense: event.childcareMonthlyExpense.toString(),
-        childcareEndDate: event.childcareEndDate ?? "",
+        childcareYears: event.childcareEndDate
+          ? Math.round(elapsedYears(event.startDate, event.childcareEndDate)).toString()
+          : "",
         additionalOneTimeCost: event.additionalOneTimeCost?.toString() ?? "",
         kidPaymentAccountId: event.paymentAccountId,
       };
@@ -188,7 +191,7 @@ export function EventDrawer({
           downPaymentFromAccountId: v.downPaymentFromAccountId,
           propertyGrowthRatePct: Number(v.propertyGrowthRatePct),
           mortgage: v.financed
-            ? { annualInterestRatePct: Number(v.mortgageRate), termMonths: Number(v.mortgageTermMonths) }
+            ? { annualInterestRatePct: Number(v.mortgageRate), termMonths: Number(v.mortgageTermYears) * 12 }
             : null,
         };
         schema = buyHomeEventSchema.omit({ id: true });
@@ -198,7 +201,7 @@ export function EventDrawer({
           ...base,
           type: "have_a_kid",
           childcareMonthlyExpense: Number(v.childcareMonthlyExpense),
-          childcareEndDate: v.childcareEndDate || null,
+          childcareEndDate: v.childcareYears.trim() !== "" ? addMonths(v.startDate, Number(v.childcareYears) * 12) : null,
           additionalOneTimeCost: v.additionalOneTimeCost ? Number(v.additionalOneTimeCost) : undefined,
           paymentAccountId: v.kidPaymentAccountId,
         };
@@ -290,8 +293,8 @@ export function EventDrawer({
                   <Field label="Mortgage Rate">
                     <TextInput reg={register("mortgageRate")} type="number" step="0.001" />
                   </Field>
-                  <Field label="Term (months)">
-                    <TextInput reg={register("mortgageTermMonths")} type="number" />
+                  <Field label="Term (years)">
+                    <TextInput reg={register("mortgageTermYears")} type="number" step="1" />
                   </Field>
                 </>
               )}
@@ -300,13 +303,16 @@ export function EventDrawer({
 
           {selectedType === "have_a_kid" && (
             <>
-              <Field label="Monthly Childcare Expense" hint="Today's dollars -- inflated forward to when it occurs.">
+              <Field label="Monthly Childcare Expense" hint="Today's dollars -- inflates with the plan's inflation rate as each month's cost comes due.">
                 <TextInput reg={register("childcareMonthlyExpense", { required: true })} type="number" step="0.01" />
               </Field>
-              <Field label="Childcare End Date (optional)">
-                <TextInput reg={register("childcareEndDate")} type="date" />
+              <Field
+                label="Years of Child Expenses (optional)"
+                hint="An existing child? Enter remaining years of expenses. Leave blank to run through the end of the plan."
+              >
+                <TextInput reg={register("childcareYears")} type="number" min="0" step="1" placeholder="e.g. 18" />
               </Field>
-              <Field label="One-time Cost (optional)" hint="Today's dollars -- inflated forward to when it occurs.">
+              <Field label="Upfront Child Costs (optional)" hint="One-time costs for birth, adoption, or setup -- today's dollars, inflated forward to when it occurs.">
                 <TextInput reg={register("additionalOneTimeCost")} type="number" step="0.01" />
               </Field>
               <Field label="Payment Account">
