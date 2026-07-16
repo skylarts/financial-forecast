@@ -28,9 +28,9 @@ function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: Yea
     <>
       {fields.map((f) => (
         <tr key={f.label} className="bg-background/30 text-xs text-dim">
-          <td className="py-1 pl-14">{f.label}</td>
+          <td className="py-1.5 pl-14">{f.label}</td>
           {years.map((y) => (
-            <td key={y.year} className="py-1 pr-2 text-right">
+            <td key={y.year} className="py-1.5 pr-2 text-right">
               {formatMoney(deflate(f.get(y), y, mode))}
             </td>
           ))}
@@ -66,7 +66,7 @@ function AccountRow({
   return (
     <>
       <tr className="hover:bg-accent/15">
-        <td className="cursor-pointer py-1.5 pl-10" onClick={() => setExpanded((v) => !v)}>
+        <td className="cursor-pointer py-2 pl-10" onClick={() => setExpanded((v) => !v)}>
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}
           {account.isExcluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
@@ -85,7 +85,7 @@ function AccountRow({
           )}
         </td>
         {years.map((y) => (
-          <td key={y.year} className="py-1.5 pr-2 text-right" onClick={() => setExpanded((v) => !v)}>
+          <td key={y.year} className="py-2 pr-2 text-right" onClick={() => setExpanded((v) => !v)}>
             {formatMoney(deflate(balanceOf(y, account.id), y, mode))}
           </td>
         ))}
@@ -144,11 +144,11 @@ function Section({
   return (
     <>
       <tr className="border-t border-border">
-        <td className="py-2 pl-2 font-semibold">
+        <td className="py-2.5 pl-2 font-semibold">
           <ToggleLabel label={title} expanded={sectionOpen} onToggle={() => setSectionOpen((v) => !v)} />
         </td>
         {years.map((y) => (
-          <td key={y.year} className="py-2 pr-2 text-right font-semibold">
+          <td key={y.year} className="py-2.5 pr-2 text-right font-semibold">
             {formatMoney(deflate(sectionTotal(y), y, mode))}
           </td>
         ))}
@@ -158,12 +158,12 @@ function Section({
           const groupOpen = openGroups.has(g.label);
           return (
             <Fragment key={g.label}>
-              <tr className="text-dim">
-                <td className="py-1.5 pl-6">
+              <tr className="border-t border-border/40 text-dim">
+                <td className="py-2 pl-6">
                   <ToggleLabel label={g.label} expanded={groupOpen} onToggle={() => toggleGroup(g.label)} />
                 </td>
                 {years.map((y) => (
-                  <td key={y.year} className="py-1.5 pr-2 text-right">
+                  <td key={y.year} className="py-2 pr-2 text-right">
                     {formatMoney(deflate(includedBalance(y, g.accounts), y, mode))}
                   </td>
                 ))}
@@ -228,22 +228,22 @@ export function AccountsTable({
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <div className="max-h-[70vh] overflow-auto">
-        <table className="w-full text-xs tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <table className="w-full text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
-              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel py-2 pl-2 font-medium">Account</th>
+              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel py-2.5 pl-2 font-medium">Account</th>
               {years.map((y) => (
-                <th key={y.year} className="py-2 pr-2 text-right font-medium">
+                <th key={y.year} className="py-2.5 pr-2 text-right font-medium">
                   {y.year}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td className="py-2 pl-2 font-bold">Net Worth</td>
+            <tr className="border-b border-border">
+              <td className="py-2.5 pl-2 font-bold">Net Worth</td>
               {years.map((y) => (
-                <td key={y.year} className="py-2 pr-2 text-right font-bold">
+                <td key={y.year} className="py-2.5 pr-2 text-right font-bold">
                   {formatMoney(netWorthOf(y))}
                 </td>
               ))}

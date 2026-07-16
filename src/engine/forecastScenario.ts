@@ -243,6 +243,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // as a withdrawal like any other account, and "cash on hand" means Extra
   // Savings' balance specifically, not checking's.
   const hubIds = new Set<Id>(extraSavingsAccount ? [extraSavingsAccount.id] : []);
+  // All active "cash" accounts (Extra Savings, checking, an emergency fund,
+  // etc.), used only for the "cash on hand" figure shown on the Cash Flow
+  // tab -- broader than hubIds, which stays scoped to Extra Savings alone
+  // for withdrawal/transfer categorization elsewhere in this function.
+  const cashAccountIds = new Set<Id>(activeAccounts.filter((a) => a.class === "cash").map((a) => a.id));
 
   const balances = new Map<Id, number>(accounts.map((a) => [a.id, 0]));
   // Cost basis for taxable_investment accounts (average-cost method -- no
@@ -773,16 +778,19 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const cumulativeInflation = Math.pow(1 + settings.inflationRatePct, currentYear - yearOf(settings.startDate));
       const netWorthReal = netWorthNominal / cumulativeInflation;
 
-      // "Cash on hand" is scoped to the spending hub account(s) specifically
-      // (not every class="cash" account) -- a savings/emergency-fund account
-      // is a withdrawal source like any other, not part of your operating
-      // cash. Measuring the hub's actual balance delta directly (rather than
-      // summing itemized buckets) guarantees the statement always reconciles
-      // exactly, with no possibility of an uncaptured mechanism silently
-      // creating a gap.
-      const hubCashStart = [...hubIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
-      const endingCashBalance = [...hubIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
-      const hubCashInterest = [...hubIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
+      // "Cash on hand" is the total balance across every class="cash" account
+      // (Extra Savings, checking, an emergency fund, etc.) -- broader than
+      // the money-flow hub used elsewhere for withdrawal/transfer
+      // categorization, since a surplus swept from the hub into checking or
+      // an emergency fund is still cash, not withdrawn or invested. Because
+      // it spans multiple accounts rather than measuring one hub's balance
+      // delta, "Net change in cash" below is no longer guaranteed to
+      // reconcile exactly to the itemized rows above it -- any gap is real
+      // cash movement between hub and non-hub cash accounts that isn't
+      // separately itemized elsewhere on this statement.
+      const hubCashStart = [...cashAccountIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
+      const endingCashBalance = [...cashAccountIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
+      const hubCashInterest = [...cashAccountIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
 
       // Sorted line-item arrays; labels come from itemLabels (posting/mortgage
       // ids) or the account name (for account-keyed maps).
