@@ -40,6 +40,15 @@ function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: Yea
   );
 }
 
+function ToggleLabel({ label, expanded, onToggle }: { label: string; expanded: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" onClick={onToggle} className="flex items-center gap-1 text-left">
+      <span className="inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
+      {label}
+    </button>
+  );
+}
+
 function AccountRow({
   account,
   years,
@@ -103,8 +112,25 @@ function Section({
   onEdit: (account: Account) => void;
   mode: DollarMode;
 }) {
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (label: string) =>
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+
   const groups = groupDefs
-    .map((g) => ({ ...g, accounts: accounts.filter((a) => g.classes.includes(a.class)) }))
+    .map((g) => ({
+      ...g,
+      // Extra Savings is the mandatory system account -- always shown last
+      // within its class group (Cash) rather than sorted in with the rest.
+      accounts: accounts
+        .filter((a) => g.classes.includes(a.class))
+        .sort((a, b) => Number(!!a.isExtraSavings) - Number(!!b.isExtraSavings)),
+    }))
     .filter((g) => g.accounts.length > 0);
 
   // Excluded accounts are still shown as a row (see AccountRow's badge) but
@@ -117,36 +143,45 @@ function Section({
 
   return (
     <>
-      <tr className="border-t border-border bg-background/40">
-        <td className="py-2 pl-2 font-semibold">{title}</td>
+      <tr className="border-t border-border">
+        <td className="py-2 pl-2 font-semibold">
+          <ToggleLabel label={title} expanded={sectionOpen} onToggle={() => setSectionOpen((v) => !v)} />
+        </td>
         {years.map((y) => (
           <td key={y.year} className="py-2 pr-2 text-right font-semibold">
             {formatMoney(deflate(sectionTotal(y), y, mode))}
           </td>
         ))}
       </tr>
-      {groups.map((g) => (
-        <Fragment key={g.label}>
-          <tr className="text-dim">
-            <td className="py-1.5 pl-6">{g.label}</td>
-            {years.map((y) => (
-              <td key={y.year} className="py-1.5 pr-2 text-right">
-                {formatMoney(deflate(includedBalance(y, g.accounts), y, mode))}
-              </td>
-            ))}
-          </tr>
-          {g.accounts.map((a) => (
-            <AccountRow
-              key={a.id}
-              account={a}
-              years={years}
-              editable={editableIds.has(a.id)}
-              onEdit={() => onEdit(a)}
-              mode={mode}
-            />
-          ))}
-        </Fragment>
-      ))}
+      {sectionOpen &&
+        groups.map((g) => {
+          const groupOpen = openGroups.has(g.label);
+          return (
+            <Fragment key={g.label}>
+              <tr className="text-dim">
+                <td className="py-1.5 pl-6">
+                  <ToggleLabel label={g.label} expanded={groupOpen} onToggle={() => toggleGroup(g.label)} />
+                </td>
+                {years.map((y) => (
+                  <td key={y.year} className="py-1.5 pr-2 text-right">
+                    {formatMoney(deflate(includedBalance(y, g.accounts), y, mode))}
+                  </td>
+                ))}
+              </tr>
+              {groupOpen &&
+                g.accounts.map((a) => (
+                  <AccountRow
+                    key={a.id}
+                    account={a}
+                    years={years}
+                    editable={editableIds.has(a.id)}
+                    onEdit={() => onEdit(a)}
+                    mode={mode}
+                  />
+                ))}
+            </Fragment>
+          );
+        })}
     </>
   );
 }
@@ -193,10 +228,10 @@ export function AccountsTable({
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <div className="max-h-[70vh] overflow-auto">
-        <table className="w-full text-xs tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <table className="w-full text-xs tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
-              <th className="sticky left-0 top-0 z-30 border-b border-r border-border bg-panel py-2 pl-2 font-medium">Account</th>
+              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel py-2 pl-2 font-medium">Account</th>
               {years.map((y) => (
                 <th key={y.year} className="py-2 pr-2 text-right font-medium">
                   {y.year}
@@ -215,7 +250,7 @@ export function AccountsTable({
             </tr>
             <Section
               title="Assets"
-              accounts={accounts.filter((a) => a.category === "asset" && !a.isExtraSavings)}
+              accounts={accounts.filter((a) => a.category === "asset")}
               years={years}
               groups={ASSET_CLASS_GROUPS}
               editableIds={editableAccountIds}
@@ -237,35 +272,6 @@ export function AccountsTable({
               }}
               mode={dollarMode}
             />
-            {/* Extra Savings is the mandatory system account, not a class of
-                accounts -- shown as its own peer section at the very bottom
-                instead of folded into the Cash group under Assets. */}
-            {(() => {
-              const extraSavings = accounts.find((a) => a.isExtraSavings);
-              if (!extraSavings) return null;
-              return (
-                <Fragment>
-                  <tr className="border-t border-border bg-background/40">
-                    <td className="py-2 pl-2 font-semibold">Extra Savings</td>
-                    {years.map((y) => (
-                      <td key={y.year} className="py-2 pr-2 text-right font-semibold">
-                        {formatMoney(deflate(balanceOf(y, extraSavings.id), y, dollarMode))}
-                      </td>
-                    ))}
-                  </tr>
-                  <AccountRow
-                    account={extraSavings}
-                    years={years}
-                    editable={editableAccountIds.has(extraSavings.id)}
-                    onEdit={() => {
-                      setDrawerAccount(extraSavings);
-                      setDrawerOpen(true);
-                    }}
-                    mode={dollarMode}
-                  />
-                </Fragment>
-              );
-            })()}
           </tbody>
         </table>
         </div>

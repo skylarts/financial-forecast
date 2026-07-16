@@ -113,7 +113,7 @@ export function CashFlowTable({
   const wdGrossMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.withdrawalsByAccount.map((w) => [w.id, w.gross]))), [years]);
   const wdTaxMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.withdrawalsByAccount.map((w) => [w.id, w.tax]))), [years]);
 
-  const incomeItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.incomeByItem)), [years]);
+  const incomeItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.incomeByItem), "date"), [years]);
   const expenseItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.expenseByItem), "date"), [years]);
   const contribItems = useMemo(() => {
     const fromPay = new Map<string, boolean>();
@@ -159,7 +159,7 @@ export function CashFlowTable({
   // Sum of a row's deflated per-year values across the selected range.
   const totalOf = (get: (yi: number) => number) => years.reduce((s, _y, yi) => s + d(get(yi), yi), 0);
 
-  const totalCellClass = "py-1.5 pr-3 text-right tabular-nums border-l border-border bg-background/40 font-medium";
+  const totalCellClass = "py-1.5 pr-3 text-right tabular-nums bg-background/40 font-medium";
 
   const totalCell = (v: number, opts?: { signed?: boolean }) => (
     <td className={totalCellClass}>
@@ -239,16 +239,16 @@ export function CashFlowTable({
   return (
     <div className="flex flex-col gap-2">
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
-        <table className="w-full text-xs tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <table className="w-full text-xs tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
-              <th className="sticky left-0 top-0 z-30 border-b border-r border-border bg-panel py-2 pl-2 font-medium">Category</th>
+              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel py-2 pl-2 font-medium">Category</th>
               {years.map((y) => (
                 <th key={y.year} className="py-2 pr-3 text-right font-medium">
                   {y.year}
                 </th>
               ))}
-              <th className="border-l border-border bg-background/40 py-2 pr-3 text-right font-medium">
+              <th className="bg-background/40 py-2 pr-3 text-right font-medium">
                 Total ({years[0].year}–{years[years.length - 1].year})
               </th>
             </tr>
@@ -339,6 +339,13 @@ export function CashFlowTable({
               )}
             {hasSaved && isOpen("saved") && (
               <>
+                {surplusItems.length > 0 && (
+                  <tr className="text-dim">
+                    <td className="py-1.5 pl-10 font-medium">Surplus swept to savings/investments</td>
+                    {cells((yi) => years[yi].cashFlow.surplusRouted)}
+                  </tr>
+                )}
+                {itemRows(surplusItems, surplusMaps, "pl-14")}
                 {contribItems.map((item) => (
                   <tr key={item.id} className={`hover:bg-accent/15 ${item.fromPaycheck ? "text-dim/60" : "text-dim"}`}>
                     <td className="py-1.5 pl-10">
@@ -348,13 +355,6 @@ export function CashFlowTable({
                     {cells((yi) => contribMaps[yi].get(item.id) ?? 0)}
                   </tr>
                 ))}
-                {surplusItems.length > 0 && (
-                  <tr className="text-dim">
-                    <td className="py-1.5 pl-10 font-medium">Surplus swept to savings/investments</td>
-                    {cells((yi) => years[yi].cashFlow.surplusRouted)}
-                  </tr>
-                )}
-                {itemRows(surplusItems, surplusMaps, "pl-14")}
               </>
             )}
 

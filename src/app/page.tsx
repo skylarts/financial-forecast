@@ -42,7 +42,7 @@ function HomeContent() {
     <div className="flex min-h-screen flex-1 flex-col">
       <Header scenario={scenario} />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-6">
-        <KpiStrip kpis={projection.kpis} dollarMode={dollarMode} />
+        <KpiStrip kpis={projection.kpis} years={years} dollarMode={dollarMode} />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
         <YearRangePicker
           minYear={minYear}

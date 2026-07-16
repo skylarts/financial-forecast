@@ -132,7 +132,7 @@ export function ExpenseDrawer({
           <SelectInput
             reg={register("paymentAccountId")}
             options={[
-              { value: "", label: "Automatic (Extra Savings)" },
+              { value: "", label: "Extra Savings (Default)" },
               ...accounts.filter((a) => !a.isExtraSavings).map((a) => ({ value: a.id, label: a.name })),
             ]}
           />

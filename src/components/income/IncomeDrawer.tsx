@@ -152,7 +152,7 @@ export function IncomeDrawer({
           <SelectInput
             reg={register("depositAccountId")}
             options={[
-              { value: "", label: "Automatic (Extra Savings)" },
+              { value: "", label: "Extra Savings (Default)" },
               ...accounts.filter((a) => !a.isExtraSavings).map((a) => ({ value: a.id, label: a.name })),
             ]}
           />
