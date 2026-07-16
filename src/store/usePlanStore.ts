@@ -244,8 +244,6 @@ export const usePlanStore = create<PlanState>()(
                 return e.paymentAccountId === id;
               case "custom_transfer":
                 return e.fromAccountId === id || e.toAccountId === id;
-              case "growth_rate_change":
-                return e.targetAccountId === id;
               default:
                 return false;
             }

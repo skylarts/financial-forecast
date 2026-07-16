@@ -4,9 +4,9 @@ import type { Id, ISODate, Account, LoanTerms, TimelineRow } from "@/domain";
 export interface EngineAccount extends Account {
   effectiveStartDate: ISODate;
   /**
-   * growth_rate_change events targeting this account, sorted ascending by
-   * startDate. The engine uses the last entry whose startDate has passed as
-   * of the current month, replacing growthRatePct / propertyGrowthRatePct.
+   * The account's growthRateSchedule entries, sorted ascending by startDate.
+   * The engine uses the last entry whose startDate has passed as of the
+   * current month, replacing growthRatePct / propertyGrowthRatePct.
    */
   growthRateOverrides?: { startDate: ISODate; growthRatePct: number }[];
 }

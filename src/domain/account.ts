@@ -138,7 +138,7 @@ export const accountObjectSchema = z
     linkedLiabilityId: idSchema.optional(),
     /** Optional recurring contribution into this account. Ignored when contributionSchedule is set. */
     contribution: contributionSchema.nullable().optional(),
-    /** Optional date-ranged growth-rate schedule; growthRatePct above is the rate before the first entry starts. Merged with growth_rate_change events in the engine (see resolveEvents.ts). */
+    /** Optional date-ranged growth-rate schedule; growthRatePct above is the rate before the first entry starts. See resolveEvents.ts. */
     growthRateSchedule: z.array(growthRateScheduleEntrySchema).optional(),
     /** Optional date-ranged contribution schedule; supersedes the single `contribution` field when present. */
     contributionSchedule: z.array(contributionScheduleSegmentSchema).optional(),

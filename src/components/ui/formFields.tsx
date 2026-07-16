@@ -5,12 +5,30 @@ export const inputClass =
   "w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground";
 export const labelClass = "flex flex-col gap-1 text-xs text-dim";
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className={labelClass}>
-      {label}
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {hint && <InfoTooltip text={hint} />}
+      </span>
       {children}
     </label>
+  );
+}
+
+/** Small "i" badge that reveals `text` in a tooltip on hover/focus -- for
+ *  explanatory detail that shouldn't sit inline and lengthen a label. */
+export function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span tabIndex={0} className="group relative inline-flex cursor-help items-center normal-case">
+      <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-dim/60 text-[9px] leading-none text-dim">
+        i
+      </span>
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden w-56 -translate-x-1/2 rounded-md border border-border bg-panel p-2 text-xs font-normal normal-case text-foreground shadow-lg group-hover:block group-focus:block">
+        {text}
+      </span>
+    </span>
   );
 }
 

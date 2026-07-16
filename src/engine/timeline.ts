@@ -29,9 +29,6 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
           event.fromAccountId
         )} to ${accountName(event.toAccountId)}`;
         break;
-      case "growth_rate_change":
-        description = `${accountName(event.targetAccountId)} growth rate changes to ${(event.newGrowthRatePct * 100).toFixed(1)}%`;
-        break;
     }
     return {
       eventId: event.id,

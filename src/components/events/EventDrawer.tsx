@@ -8,7 +8,6 @@ import {
   buyHomeEventSchema,
   haveAKidEventSchema,
   customTransferEventSchema,
-  growthRateChangeEventSchema,
 } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
@@ -26,7 +25,6 @@ const EVENT_TEMPLATES: { type: EventType; label: string; hint: string }[] = [
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
   { type: "have_a_kid", label: "Have a kid", hint: "Childcare costs + optional one-time cost" },
   { type: "custom_transfer", label: "Custom transfer", hint: "Move money between two of your accounts" },
-  { type: "growth_rate_change", label: "Change growth rate", hint: "Shift an account to a new rate of return, e.g. de-risking at retirement" },
 ];
 
 const FREQUENCIES: { value: RecurrenceFrequency; label: string }[] = [
@@ -61,8 +59,6 @@ interface FormValues {
   transferFrequency: RecurrenceFrequency;
   transferGrowthRatePct: string;
   transferIntervalYears: string;
-  growthChangeAccountId: string;
-  growthChangeNewRatePct: string;
 }
 
 const DEFAULTS: FormValues = {
@@ -89,8 +85,6 @@ const DEFAULTS: FormValues = {
   transferFrequency: "monthly",
   transferGrowthRatePct: "",
   transferIntervalYears: "",
-  growthChangeAccountId: "",
-  growthChangeNewRatePct: "",
 };
 
 function eventToFormValues(event: ScenarioEvent): FormValues {
@@ -132,12 +126,6 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         transferFrequency: event.frequency,
         transferGrowthRatePct: event.growthRatePct?.toString() ?? "",
         transferIntervalYears: event.intervalYears?.toString() ?? "",
-      };
-    case "growth_rate_change":
-      return {
-        ...base,
-        growthChangeAccountId: event.targetAccountId,
-        growthChangeNewRatePct: event.newGrowthRatePct.toString(),
       };
   }
 }
@@ -233,15 +221,6 @@ export function EventDrawer({
         };
         schema = customTransferEventSchema.omit({ id: true });
         break;
-      case "growth_rate_change":
-        candidate = {
-          ...base,
-          type: "growth_rate_change",
-          targetAccountId: v.growthChangeAccountId,
-          newGrowthRatePct: Number(v.growthChangeNewRatePct),
-        };
-        schema = growthRateChangeEventSchema.omit({ id: true });
-        break;
     }
 
     const result = schema.safeParse(candidate);
@@ -285,7 +264,7 @@ export function EventDrawer({
               <Field label="Person">
                 <SelectInput reg={register("personId")} options={personOptions} />
               </Field>
-              <Field label="Retirement Age (optional override)">
+              <Field label="Retirement Age" hint="Optional -- overrides the person's default retirement age from Assumptions for this event only.">
                 <TextInput reg={register("retirementAge")} type="number" />
               </Field>
             </>
@@ -293,16 +272,12 @@ export function EventDrawer({
 
           {selectedType === "buy_home" && (
             <>
-              <Field label="Purchase Price (today's dollars)">
+              <Field label="Purchase Price" hint="Today's dollars -- inflated forward to the purchase date.">
                 <TextInput reg={register("purchasePrice", { required: true })} type="number" step="0.01" />
               </Field>
-              <Field label="Down Payment (today's dollars)">
+              <Field label="Down Payment" hint="Today's dollars -- inflated the same as the purchase price, so it stays the same share.">
                 <TextInput reg={register("downPaymentAmount", { required: true })} type="number" step="0.01" />
               </Field>
-              <p className="-mt-1 text-xs text-dim">
-                Both are inflated from today to the purchase date by the same factor, so the down payment stays the
-                same share of the purchase price.
-              </p>
               <Field label="Down Payment From">
                 <SelectInput reg={register("downPaymentFromAccountId", { required: true })} options={accountOptions} />
               </Field>
@@ -325,18 +300,15 @@ export function EventDrawer({
 
           {selectedType === "have_a_kid" && (
             <>
-              <Field label="Monthly Childcare Expense (today's dollars)">
+              <Field label="Monthly Childcare Expense" hint="Today's dollars -- inflated forward to when it occurs.">
                 <TextInput reg={register("childcareMonthlyExpense", { required: true })} type="number" step="0.01" />
               </Field>
               <Field label="Childcare End Date (optional)">
                 <TextInput reg={register("childcareEndDate")} type="date" />
               </Field>
-              <Field label="One-time Cost (today's dollars, optional)">
+              <Field label="One-time Cost (optional)" hint="Today's dollars -- inflated forward to when it occurs.">
                 <TextInput reg={register("additionalOneTimeCost")} type="number" step="0.01" />
               </Field>
-              <p className="-mt-1 text-xs text-dim">
-                Both are automatically inflated from today to when they occur.
-              </p>
               <Field label="Payment Account">
                 <SelectInput reg={register("kidPaymentAccountId", { required: true })} options={accountOptions} />
               </Field>
@@ -345,7 +317,7 @@ export function EventDrawer({
 
           {selectedType === "custom_transfer" && (
             <>
-              <Field label="Amount (per occurrence, today's dollars)">
+              <Field label="Amount" hint="Per occurrence, today's dollars -- inflated forward from today to the start date.">
                 <TextInput reg={register("transferAmount", { required: true })} type="number" step="0.01" />
               </Field>
               <Field label="From Account">
@@ -357,38 +329,18 @@ export function EventDrawer({
               <Field label="Frequency">
                 <SelectInput reg={register("transferFrequency")} options={FREQUENCIES} />
               </Field>
-              <Field label="Or repeat every N years (optional)">
+              <Field
+                label="Or repeat every N years (optional)"
+                hint="For a repeat purchase like a car every few years. Overrides the Frequency above."
+              >
                 <TextInput reg={register("transferIntervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
               </Field>
-              <p className="-mt-1 text-xs text-dim">
-                For a repeat purchase like a car every few years: repeats every N years from the start date and overrides
-                the frequency above.
-              </p>
-              <Field label="End Date (optional -- leave blank to continue to the end of the plan)">
+              <Field label="End Date (optional)" hint="Leave blank to continue to the end of the plan.">
                 <TextInput reg={register("endDate")} type="date" />
               </Field>
-              <Field label="Annual Growth Rate (optional)">
+              <Field label="Annual Growth Rate (optional)" hint="Applies once the transfer starts.">
                 <TextInput reg={register("transferGrowthRatePct")} type="number" step="0.001" />
               </Field>
-              <p className="-mt-1 text-xs text-dim">
-                Applies once this starts. Before the start date, the amount above is automatically inflated from
-                today to the start date.
-              </p>
-            </>
-          )}
-
-          {selectedType === "growth_rate_change" && (
-            <>
-              <Field label="Account">
-                <SelectInput reg={register("growthChangeAccountId", { required: true })} options={accountOptions} />
-              </Field>
-              <Field label="New Annual Growth Rate">
-                <TextInput reg={register("growthChangeNewRatePct", { required: true })} type="number" step="0.001" />
-              </Field>
-              <p className="-mt-1 text-xs text-dim">
-                Replaces this account&rsquo;s growth rate starting on the date above (e.g. shift to a more conservative
-                rate at retirement). Add another one of these events later to change it again.
-              </p>
             </>
           )}
 

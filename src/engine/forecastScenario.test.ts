@@ -17,32 +17,6 @@ describe("forecastScenario -- account growth", () => {
     expect(result.years[1].accountBalances[account.id]).toBeCloseTo(expected, 0);
   });
 
-  it("switches to a new growth rate on a growth_rate_change event's start date (e.g. de-risking at retirement)", () => {
-    const account = makeAccount({ class: "taxable_investment", startingBalance: 100_000, growthRatePct: 0.08 });
-    const scenario = makeScenario({
-      accounts: [account],
-      events: [
-        {
-          id: nanoid(),
-          type: "growth_rate_change",
-          name: "De-risk at retirement",
-          startDate: "2028-01-01",
-          targetAccountId: account.id,
-          newGrowthRatePct: 0.02,
-        },
-      ],
-      startDate: "2026-01-01",
-      horizonEndDate: "2029-12-31",
-    });
-    const result = forecastScenario(scenario);
-
-    const oldMonthlyRate = Math.pow(1.08, 1 / 12) - 1;
-    const newMonthlyRate = Math.pow(1.02, 1 / 12) - 1;
-    // 23 months (Feb 2026 - Dec 2027) at the original rate, then 24 months
-    // (Jan 2028 - Dec 2029) at the new rate once the event has started.
-    const expected = 100_000 * Math.pow(1 + oldMonthlyRate, 23) * Math.pow(1 + newMonthlyRate, 24);
-    expect(result.years[3].accountBalances[account.id]).toBeCloseTo(expected, 0);
-  });
 });
 
 describe("forecastScenario -- income, expenses, and surplus routing", () => {
@@ -538,7 +512,7 @@ describe("forecastScenario -- account contributions", () => {
 });
 
 describe("forecastScenario -- variable contribution & growth-rate schedules", () => {
-  it("a growth-rate schedule changes the applied rate on the scheduled date, same as a growth_rate_change event", () => {
+  it("a growth-rate schedule changes the applied rate on the scheduled date", () => {
     const account = makeAccount({
       class: "taxable_investment",
       startingBalance: 100_000,
@@ -554,27 +528,24 @@ describe("forecastScenario -- variable contribution & growth-rate schedules", ()
 
     const oldMonthlyRate = Math.pow(1.08, 1 / 12) - 1;
     const newMonthlyRate = Math.pow(1.02, 1 / 12) - 1;
-    // Same shape as the growth_rate_change event test above: 23 months at the
-    // base rate (account's own creation month is skipped), then 24 months at
-    // the scheduled rate once it starts.
+    // 23 months at the base rate (account's own creation month is skipped),
+    // then 24 months at the scheduled rate once it starts.
     const expected = 100_000 * Math.pow(1 + oldMonthlyRate, 23) * Math.pow(1 + newMonthlyRate, 24);
     expect(result.years[3].accountBalances[account.id]).toBeCloseTo(expected, 0);
   });
 
-  it("merges a growth-rate schedule entry with an earlier growth_rate_change event on the same account, both driving the same override list", () => {
-    const account = makeAccount({ class: "taxable_investment", startingBalance: 100_000, growthRatePct: 0.08 });
-    const scenario = makeScenario({
-      accounts: [{ ...account, growthRateSchedule: [{ startDate: "2028-06-01", ratePct: 0.01 }] }],
-      events: [
-        {
-          id: nanoid(),
-          type: "growth_rate_change",
-          name: "De-risk",
-          startDate: "2027-01-01",
-          targetAccountId: account.id,
-          newGrowthRatePct: 0.04,
-        },
+  it("applies successive growth-rate schedule entries on the same account in order", () => {
+    const account = makeAccount({
+      class: "taxable_investment",
+      startingBalance: 100_000,
+      growthRatePct: 0.08,
+      growthRateSchedule: [
+        { startDate: "2027-01-01", ratePct: 0.04 },
+        { startDate: "2028-06-01", ratePct: 0.01 },
       ],
+    });
+    const scenario = makeScenario({
+      accounts: [account],
       startDate: "2026-01-01",
       horizonEndDate: "2029-12-31",
     });
@@ -583,9 +554,9 @@ describe("forecastScenario -- variable contribution & growth-rate schedules", ()
     const m08 = Math.pow(1.08, 1 / 12) - 1;
     const m04 = Math.pow(1.04, 1 / 12) - 1;
     const m01 = Math.pow(1.01, 1 / 12) - 1;
-    // 11 months (2026-02..12) at the base 8%, then the event's 4% takes over
-    // 2027-01-01 through 2028-05 (12 + 5 = 17 months), then the schedule
-    // entry's 1% takes over from 2028-06-01 through end of 2029 (7 + 12 = 19 months).
+    // 11 months (2026-02..12) at the base 8%, then the 4% entry takes over
+    // 2027-01-01 through 2028-05 (12 + 5 = 17 months), then the 1% entry
+    // takes over from 2028-06-01 through end of 2029 (7 + 12 = 19 months).
     const expected = 100_000 * Math.pow(1 + m08, 11) * Math.pow(1 + m04, 17) * Math.pow(1 + m01, 19);
     expect(result.years[3].accountBalances[account.id]).toBeCloseTo(expected, 0);
   });

@@ -5,7 +5,6 @@ export const EVENT_TYPE_ICONS: Record<EventType, string> = {
   buy_home: "🏠",
   have_a_kid: "👶",
   custom_transfer: "🔁",
-  growth_rate_change: "📈",
 };
 
 export const INCOME_CATEGORY_ICONS: Record<IncomeCategory, string> = {

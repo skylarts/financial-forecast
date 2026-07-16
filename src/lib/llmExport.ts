@@ -288,11 +288,6 @@ export function buildLlmExport(scenario: Scenario): string {
             `  - ${fmtRecurrence(ev.amount, ev.frequency, ev.intervalYears)} from ${accountName(ev.fromAccountId)} to ${accountName(ev.toAccountId)}${ev.growthRatePct ? `, ${fmtGrowth(ev.growthRatePct)}` : ""}.`
           );
           break;
-        case "growth_rate_change":
-          lines.push(
-            `  - ${accountName(ev.targetAccountId)}'s growth rate becomes ${fmtPct(ev.newGrowthRatePct)}/yr from this date on (overrides the account's own rate and schedule).`
-          );
-          break;
       }
       if (ev.notes) lines.push(`  - Notes: ${ev.notes}`);
     }

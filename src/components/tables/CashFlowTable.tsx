@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import type { Account, CashFlowLineItem, FederalTaxComponentKey, TaxTreatment, WithdrawalLineItem, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
+import { InfoTooltip } from "@/components/ui/formFields";
 
 // Fixed display order for the federal tax breakdown -- matches the order
 // components are computed in the engine, and stays stable across years
@@ -144,7 +145,6 @@ export function CashFlowTable({
   const hasWithdrawals = withdrawalGroups.length > 0;
   const hasSaved = years.some((y) => y.cashFlow.afterTaxContributionTotal + y.cashFlow.surplusRouted > 0.005);
   const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
-  const hasOtherActivity = years.some((y) => Math.abs(y.cashFlow.otherAccountActivity) > 0.5);
 
   if (years.length === 0) {
     return (
@@ -188,9 +188,18 @@ export function CashFlowTable({
     </>
   );
 
-  const summaryRow = (label: string, get: (yi: number) => number, opts?: { totalIsMeaningful?: boolean; strong?: boolean }) => (
+  const summaryRow = (
+    label: string,
+    get: (yi: number) => number,
+    opts?: { totalIsMeaningful?: boolean; strong?: boolean; hint?: string }
+  ) => (
     <tr className={`border-t border-border ${opts?.strong ? "bg-background/40" : ""}`}>
-      <td className="py-2.5 pl-2 font-bold">{label}</td>
+      <td className="py-2.5 pl-2 font-bold">
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {opts?.hint && <InfoTooltip text={opts.hint} />}
+        </span>
+      </td>
       {years.map((y, yi) => {
         const v = d(get(yi), yi);
         return (
@@ -211,10 +220,13 @@ export function CashFlowTable({
     </tr>
   );
 
-  const sectionHeader = (key: string, label: string, get: (yi: number) => number) => (
+  const sectionHeader = (key: string, label: string, get: (yi: number) => number, hint?: string) => (
     <tr className="border-t border-border bg-background/40">
       <td className="py-2.5 pl-2 font-semibold">
-        <ToggleLabel label={label} expanded={isOpen(key)} onToggle={() => toggle(key)} />
+        <span className="inline-flex items-center gap-1">
+          <ToggleLabel label={label} expanded={isOpen(key)} onToggle={() => toggle(key)} />
+          {hint && <InfoTooltip text={hint} />}
+        </span>
       </td>
       {cells(get)}
     </tr>
@@ -263,13 +275,17 @@ export function CashFlowTable({
             {isOpen("expenses") && (expenseItems.length ? itemRows(expenseItems, expenseMaps) : emptyRow("No expenses in this range."))}
 
             {/* Operating surplus / (shortfall) */}
-            {summaryRow("Operating surplus / (shortfall)", (yi) => years[yi].cashFlow.operatingCashFlow, { strong: true })}
+            {summaryRow("Operating surplus / (shortfall)", (yi) => years[yi].cashFlow.operatingCashFlow, {
+              strong: true,
+              hint: "Income minus expenses. When it goes negative (typically once income drops in retirement), Withdrawals below pull from your accounts to cover it.",
+            })}
 
             {/* Withdrawals -- comprehensive: everything that left an account, grouped by tax, with per-account tax. */}
             {sectionHeader(
               "withdrawals",
-              "Withdrawals (Planned, RMDs & taxes)",
-              (yi) => years[yi].cashFlow.withdrawalsByAccount.reduce((s, w) => s + w.gross, 0)
+              "Withdrawals",
+              (yi) => years[yi].cashFlow.withdrawalsByAccount.reduce((s, w) => s + w.gross, 0),
+              "Planned withdrawals, RMDs, and the taxes they trigger -- shown gross by account, grouped by tax treatment. A transfer between your own accounts also appears here for visibility, but doesn't change your total cash."
             )}
             {isOpen("withdrawals") &&
               (hasWithdrawals
@@ -320,7 +336,10 @@ export function CashFlowTable({
                 which sum to this total. */}
             <tr className="border-t border-border">
               <td className="py-2.5 pl-2 font-bold">
-                <ToggleLabel label="Federal tax" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
+                <span className="inline-flex items-center gap-1">
+                  <ToggleLabel label="Federal tax" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
+                  <InfoTooltip text="The exact bill for the year from real IRS brackets on actual realized income. Expand to see exactly which income sources it came from. The 'estimated withholding' lines under Withdrawals are an earlier, separate estimate and won't exactly match this -- that's expected." />
+                </span>
               </td>
               {years.map((y, yi) => {
                 const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
@@ -376,42 +395,20 @@ export function CashFlowTable({
                 {cells((yi) => years[yi].cashFlow.cashInterest)}
               </tr>
             )}
-            {hasOtherActivity && (
-              <tr className="text-dim hover:bg-accent/15">
-                <td className="py-2 pl-2">
-                  Other account activity
-                  <span className="ml-1 text-xs">(direct transfers, income to other accounts)</span>
-                </td>
-                {cells((yi) => years[yi].cashFlow.otherAccountActivity)}
-              </tr>
-            )}
-
             {/* Net change in cash -- the reconciling bottom line. Always exactly
                 equals every row above summed, because it's measured directly
                 from the actual simulated cash balance, not derived from them. */}
-            {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, { strong: true })}
-            {summaryRow("Ending cash on hand", (yi) => years[yi].cashFlow.endingCashBalance, { totalIsMeaningful: false })}
+            {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, {
+              strong: true,
+              hint: "Operating result + after-tax withdrawals that reached your spending, minus money saved into accounts. Lands near $0 in a year where you draw just what you need.",
+            })}
+            {summaryRow("Ending cash on hand", (yi) => years[yi].cashFlow.endingCashBalance, {
+              totalIsMeaningful: false,
+              hint: "Your total balance across all cash accounts, not just Extra Savings -- a small gap versus the rows above is expected. Not summed in the Total column since it's a balance, not a flow.",
+            })}
           </tbody>
         </table>
       </div>
-      <p className="px-1 text-xs text-dim">
-        <strong>Operating surplus / (shortfall)</strong> is your income minus expenses. When it goes negative (typically once
-        income drops in retirement), the <strong>Withdrawals</strong> below pull from your accounts to cover it &mdash; shown
-        gross by account and grouped by tax treatment, with the tax each draw triggers. <strong>Net change in cash</strong> =
-        operating result + the after-tax withdrawals that reached your spending &minus; money saved into accounts; it lands
-        near $0 in a year where you draw just what you need (your cash buffer holds steady). <strong>Ending cash on
-        hand</strong> is your total balance across all cash accounts (Extra Savings, checking, an emergency fund, etc.),
-        not just Extra Savings, so a small gap between it and the rows above is expected &mdash; it reflects cash moved
-        between those accounts that isn&apos;t broken out as its own line. Moving money between your own
-        accounts (a transfer) appears under Withdrawals for visibility but doesn&apos;t change your total cash. <strong>Federal
-        tax</strong> is the exact bill for the year computed from real IRS brackets on your actual realized income &mdash;
-        expand it to see exactly which income sources it came from (RMDs/tax-deferred withdrawals, pension, taxable Social
-        Security, capital gains, and any state/local add-on); these components always add up to the total shown. The
-        &ldquo;estimated withholding&rdquo; lines under Withdrawals are a separate, earlier estimate used to size cash
-        withheld during the year as each draw happens &mdash; they won&apos;t exactly match the Federal tax breakdown above,
-        which is the actual year-end bracket calculation, and that mismatch is expected, not a bug. The Total column sums
-        each row across the selected range; Ending cash is a balance, not a flow, so it isn&apos;t summed.
-      </p>
     </div>
   );
 }

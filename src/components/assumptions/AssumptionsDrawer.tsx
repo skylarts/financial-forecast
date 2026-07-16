@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { Person, Scenario } from "@/domain";
 import { personSchema, forecastSettingsSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { ErrorBanner } from "@/components/ui/formFields";
+import { ErrorBanner, InfoTooltip } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
 
 function PersonRow({ person }: { person: Person }) {
@@ -145,14 +145,10 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
           </label>
 
           <div className="rounded-md border border-border p-3">
-            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-dim">Federal tax</div>
-            <p className="mb-2 text-xs text-dim">
-              Computed automatically each year from real 2026 IRS brackets (inflated forward with the rate above),
-              based on that year&rsquo;s actual realized income -- RMDs, other tax-deferred withdrawals, taxable
-              Social Security, pension, and capital gains on taxable-account withdrawals. Salary and other take-home
-              income aren&rsquo;t re-taxed. See the Cash Flow tab&rsquo;s &ldquo;Federal tax&rdquo; row for the
-              computed dollar amount each year.
-            </p>
+            <div className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
+              Federal tax
+              <InfoTooltip text="Computed automatically each year from real IRS brackets, based on that year's actual realized income (RMDs, taxable Social Security, pension, capital gains). See the computed amount on the Cash Flow tab." />
+            </div>
             <label className="mb-2 flex flex-col gap-1 text-xs text-dim">
               Filing status
               <select
@@ -167,7 +163,10 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
               </select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-dim">
-              Additional flat tax rate (state/local, e.g. 0.05 for 5% -- 0 if none)
+              <span className="inline-flex items-center gap-1">
+                Additional flat tax rate (e.g. 0.05 for 5%)
+                <InfoTooltip text="State/local add-on to the computed federal tax. Leave at 0 if none." />
+              </span>
               <input
                 className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
                 type="number"
@@ -179,10 +178,6 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
               />
             </label>
           </div>
-          <p className="text-xs text-dim">
-            Spending accounts, surplus routing, and drain order live in the{" "}
-            <span className="font-medium text-foreground">Routing</span> tab now, not here.
-          </p>
           <label className="flex flex-col gap-1 text-xs text-dim">
             Horizon end date
             <input

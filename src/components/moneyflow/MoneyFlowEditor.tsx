@@ -4,7 +4,7 @@ import { useState } from "react";
 import { nanoid } from "nanoid";
 import type { Account, ForecastSettings, MoneyFlow } from "@/domain";
 import { forecastSettingsSchema } from "@/domain";
-import { ErrorBanner } from "@/components/ui/formFields";
+import { ErrorBanner, InfoTooltip } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
 
 /**
@@ -108,21 +108,13 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
   return (
     <div className="flex flex-col gap-6">
       <ErrorBanner message={error} />
-      <p className="text-xs text-dim">
-        This is where cash-flow routing lives. Extra Savings (see the Accounts tab) is the one mandatory spending
-        account -- income deposits there, expenses pay from there, and it captures 100% of net income-minus-expenses
-        every month. The lists below decide where that surplus goes, and what gets drawn down first when there&rsquo;s
-        a shortfall. Order is priority: the first stop in a list is offered first.
-      </p>
 
       {/* Extra Savings split */}
       <section className="flex flex-col gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">When there&rsquo;s extra cash, split it</h3>
-        <p className="text-xs text-dim">
-          Each stop is either a flat dollar amount or a percentage of whatever&rsquo;s left after the stops above it
-          (cascading, not a share of the total). Whatever the whole list doesn&rsquo;t claim simply stays in Extra
-          Savings and keeps accumulating.
-        </p>
+        <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
+          When there&rsquo;s extra cash, split it
+          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total). Whatever the list doesn't claim stays in Extra Savings." />
+        </h3>
         {moneyFlow.splitOrder.length === 0 && <p className="text-xs text-dim">No surplus targets configured yet.</p>}
         {moneyFlow.splitOrder.map((stop, i) => (
           <div key={stop.id} className="flex flex-col gap-2 rounded-md border border-border p-2">
@@ -184,6 +176,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
               )}
               <label className="flex items-center gap-1">
                 Cap $
+                <InfoTooltip text="How much this account absorbs before overflow spills to the next stop. Leave the last stop uncapped as a catch-all." />
                 <input
                   className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
                   type="number"
@@ -213,22 +206,14 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
           onAdd={addSplitStop}
           placeholder="+ Add split target"
         />
-        <p className="text-xs text-dim">
-          Cap = how much this account absorbs before overflow spills to the next stop. Leave the last stop uncapped
-          as a catch-all, or surplus with nowhere else to go simply stays in Extra Savings.
-        </p>
       </section>
 
       {/* Drain order */}
       <section className="flex flex-col gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">When I&rsquo;m short, drain in this order</h3>
-        <p className="text-xs text-dim">
-          Each source can have a Start/End date -- leave either blank for &ldquo;always&rdquo;. Useful for a phased
-          drawdown across retirement, and the same account can be added more than once with different windows (e.g.
-          drain it, switch to another source for a stretch, then come back to it later). &ldquo;Keep at least $&rdquo;
-          (today&rsquo;s dollars, grown with inflation) stops this source from being drained below that floor -- once
-          it&rsquo;s hit, the remaining shortfall spills to the next active source.
-        </p>
+        <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
+          When I&rsquo;m short, drain in this order
+          <InfoTooltip text="Each source can have a Start/End date -- leave either blank for 'always'. The same account can be added more than once with different windows for a phased drawdown." />
+        </h3>
         <label className="flex items-center gap-2 text-xs text-dim">
           <input
             type="checkbox"
@@ -272,6 +257,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
               </label>
               <label className="flex items-center gap-1">
                 Keep at least $
+                <InfoTooltip text="Today's dollars, grown with inflation. Stops this source draining below that floor -- once hit, the remaining shortfall spills to the next active source." />
                 <input
                   className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
                   type="number"

@@ -123,22 +123,15 @@ export function IncomeDrawer({
           />
         </Field>
         <Field
-          label={
+          label={category === "social_security" || category === "pension" ? "Amount (GROSS, before tax)" : "Amount"}
+          hint={
             category === "social_security" || category === "pension"
-              ? "Amount (per occurrence, today's dollars, GROSS -- before tax)"
-              : "Amount (per occurrence, today's dollars)"
+              ? `Per occurrence, today's dollars. Enter the gross benefit -- what's on your SSA statement${category === "pension" ? " or pension paperwork" : ""}, before withholding. The engine computes real tax on it each year.`
+              : "Per occurrence, today's dollars."
           }
         >
           <TextInput reg={register("amount", { valueAsNumber: true, required: true })} type="number" step="0.01" />
         </Field>
-        {(category === "social_security" || category === "pension") && (
-          <p className="-mt-1 text-xs text-dim">
-            Unlike other income categories (entered take-home), {category === "social_security" ? "Social Security" : "pension"}{" "}
-            should be the gross benefit -- what&rsquo;s on your SSA statement{category === "pension" ? " or pension paperwork" : ""},
-            before any tax withholding. The engine computes real tax on it each year (Social Security only as far as it&rsquo;s
-            actually taxable) rather than taking it as already net.
-          </p>
-        )}
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
         </Field>
@@ -160,19 +153,19 @@ export function IncomeDrawer({
         <Field label="Start Date">
           <TextInput reg={register("startDate", { required: true })} type="date" />
         </Field>
-        <Field label="End Date (optional -- leave blank to continue indefinitely)">
+        <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
           <TextInput reg={register("endDate")} type="date" />
         </Field>
-        <Field label="Annual Growth Rate (actual, e.g. 0.05 for 5%/yr raises incl. inflation)">
+        <Field
+          label="Annual Growth Rate (e.g. 0.05 for 5%/yr)"
+          hint={
+            category === "social_security"
+              ? "Actual raises, including inflation. Social Security grows once per year (a COLA), not continuously -- use your inflation assumption to keep it flat in today's dollars, or a smaller rate to model a reduced COLA."
+              : "Actual raises, including inflation."
+          }
+        >
           <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
         </Field>
-        {category === "social_security" && (
-          <p className="-mt-1 text-xs text-dim">
-            This grows once per year (a COLA), not continuously like a paycheck. Enter your inflation assumption
-            (e.g. 0.03) to keep the benefit flat in today&rsquo;s-dollars terms, or a smaller rate to model a
-            reduced COLA.
-          </p>
-        )}
 
         <button
           type="button"

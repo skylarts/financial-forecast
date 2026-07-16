@@ -35,20 +35,10 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // balance stays frozen).
   const excludedAccountIds = new Set(scenario.accounts.filter((a) => a.isExcluded).map((a) => a.id));
 
-  // growth_rate_change events, grouped by target account and sorted so the
-  // engine can pick "the last one that's started" for any given month.
+  // An account's own growthRateSchedule, grouped by account and sorted so the
+  // engine can pick "the last one that's started" for any given month --
+  // effectiveAnnualRate just picks whichever entry most recently started.
   const growthRateOverrides = new Map<Id, { startDate: ISODate; growthRatePct: number }[]>();
-  for (const event of events) {
-    if (event.type === "growth_rate_change") {
-      const list = growthRateOverrides.get(event.targetAccountId) ?? [];
-      list.push({ startDate: event.startDate, growthRatePct: event.newGrowthRatePct });
-      growthRateOverrides.set(event.targetAccountId, list);
-    }
-  }
-  // An account's own growthRateSchedule merges into the same override list as
-  // growth_rate_change events -- effectiveAnnualRate just picks whichever
-  // entry (from either source) most recently started, so no engine change is
-  // needed beyond combining the two lists before the sort below.
   for (const account of scenario.accounts) {
     if (!account.growthRateSchedule?.length) continue;
     const list = growthRateOverrides.get(account.id) ?? [];
