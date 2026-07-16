@@ -11,7 +11,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, YearSnapshot } from "@/domain";
+import type { Account, AccountClass, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { useUiStore } from "@/store/useUiStore";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -40,6 +40,25 @@ type ViewMode = "net_worth" | "by_account";
 const ICON_SIZE = 22;
 const ICON_GAP = 4;
 const TOP_PAD = 6;
+
+/** Fixed grouping for "By Account" -- cash first (most liquid), then
+ *  investment/retirement accounts by tax treatment, then other assets,
+ *  then liabilities last. */
+const ACCOUNT_CLASS_ORDER: Record<AccountClass, number> = {
+  cash: 0,
+  taxable_investment: 1,
+  tax_free: 2,
+  tax_deferred: 3,
+  real_estate: 4,
+  other_asset: 5,
+  credit_card: 6,
+  loan: 7,
+  mortgage: 8,
+};
+
+function sortAccountsForDisplay(list: Account[]): Account[] {
+  return [...list].sort((a, b) => ACCOUNT_CLASS_ORDER[a.class] - ACCOUNT_CLASS_ORDER[b.class]);
+}
 
 interface DragState {
   key: string;
@@ -171,7 +190,7 @@ export function NetWorthChart({
   }, []);
 
   const accounts = useMemo(
-    () => allAccounts.filter((a) => !a.isExcluded),
+    () => sortAccountsForDisplay(allAccounts.filter((a) => !a.isExcluded)),
     [allAccounts]
   );
 
@@ -324,58 +343,82 @@ export function NetWorthChart({
 
   const compareName = compareOptions.find((o) => o.id === compareScenarioId)?.name ?? null;
 
+  // Recharts' <Legend> auto-collects items in the order its <Line> children
+  // mount, which doesn't reliably track our sort order -- render our own
+  // legend for "By Account" straight from the sorted `accounts` array instead.
+  const renderAccountLegend = () => (
+    <ul className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs">
+      {accounts.map((a, i) => {
+        const hidden = hiddenAccountIds.has(a.id);
+        return (
+          <li
+            key={a.id}
+            onClick={() => toggleAccount(a.id)}
+            className="flex cursor-pointer items-center gap-1"
+            style={{ opacity: hidden ? 0.5 : 1 }}
+          >
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-full"
+              style={{ background: palette[i % palette.length] }}
+            />
+            <span>{a.name}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
       <div className="relative mb-1 flex items-center justify-center gap-2">
         <span className="text-base font-semibold">{scenarioName}</span>
         {compareName && <span className="text-sm font-normal text-dim/70">Vs {compareName}</span>}
-        <div className="relative ml-1">
-          <button
-            type="button"
-            onClick={() => setCompareMenuOpen((v) => !v)}
-            title={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
-            aria-label={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
-            className={`rounded-md border px-2 py-1 text-sm leading-none ${
-              compareName ? "border-accent text-accent" : "border-border text-dim hover:text-foreground"
-            }`}
-          >
-            ⇄
-          </button>
-          {compareMenuOpen && (
-            <div className="absolute left-1/2 top-full z-30 mt-1 w-48 -translate-x-1/2 rounded-md border border-border bg-panel p-1 shadow-lg">
-              {compareOptions.length === 0 && (
-                <div className="px-3 py-2 text-xs text-dim">No other scenarios yet</div>
-              )}
-              {compareOptions.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  onClick={() => {
-                    onCompareChange(o.id);
-                    setCompareMenuOpen(false);
-                  }}
-                  className={`block w-full rounded px-3 py-2 text-left text-sm hover:bg-accent/15 ${
-                    o.id === compareScenarioId ? "text-foreground" : "text-dim"
-                  }`}
-                >
-                  {o.name}
-                </button>
-              ))}
-              {compareName && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onCompareChange(null);
-                    setCompareMenuOpen(false);
-                  }}
-                  className="mt-1 block w-full rounded border-t border-border px-3 py-2 pt-2 text-left text-sm text-dim hover:bg-accent/15"
-                >
-                  Clear comparison
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+        {compareOptions.length > 0 && (
+          <div className="relative ml-1">
+            <button
+              type="button"
+              onClick={() => setCompareMenuOpen((v) => !v)}
+              title={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
+              aria-label={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
+              className={`rounded border px-1 py-0.5 text-[10px] leading-none ${
+                compareName ? "border-accent text-accent" : "border-border text-dim/50 hover:text-dim"
+              }`}
+            >
+              ⇄
+            </button>
+            {compareMenuOpen && (
+              <div className="absolute left-1/2 top-full z-30 mt-1 w-48 -translate-x-1/2 rounded-md border border-border bg-panel p-1 shadow-lg">
+                {compareOptions.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => {
+                      onCompareChange(o.id);
+                      setCompareMenuOpen(false);
+                    }}
+                    className={`block w-full rounded px-3 py-2 text-left text-sm hover:bg-accent/15 ${
+                      o.id === compareScenarioId ? "text-foreground" : "text-dim"
+                    }`}
+                  >
+                    {o.name}
+                  </button>
+                ))}
+                {compareName && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onCompareChange(null);
+                      setCompareMenuOpen(false);
+                    }}
+                    className="mt-1 block w-full rounded border-t border-border px-3 py-2 pt-2 text-left text-sm text-dim hover:bg-accent/15"
+                  >
+                    Clear comparison
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-dim">
@@ -444,14 +487,9 @@ export function NetWorthChart({
               }}
             />
             <Legend
-              onClick={(e) => {
-                if (viewMode === "by_account" && typeof e.dataKey === "string") toggleAccount(e.dataKey);
-              }}
-              formatter={(value: string) => {
-                if (viewMode !== "net_worth") return accounts.find((a) => a.id === value)?.name ?? value;
-                return value === "compareValue" ? (compareName ?? "Compare") : scenarioName;
-              }}
-              wrapperStyle={{ fontSize: 12, cursor: viewMode === "by_account" ? "pointer" : "default" }}
+              content={viewMode === "by_account" ? renderAccountLegend : undefined}
+              formatter={(value: string) => (value === "compareValue" ? (compareName ?? "Compare") : scenarioName)}
+              wrapperStyle={{ fontSize: 12 }}
             />
             {viewMode === "net_worth" ? (
               <>
