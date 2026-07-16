@@ -27,7 +27,7 @@ function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: Yea
   return (
     <>
       {fields.map((f) => (
-        <tr key={f.label} className="bg-background/30 text-xs text-dim">
+        <tr key={f.label} className="bg-background/30 text-xs text-dim hover:bg-accent/15">
           <td className="py-1.5 pl-14">{f.label}</td>
           {years.map((y) => (
             <td key={y.year} className="py-1.5 pr-2 text-right">
@@ -158,7 +158,7 @@ function Section({
           const groupOpen = openGroups.has(g.label);
           return (
             <Fragment key={g.label}>
-              <tr className="border-t border-border/40 text-dim">
+              <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
                 <td className="py-2 pl-6">
                   <ToggleLabel label={g.label} expanded={groupOpen} onToggle={() => toggleGroup(g.label)} />
                 </td>
