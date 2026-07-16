@@ -60,6 +60,30 @@ function sortAccountsForDisplay(list: Account[]): Account[] {
   return [...list].sort((a, b) => ACCOUNT_CLASS_ORDER[a.class] - ACCOUNT_CLASS_ORDER[b.class]);
 }
 
+const ACCOUNT_CLASS_LABELS: Record<AccountClass, string> = {
+  cash: "Cash",
+  taxable_investment: "Taxable",
+  tax_free: "Tax-Free",
+  tax_deferred: "Tax-Deferred",
+  real_estate: "Real Estate",
+  other_asset: "Other Assets",
+  credit_card: "Credit Cards",
+  loan: "Loans",
+  mortgage: "Mortgages",
+};
+
+/** Splits an already class-sorted account list into consecutive runs of the
+ *  same class, for the grouped "By Account" legend. */
+function groupAccountsByClass(list: Account[]): { cls: AccountClass; accounts: Account[] }[] {
+  const groups: { cls: AccountClass; accounts: Account[] }[] = [];
+  for (const a of list) {
+    const last = groups[groups.length - 1];
+    if (last && last.cls === a.class) last.accounts.push(a);
+    else groups.push({ cls: a.class, accounts: [a] });
+  }
+  return groups;
+}
+
 interface DragState {
   key: string;
   kind: ChartMarker["kind"];
@@ -346,27 +370,43 @@ export function NetWorthChart({
   // Recharts' <Legend> auto-collects items in the order its <Line> children
   // mount, which doesn't reliably track our sort order -- render our own
   // legend for "By Account" straight from the sorted `accounts` array instead.
-  const renderAccountLegend = () => (
-    <ul className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs">
-      {accounts.map((a, i) => {
-        const hidden = hiddenAccountIds.has(a.id);
-        return (
-          <li
-            key={a.id}
-            onClick={() => toggleAccount(a.id)}
-            className="flex cursor-pointer items-center gap-1"
-            style={{ opacity: hidden ? 0.5 : 1 }}
+  const renderAccountLegend = () => {
+    const colorIndex = new Map(accounts.map((a, i) => [a.id, i]));
+    const groups = groupAccountsByClass(accounts);
+    return (
+      <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs">
+        {groups.map((g, gi) => (
+          <div
+            key={g.cls}
+            className={`flex flex-col gap-1 ${gi > 0 ? "border-l border-border pl-4" : ""}`}
           >
-            <span
-              className="inline-block h-2.5 w-2.5 rounded-full"
-              style={{ background: palette[i % palette.length] }}
-            />
-            <span>{a.name}</span>
-          </li>
-        );
-      })}
-    </ul>
-  );
+            <span className="text-[10px] font-medium uppercase tracking-wide text-dim/70">
+              {ACCOUNT_CLASS_LABELS[g.cls]}
+            </span>
+            <ul className="flex flex-wrap gap-x-3 gap-y-1">
+              {g.accounts.map((a) => {
+                const hidden = hiddenAccountIds.has(a.id);
+                return (
+                  <li
+                    key={a.id}
+                    onClick={() => toggleAccount(a.id)}
+                    className="flex cursor-pointer items-center gap-1"
+                    style={{ opacity: hidden ? 0.5 : 1 }}
+                  >
+                    <span
+                      className="inline-block h-2.5 w-2.5 rounded-full"
+                      style={{ background: palette[(colorIndex.get(a.id) ?? 0) % palette.length] }}
+                    />
+                    <span>{a.name}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
