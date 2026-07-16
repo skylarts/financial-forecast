@@ -25,7 +25,8 @@ export const incomeSourceSchema = z.object({
   growthRatePct: z.number().default(0),
   /** Repeat every N years (e.g. selling something on a cycle); overrides frequency. */
   intervalYears: z.number().int().positive().optional(),
-  depositAccountId: idSchema,
+  /** null = posts automatically to Extra Savings; set = explicit override (e.g. a windfall landing straight in a brokerage). */
+  depositAccountId: idSchema.nullable(),
   category: incomeCategorySchema,
   /** Temporary scaling windows (a raise, a pause, a career break) -- see TemporaryAdjustment. */
   adjustments: z.array(temporaryAdjustmentSchema).optional(),

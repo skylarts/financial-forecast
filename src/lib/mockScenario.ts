@@ -124,7 +124,7 @@ export const mockScenario: Scenario = {
       startDate: "2026-01-01",
       endDate: null,
       growthRatePct: 0.05, // nominal: ~3% inflation + ~2% real raises
-      depositAccountId: extraSavingsId,
+      depositAccountId: null, // automatic -- lands in Extra Savings
       category: "salary",
     },
     {
@@ -136,7 +136,7 @@ export const mockScenario: Scenario = {
       startDate: "2026-01-01",
       endDate: null,
       growthRatePct: 0.05, // nominal: ~3% inflation + ~2% real raises
-      depositAccountId: extraSavingsId,
+      depositAccountId: null, // automatic -- lands in Extra Savings
       category: "salary",
     },
     {
@@ -163,7 +163,7 @@ export const mockScenario: Scenario = {
       startDate: "2057-05-15",
       endDate: null,
       growthRatePct: 0.03, // COLA tracks inflation
-      depositAccountId: extraSavingsId,
+      depositAccountId: null, // automatic -- lands in Extra Savings
       category: "social_security",
     },
     {
@@ -175,7 +175,7 @@ export const mockScenario: Scenario = {
       startDate: "2059-09-22",
       endDate: null,
       growthRatePct: 0.03, // COLA tracks inflation
-      depositAccountId: extraSavingsId,
+      depositAccountId: null, // automatic -- lands in Extra Savings
       category: "social_security",
     },
   ],
@@ -188,7 +188,7 @@ export const mockScenario: Scenario = {
       startDate: "2026-01-01",
       endDate: null,
       growthRatePct: 0.03, // nominal: tracks inflation
-      paymentAccountId: extraSavingsId,
+      paymentAccountId: null, // automatic -- paid from Extra Savings
       category: "discretionary",
     },
     {
@@ -203,7 +203,7 @@ export const mockScenario: Scenario = {
       // authoring-flow affordance (auto-suggest ending rent on a Buy a Home event).
       endDate: "2032-05-31",
       growthRatePct: 0.03, // nominal: tracks inflation
-      paymentAccountId: extraSavingsId,
+      paymentAccountId: null, // automatic -- paid from Extra Savings
       category: "housing",
     },
   ],

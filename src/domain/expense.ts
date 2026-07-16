@@ -24,8 +24,8 @@ export const expenseBaselineSchema = z.object({
   growthRatePct: z.number().default(0),
   /** Repeat every N years (e.g. a car replaced every 7 yrs); overrides frequency. */
   intervalYears: z.number().int().positive().optional(),
-  /** Direct assignment -- mirrors the validated "pay from a specific account" pattern. */
-  paymentAccountId: idSchema,
+  /** null = pays automatically from Extra Savings; set = explicit override (e.g. paid straight out of an investment). */
+  paymentAccountId: idSchema.nullable(),
   category: expenseCategorySchema,
   /** Temporary scaling windows (a spending cut, a temporary rent hike). */
   adjustments: z.array(temporaryAdjustmentSchema).optional(),

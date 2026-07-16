@@ -92,7 +92,7 @@ export function IncomeDrawer({
       endDate: values.endDate || null,
       growthRatePct: Number(values.growthRatePct) || 0,
       intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
-      depositAccountId: values.depositAccountId,
+      depositAccountId: values.depositAccountId === "" ? null : values.depositAccountId,
       category: values.category,
       adjustments,
       isExcluded: values.isExcluded,
@@ -149,7 +149,13 @@ export function IncomeDrawer({
           <SelectInput reg={register("category")} options={CATEGORY_OPTIONS} />
         </Field>
         <Field label="Deposit Account">
-          <SelectInput reg={register("depositAccountId", { required: true })} options={accounts.map((a) => ({ value: a.id, label: a.name }))} />
+          <SelectInput
+            reg={register("depositAccountId")}
+            options={[
+              { value: "", label: "Automatic (Extra Savings)" },
+              ...accounts.filter((a) => !a.isExtraSavings).map((a) => ({ value: a.id, label: a.name })),
+            ]}
+          />
         </Field>
         <Field label="Start Date">
           <TextInput reg={register("startDate", { required: true })} type="date" />

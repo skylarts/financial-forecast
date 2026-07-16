@@ -63,7 +63,8 @@ export function makeAccount(overrides: Partial<Account> & MoneyFlowHints & { cla
   };
 }
 
-export function makeIncome(overrides: Partial<IncomeSource> & { depositAccountId: string }): IncomeSource {
+/** depositAccountId defaults to null (posts automatically to Extra Savings) -- pass one explicitly to test a direct-override target. */
+export function makeIncome(overrides: Partial<IncomeSource>): IncomeSource {
   return {
     id: nanoid(),
     name: "Income",
@@ -74,11 +75,13 @@ export function makeIncome(overrides: Partial<IncomeSource> & { depositAccountId
     endDate: null,
     growthRatePct: 0,
     category: "salary",
+    depositAccountId: null,
     ...overrides,
   };
 }
 
-export function makeExpense(overrides: Partial<ExpenseBaseline> & { paymentAccountId: string }): ExpenseBaseline {
+/** paymentAccountId defaults to null (pays automatically from Extra Savings) -- pass one explicitly to test a direct-override target. */
+export function makeExpense(overrides: Partial<ExpenseBaseline>): ExpenseBaseline {
   return {
     id: nanoid(),
     name: "Expense",
@@ -88,6 +91,7 @@ export function makeExpense(overrides: Partial<ExpenseBaseline> & { paymentAccou
     endDate: null,
     growthRatePct: 0,
     category: "other",
+    paymentAccountId: null,
     ...overrides,
   };
 }

@@ -72,6 +72,13 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     postings.push(posting);
   };
 
+  // The account a null depositAccountId/paymentAccountId/payingAccountId
+  // falls back to -- Extra Savings, unless somehow missing (defensive only;
+  // scenarioSchema's auto-inject transform guarantees it exists on any
+  // scenario that's actually been parsed). Resolved once and reused for
+  // income, expenses, contribution draws, and mortgage payments below.
+  const primarySpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts);
+
   // --- Income sources: today's-dollars amount, own growth rate, plus any
   //     temporary adjustment windows entered directly on the source. ---
   const retirementByPerson = new Map<Id, ISODate>();
@@ -122,10 +129,12 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       );
       const amount = base * activeMultiplier(windows, occ);
       if (amount === 0) continue;
+      const accountId = src.depositAccountId ?? primarySpendingAccountId;
+      if (!accountId) continue;
       pushPosting({
         date: occ,
         yearMonth: occ.slice(0, 7),
-        accountId: src.depositAccountId,
+        accountId,
         amount,
         category: "income",
         label: src.name,
@@ -152,10 +161,12 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       );
       const amount = base * activeMultiplier(windows, occ);
       if (amount === 0) continue;
+      const accountId = exp.paymentAccountId ?? primarySpendingAccountId;
+      if (!accountId) continue;
       pushPosting({
         date: occ,
         yearMonth: occ.slice(0, 7),
-        accountId: exp.paymentAccountId,
+        accountId,
         amount: -Math.abs(amount),
         category: "expense",
         label: exp.name,
@@ -170,7 +181,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // of the spending account ("contribution_out"), so they cost cash; payroll-
   // deducted ones don't, since take-home income was entered net of them. This is
   // independent of tax treatment (a Roth 401k is payroll-deducted but after-tax).
-  const contributionSpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts);
+  const contributionSpendingAccountId = primarySpendingAccountId;
   const postContribution = (account: (typeof scenario.accounts)[number], occ: ISODate, amount: number, payrollDeducted: boolean) => {
     if (amount === 0) return;
     pushPosting({
@@ -310,7 +321,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             annualInterestRatePct: event.mortgage.annualInterestRatePct,
             termMonths: event.mortgage.termMonths,
           },
-          payingAccountId: resolvePrimarySpendingAccountId(scenario.accounts),
+          payingAccountId: primarySpendingAccountId,
         });
         linkedLiabilityId = mortgageId;
       }
