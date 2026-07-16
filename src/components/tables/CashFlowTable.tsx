@@ -238,7 +238,7 @@ export function CashFlowTable({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
+      <div className="max-h-[85vh] overflow-auto rounded-lg border border-border bg-panel">
         <table className="w-full text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
@@ -293,7 +293,7 @@ export function CashFlowTable({
                             {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
                           </tr>
                           {years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5) && (
-                            <tr className="text-negative/80">
+                            <tr className="text-negative/80 hover:bg-accent/15">
                               <td className="py-1 pl-16 text-xs italic">estimated withholding</td>
                               {years.map((y, yi) => {
                                 const v = d(wdTaxMaps[yi].get(a.id) ?? 0, yi);
@@ -347,7 +347,7 @@ export function CashFlowTable({
             {hasSaved && isOpen("saved") && (
               <>
                 {surplusItems.length > 0 && (
-                  <tr className="text-dim">
+                  <tr className="text-dim hover:bg-accent/15">
                     <td className="py-2 pl-10 font-medium">Surplus swept to savings/investments</td>
                     {cells((yi) => years[yi].cashFlow.surplusRouted)}
                   </tr>
@@ -371,13 +371,13 @@ export function CashFlowTable({
                 statement stays clean in the common case while still always
                 reconciling exactly to the bottom line. */}
             {hasCashInterest && (
-              <tr className="text-dim">
+              <tr className="text-dim hover:bg-accent/15">
                 <td className="py-2 pl-2">Interest earned on cash</td>
                 {cells((yi) => years[yi].cashFlow.cashInterest)}
               </tr>
             )}
             {hasOtherActivity && (
-              <tr className="text-dim">
+              <tr className="text-dim hover:bg-accent/15">
                 <td className="py-2 pl-2">
                   Other account activity
                   <span className="ml-1 text-xs">(direct transfers, income to other accounts)</span>
