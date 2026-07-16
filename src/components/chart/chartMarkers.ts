@@ -13,6 +13,10 @@ export interface ChartMarker {
   badge: string;
   title: string;
   detail: string;
+  /** Set when this marker belongs to the scenario being compared against, not the active one -- greyed out, not draggable. */
+  isCompare?: boolean;
+  /** Name of the scenario this marker belongs to; only set/shown in comparison mode. */
+  scenarioName?: string;
 }
 
 export function buildChartMarkers({

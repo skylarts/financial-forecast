@@ -18,6 +18,13 @@ function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());
   const projection = useProjection(scenario);
 
+  const allScenarios = usePlanStore((s) => s.plan.scenarios);
+  const compareScenarioId = usePlanStore((s) => s.compareScenarioId);
+  const setCompareScenarioId = usePlanStore((s) => s.setCompareScenarioId);
+  const compareScenarioRaw = allScenarios.find((s) => s.id === compareScenarioId) ?? null;
+  const compareProjection = useProjection(compareScenarioRaw ?? scenario);
+  const hasCompare = compareScenarioRaw !== null;
+
   const minYear = projection.years[0]?.year ?? new Date().getFullYear();
   const maxYear = projection.years[projection.years.length - 1]?.year ?? minYear;
   const [range, setRange] = useState<[number, number]>([minYear, Math.min(maxYear, minYear + 19)]);
@@ -30,12 +37,20 @@ function HomeContent() {
     () => projection.years.filter((y) => y.year >= range[0] && y.year <= range[1]),
     [projection.years, range]
   );
+  const compareYears = useMemo(
+    () => (hasCompare ? compareProjection.years.filter((y) => y.year >= range[0] && y.year <= range[1]) : []),
+    [hasCompare, compareProjection.years, range]
+  );
   // The Timeline tab shows your whole plan (all income/expenses/events) and the
   // full auto-withdrawal ledger, independent of the chart's year window -- the
   // range picker only narrows the projection views (chart, Accounts, Cash Flow).
   const editableAccountIds = useMemo<Set<Id>>(
     () => new Set(scenario.accounts.map((a) => a.id)),
     [scenario.accounts]
+  );
+  const compareOptions = useMemo(
+    () => allScenarios.filter((s) => s.id !== scenario.id).map((s) => ({ id: s.id, name: s.name })),
+    [allScenarios, scenario.id]
   );
 
   return (
@@ -47,6 +62,9 @@ function HomeContent() {
           years={years}
           dollarMode={dollarMode}
           isFullRange={range[0] === minYear && range[1] === maxYear}
+          compareKpis={hasCompare ? compareProjection.kpis : null}
+          compareYears={compareYears}
+          compareName={hasCompare ? compareScenarioRaw!.name : null}
         />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
         <YearRangePicker
@@ -66,6 +84,23 @@ function HomeContent() {
           expenses={scenario.expenses}
           timeline={projection.timeline}
           people={scenario.household.people}
+          scenarioName={scenario.name}
+          compareOptions={compareOptions}
+          compareScenarioId={compareScenarioId}
+          onCompareChange={setCompareScenarioId}
+          compareScenario={
+            hasCompare
+              ? {
+                  name: compareScenarioRaw!.name,
+                  years: compareYears,
+                  events: compareScenarioRaw!.events,
+                  incomeSources: compareScenarioRaw!.incomeSources,
+                  expenses: compareScenarioRaw!.expenses,
+                  timeline: compareProjection.timeline,
+                  people: compareScenarioRaw!.household.people,
+                }
+              : null
+          }
         />
         <DetailTabs
           accounts={projection.accounts}
@@ -79,6 +114,23 @@ function HomeContent() {
           expenses={scenario.expenses}
           settings={scenario.settings}
           dollarMode={dollarMode}
+          scenarioName={scenario.name}
+          compare={
+            hasCompare
+              ? {
+                  name: compareScenarioRaw!.name,
+                  accounts: compareProjection.accounts,
+                  years: compareYears,
+                  timeline: compareProjection.timeline,
+                  ledger: compareProjection.ledger,
+                  events: compareScenarioRaw!.events,
+                  people: compareScenarioRaw!.household.people,
+                  settings: compareScenarioRaw!.settings,
+                  incomeSources: compareScenarioRaw!.incomeSources,
+                  expenses: compareScenarioRaw!.expenses,
+                }
+              : null
+          }
         />
       </main>
       <Footer />

@@ -61,12 +61,104 @@ function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean
   );
 }
 
-export function Header({ scenario }: { scenario: Scenario }) {
+type CreateMode = "duplicate" | "scratch";
+
+function NewScenarioControl({ scenario }: { scenario: Scenario }) {
   const scenarios = usePlanStore((s) => s.plan.scenarios);
   const duplicateScenario = usePlanStore((s) => s.duplicateScenario);
-  const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
-  const [creating, setCreating] = useState(false);
+  const addBlankScenario = usePlanStore((s) => s.addBlankScenario);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [mode, setMode] = useState<CreateMode | null>(null);
+  const [sourceId, setSourceId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+
+  const reset = () => {
+    setMenuOpen(false);
+    setMode(null);
+    setSourceId(null);
+    setNewName("");
+  };
+
+  const commit = (finalMode: CreateMode, finalSourceId: string | null) => {
+    if (!newName.trim()) return reset();
+    if (finalMode === "duplicate") duplicateScenario(finalSourceId ?? scenario.id, newName.trim());
+    else addBlankScenario(newName.trim());
+    reset();
+  };
+
+  // Step 2: naming input, once a mode (and source, if needed) is chosen.
+  if (mode) {
+    return (
+      <input
+        autoFocus
+        value={newName}
+        onChange={(e) => setNewName(e.target.value)}
+        onBlur={() => commit(mode, sourceId)}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        placeholder="Scenario name"
+        className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
+      />
+    );
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setMenuOpen((v) => !v)}
+        className="rounded-md px-3 py-1.5 text-sm text-dim hover:text-foreground"
+      >
+        + New Scenario
+      </button>
+      {menuOpen && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-md border border-border bg-panel p-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              if (scenarios.length > 1) {
+                setSourceId(scenario.id);
+              } else {
+                setMode("duplicate");
+              }
+            }}
+            className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
+          >
+            Duplicate existing plan
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("scratch")}
+            className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
+          >
+            Start from scratch
+          </button>
+          {sourceId !== null && (
+            <div className="mt-1 border-t border-border pt-1">
+              <div className="px-3 pb-1 pt-2 text-xs text-dim">Duplicate which scenario?</div>
+              {scenarios.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    setSourceId(s.id);
+                    setMode("duplicate");
+                  }}
+                  className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Header({ scenario }: { scenario: Scenario }) {
+  const scenarios = usePlanStore((s) => s.plan.scenarios);
+  const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const isPink = useUiStore((s) => s.theme) === "pink";
 
@@ -82,30 +174,7 @@ export function Header({ scenario }: { scenario: Scenario }) {
           {scenarios.map((s) => (
             <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
           ))}
-          {creating ? (
-            <input
-              autoFocus
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onBlur={() => {
-                if (newName.trim()) duplicateScenario(scenario.id, newName.trim());
-                setCreating(false);
-                setNewName("");
-              }}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              placeholder="Scenario name"
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => setCreating(true)}
-              className="rounded-md px-3 py-1.5 text-sm text-dim hover:text-foreground"
-              title={`Duplicate "${scenario.name}" as a new scenario`}
-            >
-              + New Scenario
-            </button>
-          )}
+          <NewScenarioControl scenario={scenario} />
         </nav>
         <BackupControls />
         <LoginButton />
