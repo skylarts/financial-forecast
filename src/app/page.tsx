@@ -42,7 +42,12 @@ function HomeContent() {
     <div className="flex min-h-screen flex-1 flex-col">
       <Header scenario={scenario} />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-6">
-        <KpiStrip kpis={projection.kpis} years={years} dollarMode={dollarMode} />
+        <KpiStrip
+          kpis={projection.kpis}
+          years={years}
+          dollarMode={dollarMode}
+          isFullRange={range[0] === minYear && range[1] === maxYear}
+        />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
         <YearRangePicker
           minYear={minYear}
@@ -56,6 +61,11 @@ function HomeContent() {
           years={years}
           dollarMode={dollarMode}
           onDollarModeChange={setDollarMode}
+          events={scenario.events}
+          incomeSources={scenario.incomeSources}
+          expenses={scenario.expenses}
+          timeline={projection.timeline}
+          people={scenario.household.people}
         />
         <DetailTabs
           accounts={projection.accounts}

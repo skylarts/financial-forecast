@@ -5,10 +5,12 @@ export function KpiStrip({
   kpis,
   years,
   dollarMode,
+  isFullRange,
 }: {
   kpis: ProjectionResult["kpis"];
   years: YearSnapshot[];
   dollarMode: DollarMode;
+  isFullRange: boolean;
 }) {
   const real = dollarMode === "real";
   const eoy = real ? kpis.netWorthEndOfYear1Real : kpis.netWorthEndOfYear1;
@@ -23,7 +25,7 @@ export function KpiStrip({
       value: atRetirement !== null ? formatMoney(atRetirement) : "—",
     },
     { label: "Retirement age", value: kpis.retirementAge !== null ? String(kpis.retirementAge) : "—" },
-    { label: "Net worth at end", value: formatMoney(atEnd) },
+    { label: isFullRange ? "Net worth at end" : `Net worth in ${lastYear?.year ?? ""}`, value: formatMoney(atEnd) },
   ];
 
   return (
