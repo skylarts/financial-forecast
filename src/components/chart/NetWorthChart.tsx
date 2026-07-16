@@ -11,13 +11,20 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, TimelineRow, YearSnapshot } from "@/domain";
+import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { useUiStore } from "@/store/useUiStore";
 import { usePlanStore } from "@/store/usePlanStore";
 import { buildChartMarkers, type ChartMarker } from "./chartMarkers";
 import { MARKER_TONE_CLASS } from "./eventIcons";
 import { MarkerLayoutReporter, type MarkerLayout } from "./MarkerLayoutReporter";
+import { IncomeDrawer } from "@/components/income/IncomeDrawer";
+import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
+import { EventDrawer } from "@/components/events/EventDrawer";
+
+/** Pointer movement (px) below which a marker press counts as a click (open
+ *  its editor) rather than a drag (reschedule its date). */
+const CLICK_MOVE_THRESHOLD = 4;
 
 const CHART_COLORS = ["#5b8def", "#3ecf8e", "#e8555a", "#f4b740", "#a97bea", "#3ec7cf", "#f2789f", "#8fd14f"];
 const PINK_CHART_COLORS = ["#ff4fa3", "#c874e8", "#ff8fab", "#f4a63b", "#8a6bea", "#3ec7cf", "#e8555a", "#5b8def"];
@@ -72,19 +79,18 @@ interface CompareScenarioData {
   events: ScenarioEvent[];
   incomeSources: IncomeSource[];
   expenses: ExpenseBaseline[];
-  timeline: TimelineRow[];
   people: Person[];
 }
 
 export function NetWorthChart({
   accounts: allAccounts,
+  editableAccounts,
   years,
   dollarMode,
   onDollarModeChange,
   events,
   incomeSources,
   expenses,
-  timeline,
   people,
   scenarioName,
   compareOptions,
@@ -93,13 +99,14 @@ export function NetWorthChart({
   compareScenario,
 }: {
   accounts: Account[];
+  /** Accounts selectable in the drawers opened by clicking a marker -- excludes the mandatory Extra Savings account etc. */
+  editableAccounts: Account[];
   years: YearSnapshot[];
   dollarMode: DollarMode;
   onDollarModeChange: (mode: DollarMode) => void;
   events: ScenarioEvent[];
   incomeSources: IncomeSource[];
   expenses: ExpenseBaseline[];
-  timeline: TimelineRow[];
   people: Person[];
   scenarioName: string;
   compareOptions: { id: string; name: string }[];
@@ -122,6 +129,28 @@ export function NetWorthChart({
   const [layout, setLayout] = useState<MarkerLayout | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const pointerDownPosRef = useRef<{ x: number; y: number } | null>(null);
+  const didDragRef = useRef(false);
+
+  const [incomeDrawer, setIncomeDrawer] = useState<{ open: boolean; item?: IncomeSource }>({ open: false });
+  const [expenseDrawer, setExpenseDrawer] = useState<{ open: boolean; item?: ExpenseBaseline }>({ open: false });
+  const [eventDrawer, setEventDrawer] = useState<{ open: boolean; item?: ScenarioEvent }>({ open: false });
+
+  const openMarkerEditor = useCallback(
+    (marker: ChartMarker) => {
+      if (marker.kind === "event") {
+        const ev = events.find((e) => e.id === marker.id);
+        if (ev) setEventDrawer({ open: true, item: ev });
+      } else if (marker.kind === "income") {
+        const inc = incomeSources.find((i) => i.id === marker.id);
+        if (inc) setIncomeDrawer({ open: true, item: inc });
+      } else {
+        const exp = expenses.find((e) => e.id === marker.id);
+        if (exp) setExpenseDrawer({ open: true, item: exp });
+      }
+    },
+    [events, incomeSources, expenses]
+  );
 
   const handleLayout = useCallback((next: MarkerLayout | null) => {
     setLayout((prev) => {
@@ -174,8 +203,8 @@ export function NetWorthChart({
   const dataYears = useMemo(() => data.map((d) => d.year as number), [data]);
 
   const markers = useMemo(
-    () => buildChartMarkers({ events, incomeSources, expenses, timeline, people }),
-    [events, incomeSources, expenses, timeline, people]
+    () => buildChartMarkers({ events, incomeSources, expenses, people }),
+    [events, incomeSources, expenses, people]
   );
 
   const compareMarkers = useMemo(() => {
@@ -184,7 +213,6 @@ export function NetWorthChart({
       events: compareScenario.events,
       incomeSources: compareScenario.incomeSources,
       expenses: compareScenario.expenses,
-      timeline: compareScenario.timeline,
       people: compareScenario.people,
     }).map((m) => ({ ...m, key: `cmp-${m.key}`, isCompare: true, scenarioName: compareScenario.name }));
   }, [compareScenario]);
@@ -233,6 +261,8 @@ export function NetWorthChart({
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     const rect = containerRef.current!.getBoundingClientRect();
     const pointerX = e.clientX - rect.left;
+    pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
+    didDragRef.current = false;
     setHoverKey(null);
     setDrag({
       key: marker.key,
@@ -249,6 +279,10 @@ export function NetWorthChart({
   const handleMarkerPointerMove = (e: React.PointerEvent) => {
     if (!drag || !layout) return;
     e.stopPropagation();
+    const downPos = pointerDownPosRef.current;
+    if (downPos && Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > CLICK_MOVE_THRESHOLD) {
+      didDragRef.current = true;
+    }
     const rect = containerRef.current!.getBoundingClientRect();
     const x = Math.min(layout.right, Math.max(layout.left, e.clientX - rect.left));
     const year = nearestYear(x, layout);
@@ -259,8 +293,18 @@ export function NetWorthChart({
     if (!drag) return;
     e.stopPropagation();
     (e.currentTarget as Element).releasePointerCapture(e.pointerId);
-    applyDrag(drag);
+    pointerDownPosRef.current = null;
+    if (didDragRef.current) applyDrag(drag);
     setDrag(null);
+  };
+
+  /** Native click, not pointerup -- pointerup can be swallowed by pointer
+   *  capture handoff in some automated/synthetic-input environments, while
+   *  click remains reliable. Only fires the editor when the preceding
+   *  pointer sequence didn't actually drag the marker. */
+  const handleMarkerClick = (marker: ChartMarker) => {
+    if (marker.isCompare) return;
+    if (!didDragRef.current) openMarkerEditor(marker);
   };
 
   const toggleAccount = (accountId: string) => {
@@ -481,6 +525,7 @@ export function NetWorthChart({
                         onPointerDown={(e) => handleMarkerPointerDown(e, m, top)}
                         onPointerMove={handleMarkerPointerMove}
                         onPointerUp={handleMarkerPointerUp}
+                        onClick={() => handleMarkerClick(m)}
                         onPointerEnter={() => !drag && setHoverKey(m.key)}
                         onPointerLeave={() => setHoverKey((k) => (k === m.key ? null : k))}
                       >
@@ -504,16 +549,19 @@ export function NetWorthChart({
                 const top = layout.top + TOP_PAD + Math.max(0, idx) * (ICON_SIZE + ICON_GAP);
                 return (
                   <div
-                    className="absolute z-20 w-56 -translate-x-1/2 rounded-md border border-border bg-panel p-2 text-xs shadow-lg"
+                    className="absolute z-20 w-64 -translate-x-1/2 rounded-md border border-border bg-panel p-3 text-xs shadow-lg"
                     style={{ left: x, top: top + ICON_SIZE + 6 }}
                   >
                     {compareScenario && <div className="mb-1 text-[10px] font-semibold text-dim">{m.scenarioName}</div>}
-                    <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] ${MARKER_TONE_CLASS[m.kind]}`}>
-                      {m.badge}
-                    </span>
-                    <div className="mt-1 font-semibold">{m.title}</div>
-                    {m.detail && <div className="text-dim">{m.detail}</div>}
-                    <div className="mt-1 text-dim">{m.startDate}</div>
+                    <div className="mb-1.5 text-sm font-semibold">{m.title}</div>
+                    <div className="flex flex-col gap-1">
+                      {m.rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-3">
+                          <span className="text-dim">{r.label}</span>
+                          <span className="font-medium">{r.value}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 );
               })()}
@@ -546,6 +594,29 @@ export function NetWorthChart({
           </div>
         )}
       </div>
+
+      <IncomeDrawer
+        key={`income-${incomeDrawer.open}-${incomeDrawer.item?.id ?? "new"}`}
+        open={incomeDrawer.open}
+        onClose={() => setIncomeDrawer({ open: false })}
+        income={incomeDrawer.item}
+        people={people}
+        accounts={editableAccounts}
+      />
+      <ExpenseDrawer
+        key={`expense-${expenseDrawer.open}-${expenseDrawer.item?.id ?? "new"}`}
+        open={expenseDrawer.open}
+        onClose={() => setExpenseDrawer({ open: false })}
+        expense={expenseDrawer.item}
+        accounts={editableAccounts}
+      />
+      <EventDrawer
+        open={eventDrawer.open}
+        onClose={() => setEventDrawer({ open: false })}
+        event={eventDrawer.item}
+        accounts={editableAccounts}
+        people={people}
+      />
     </div>
   );
 }
