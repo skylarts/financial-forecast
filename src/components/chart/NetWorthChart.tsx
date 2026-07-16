@@ -66,6 +66,16 @@ export function nextHiddenAccountIds(
   return allHidden ? new Set() : new Set(accountIds);
 }
 
+interface CompareScenarioData {
+  name: string;
+  years: YearSnapshot[];
+  events: ScenarioEvent[];
+  incomeSources: IncomeSource[];
+  expenses: ExpenseBaseline[];
+  timeline: TimelineRow[];
+  people: Person[];
+}
+
 export function NetWorthChart({
   accounts: allAccounts,
   years,
@@ -76,6 +86,11 @@ export function NetWorthChart({
   expenses,
   timeline,
   people,
+  scenarioName,
+  compareOptions,
+  compareScenarioId,
+  onCompareChange,
+  compareScenario,
 }: {
   accounts: Account[];
   years: YearSnapshot[];
@@ -86,9 +101,15 @@ export function NetWorthChart({
   expenses: ExpenseBaseline[];
   timeline: TimelineRow[];
   people: Person[];
+  scenarioName: string;
+  compareOptions: { id: string; name: string }[];
+  compareScenarioId: string | null;
+  onCompareChange: (id: string | null) => void;
+  compareScenario: CompareScenarioData | null;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
   const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
+  const [compareMenuOpen, setCompareMenuOpen] = useState(false);
   const isPink = useUiStore((s) => s.theme) === "pink";
   const theme = isPink ? CHART_THEME.pink : CHART_THEME.dark;
   const palette = isPink ? PINK_CHART_COLORS : CHART_COLORS;
@@ -125,12 +146,21 @@ export function NetWorthChart({
     [allAccounts]
   );
 
+  const compareByYear = useMemo(() => {
+    if (!compareScenario) return null;
+    const map = new Map<number, YearSnapshot>();
+    for (const y of compareScenario.years) map.set(y.year, y);
+    return map;
+  }, [compareScenario]);
+
   const data = useMemo(() => {
     return years.map((y) => {
       const factor = dollarMode === "real" ? y.inflationDeflator : 1;
       const row: Record<string, number> = { year: y.year };
       if (viewMode === "net_worth") {
         row.value = (dollarMode === "real" ? y.netWorthReal : y.netWorthNominal);
+        const cy = compareByYear?.get(y.year);
+        if (cy) row.compareValue = dollarMode === "real" ? cy.netWorthReal : cy.netWorthNominal;
       } else {
         for (const a of accounts) {
           const nominal = y.accountBalances[a.id] ?? 0;
@@ -139,7 +169,7 @@ export function NetWorthChart({
       }
       return row;
     });
-  }, [years, viewMode, dollarMode, accounts]);
+  }, [years, viewMode, dollarMode, accounts, compareByYear]);
 
   const dataYears = useMemo(() => data.map((d) => d.year as number), [data]);
 
@@ -148,17 +178,33 @@ export function NetWorthChart({
     [events, incomeSources, expenses, timeline, people]
   );
 
+  const compareMarkers = useMemo(() => {
+    if (!compareScenario) return [];
+    return buildChartMarkers({
+      events: compareScenario.events,
+      incomeSources: compareScenario.incomeSources,
+      expenses: compareScenario.expenses,
+      timeline: compareScenario.timeline,
+      people: compareScenario.people,
+    }).map((m) => ({ ...m, key: `cmp-${m.key}`, isCompare: true, scenarioName: compareScenario.name }));
+  }, [compareScenario]);
+
+  const allMarkers = useMemo(() => {
+    if (!compareScenario) return markers.map((m) => ({ ...m, scenarioName }));
+    return [...markers.map((m) => ({ ...m, scenarioName })), ...compareMarkers];
+  }, [markers, compareMarkers, compareScenario, scenarioName]);
+
   const markersByYear = useMemo(() => {
     const yearSet = new Set(dataYears);
     const map = new Map<number, ChartMarker[]>();
-    for (const m of markers) {
+    for (const m of allMarkers) {
       if (!yearSet.has(m.year)) continue;
       const list = map.get(m.year) ?? [];
       list.push(m);
       map.set(m.year, list);
     }
     return map;
-  }, [markers, dataYears]);
+  }, [allMarkers, dataYears]);
 
   const chartTopMargin = 4;
 
@@ -181,7 +227,7 @@ export function NetWorthChart({
   );
 
   const handleMarkerPointerDown = (e: React.PointerEvent, marker: ChartMarker, iconTop: number) => {
-    if (!layout) return;
+    if (!layout || marker.isCompare) return;
     e.preventDefault();
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
@@ -232,8 +278,57 @@ export function NetWorthChart({
     setHiddenAccountIds((prev) => nextHiddenAccountIds(prev, accounts.map((a) => a.id)));
   };
 
+  const compareName = compareOptions.find((o) => o.id === compareScenarioId)?.name ?? null;
+
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
+      <div className="relative mb-1 flex items-center justify-center gap-2">
+        <span className="text-base font-semibold">{scenarioName}</span>
+        {compareName && <span className="text-sm font-normal text-dim/70">Vs {compareName}</span>}
+        <div className="relative ml-1">
+          <button
+            type="button"
+            onClick={() => setCompareMenuOpen((v) => !v)}
+            className="rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
+          >
+            {compareName ? "Comparing ▾" : "Compare ▾"}
+          </button>
+          {compareMenuOpen && (
+            <div className="absolute left-1/2 top-full z-30 mt-1 w-48 -translate-x-1/2 rounded-md border border-border bg-panel p-1 shadow-lg">
+              {compareOptions.length === 0 && (
+                <div className="px-3 py-2 text-xs text-dim">No other scenarios yet</div>
+              )}
+              {compareOptions.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => {
+                    onCompareChange(o.id);
+                    setCompareMenuOpen(false);
+                  }}
+                  className={`block w-full rounded px-3 py-2 text-left text-sm hover:bg-accent/15 ${
+                    o.id === compareScenarioId ? "text-foreground" : "text-dim"
+                  }`}
+                >
+                  {o.name}
+                </button>
+              ))}
+              {compareName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onCompareChange(null);
+                    setCompareMenuOpen(false);
+                  }}
+                  className="mt-1 block w-full rounded border-t border-border px-3 py-2 pt-2 text-left text-sm text-dim hover:bg-accent/15"
+                >
+                  Clear comparison
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-dim">
           {viewMode === "net_worth" ? "Net Worth Projection" : "Balance by Account"}
@@ -292,22 +387,38 @@ export function NetWorthChart({
             <Tooltip
               contentStyle={{ background: theme.tooltipBg, border: `1px solid ${theme.tooltipBorder}`, borderRadius: 8 }}
               labelStyle={{ color: theme.label }}
-              formatter={(value, name) => [
-                formatMoney(Number(value)),
-                viewMode === "net_worth" ? "Net Worth" : accounts.find((a) => a.id === name)?.name ?? String(name),
-              ]}
+              formatter={(value, name) => {
+                if (viewMode !== "net_worth") {
+                  return [formatMoney(Number(value)), accounts.find((a) => a.id === name)?.name ?? String(name)];
+                }
+                const label = name === "compareValue" ? (compareName ?? "Compare") : scenarioName;
+                return [formatMoney(Number(value)), label];
+              }}
             />
             <Legend
               onClick={(e) => {
                 if (viewMode === "by_account" && typeof e.dataKey === "string") toggleAccount(e.dataKey);
               }}
-              formatter={(value: string) =>
-                viewMode === "net_worth" ? "Net Worth" : accounts.find((a) => a.id === value)?.name ?? value
-              }
+              formatter={(value: string) => {
+                if (viewMode !== "net_worth") return accounts.find((a) => a.id === value)?.name ?? value;
+                return value === "compareValue" ? (compareName ?? "Compare") : scenarioName;
+              }}
               wrapperStyle={{ fontSize: 12, cursor: viewMode === "by_account" ? "pointer" : "default" }}
             />
             {viewMode === "net_worth" ? (
-              <Line type="monotone" dataKey="value" stroke={palette[0]} dot={false} strokeWidth={2} />
+              <>
+                <Line type="monotone" dataKey="value" stroke={palette[0]} dot={false} strokeWidth={2} />
+                {compareName && (
+                  <Line
+                    type="monotone"
+                    dataKey="compareValue"
+                    stroke={theme.axis}
+                    dot={false}
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                  />
+                )}
+              </>
             ) : (
               accounts.map((a, i) => (
                 <Line
@@ -349,13 +460,17 @@ export function NetWorthChart({
                     return (
                       <div
                         key={m.key}
-                        className={`pointer-events-auto absolute flex cursor-grab items-center justify-center rounded-md text-xs shadow-sm active:cursor-grabbing ${MARKER_TONE_CLASS[m.kind]}`}
+                        className={`pointer-events-auto absolute flex items-center justify-center rounded-md text-xs shadow-sm ${
+                          m.isCompare
+                            ? "cursor-default grayscale bg-dim/15 text-dim"
+                            : `cursor-grab active:cursor-grabbing ${MARKER_TONE_CLASS[m.kind]}`
+                        }`}
                         style={{
                           left: x - ICON_SIZE / 2,
                           top,
                           width: ICON_SIZE,
                           height: ICON_SIZE,
-                          opacity: isDragging ? 0 : 1,
+                          opacity: isDragging ? 0 : m.isCompare ? 0.5 : 1,
                           touchAction: "none",
                           userSelect: "none",
                         }}
@@ -376,7 +491,7 @@ export function NetWorthChart({
             {hoverKey &&
               !drag &&
               (() => {
-                const m = markers.find((mm) => mm.key === hoverKey);
+                const m = allMarkers.find((mm) => mm.key === hoverKey);
                 if (!m) return null;
                 const x = layout.xByYear.get(m.year);
                 if (x === undefined) return null;
@@ -388,6 +503,7 @@ export function NetWorthChart({
                     className="absolute z-20 w-56 -translate-x-1/2 rounded-md border border-border bg-panel p-2 text-xs shadow-lg"
                     style={{ left: x, top: top + ICON_SIZE + 6 }}
                   >
+                    {compareScenario && <div className="mb-1 text-[10px] font-semibold text-dim">{m.scenarioName}</div>}
                     <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] ${MARKER_TONE_CLASS[m.kind]}`}>
                       {m.badge}
                     </span>

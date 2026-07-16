@@ -13,6 +13,7 @@ import type {
 } from "@/domain";
 import { planSchema } from "@/domain";
 import { mockScenario } from "@/lib/mockScenario";
+import { makeBlankScenario } from "@/lib/blankScenario";
 import { looksLikeV2Plan, migrateV2PlanToV3 } from "@/lib/migrateV2Plan";
 
 const defaultPlan: Plan = {
@@ -29,8 +30,13 @@ interface PlanState {
   activeScenario: () => Scenario;
   setActiveScenarioId: (id: string) => void;
 
+  // Scenario comparison (UI-only, not persisted)
+  compareScenarioId: string | null;
+  setCompareScenarioId: (id: string | null) => void;
+
   // Scenario management
   duplicateScenario: (sourceId: string, newName: string) => string;
+  addBlankScenario: (newName: string) => string;
   renameScenario: (id: string, name: string) => void;
   deleteScenario: (id: string) => void;
 
@@ -116,6 +122,9 @@ export const usePlanStore = create<PlanState>()(
       setActiveScenarioId: (id) =>
         set((state) => ({ plan: { ...state.plan, activeScenarioId: id } })),
 
+      compareScenarioId: null,
+      setCompareScenarioId: (id) => set(() => ({ compareScenarioId: id })),
+
       duplicateScenario: (sourceId, newName) => {
         const source = get().plan.scenarios.find((s) => s.id === sourceId);
         if (!source) return sourceId;
@@ -133,6 +142,15 @@ export const usePlanStore = create<PlanState>()(
         return newId;
       },
 
+      addBlankScenario: (newName) => {
+        const blank = { ...makeBlankScenario(newName) };
+        set((state) => ({
+          plan: { ...state.plan, scenarios: [...state.plan.scenarios, blank], activeScenarioId: blank.id },
+          lastSavedAt: Date.now(),
+        }));
+        return blank.id;
+      },
+
       renameScenario: (id, name) =>
         set((state) => ({
           plan: {
@@ -148,7 +166,11 @@ export const usePlanStore = create<PlanState>()(
           if (remaining.length === 0) return state;
           const activeScenarioId =
             state.plan.activeScenarioId === id ? remaining[0].id : state.plan.activeScenarioId;
-          return { plan: { ...state.plan, scenarios: remaining, activeScenarioId }, lastSavedAt: Date.now() };
+          return {
+            plan: { ...state.plan, scenarios: remaining, activeScenarioId },
+            compareScenarioId: state.compareScenarioId === id ? null : state.compareScenarioId,
+            lastSavedAt: Date.now(),
+          };
         }),
 
       addPerson: (person) =>
