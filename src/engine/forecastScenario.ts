@@ -113,7 +113,7 @@ function addTo(map: Map<Id, number>, key: Id, amount: number): void {
 }
 
 function effectiveAnnualRate(account: EngineAccount, month: string): number {
-  // A growth_rate_change event overrides everything else once it's started --
+  // A growthRateSchedule entry overrides everything else once it's started --
   // pick the last one (by startDate) that has begun as of this month.
   const overrides = account.growthRateOverrides;
   if (overrides?.length) {

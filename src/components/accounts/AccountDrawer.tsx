@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import type { Account, AccountClass, Person, RecurrenceFrequency, TaxTreatment } from "@/domain";
 import { accountObjectSchema, categoryForClass } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner, inputClass, labelClass } from "@/components/ui/formFields";
+import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner, InfoTooltip, inputClass, labelClass } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
 
 const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
@@ -283,12 +283,12 @@ export function AccountDrawer({
         <Field label="Starting Balance">
           <TextInput reg={register("startingBalance", { valueAsNumber: true })} type="number" step="0.01" />
         </Field>
-        <Field label="Annual Growth Rate (e.g. 0.07 for 7%)">
+        <Field
+          label="Annual Growth Rate (e.g. 0.07 for 7%)"
+          hint={growthRows.length > 0 ? "Applies until the first scheduled change below." : undefined}
+        >
           <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
         </Field>
-        {growthRows.length > 0 && (
-          <p className="text-xs text-dim">Rate above applies until the first scheduled change below.</p>
-        )}
         {growthRows.map((row) => (
           <div key={row.key} className="flex items-end gap-2 rounded-md border border-border p-2">
             <label className={labelClass}>
@@ -329,11 +329,6 @@ export function AccountDrawer({
             options={[{ value: "", label: "Joint / none" }, ...people.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </Field>
-
-        <p className="text-xs text-dim">
-          Whether this account is a spending hub, receives routed surplus, or gets drawn down for a shortfall is set
-          in the <span className="font-medium text-foreground">Routing</span> tab, not here.
-        </p>
 
         <button
           type="button"
@@ -424,7 +419,10 @@ export function AccountDrawer({
                       />
                     </label>
                     <label className={labelClass}>
-                      Funded from
+                      <span className="inline-flex items-center gap-1">
+                        Funded from
+                        <InfoTooltip text="Paycheck deduction (e.g. 401k) grows this account without reducing take-home cash -- enter income net of it. Take-home pay (e.g. Roth IRA, brokerage) is drawn from your spending account each period." />
+                      </span>
                       <select
                         className={inputClass}
                         value={row.funding}
@@ -438,7 +436,10 @@ export function AccountDrawer({
                       </select>
                     </label>
                     <label className={labelClass}>
-                      Ends on (optional)
+                      <span className="inline-flex items-center gap-1">
+                        Ends on (optional)
+                        <InfoTooltip text="Leave blank to stop automatically when this account's owner retires. Each change takes over when the next one starts." />
+                      </span>
                       <input
                         className={inputClass}
                         type="date"
@@ -457,16 +458,6 @@ export function AccountDrawer({
               >
                 {contribRows.length === 0 ? "+ Add contribution" : "+ Add contribution change"}
               </button>
-
-              {contribRows.length > 0 && (
-                <p className="mt-2 text-xs text-dim">
-                  <span className="font-medium">Funded from:</span> &ldquo;Paycheck deduction&rdquo; (e.g. a 401k or
-                  Roth 401k) grows this account without reducing your take-home cash &mdash; enter your income net of it.
-                  &ldquo;Take-home pay&rdquo; (e.g. a Roth IRA or taxable brokerage) is drawn from your spending account
-                  each period. Leave a contribution&rsquo;s end date blank to stop automatically when the account&rsquo;s
-                  owner retires; each change takes over when the next one starts.
-                </p>
-              )}
             </div>
 
             <CheckboxInput

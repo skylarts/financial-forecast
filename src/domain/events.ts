@@ -63,22 +63,12 @@ export const customTransferEventSchema = z.object({
 });
 export type CustomTransferEvent = z.infer<typeof customTransferEventSchema>;
 
-export const growthRateChangeEventSchema = z.object({
-  ...baseEventFields,
-  type: z.literal("growth_rate_change"),
-  targetAccountId: idSchema,
-  /** Replaces the account's growthRatePct (or propertyGrowthRatePct for real estate) from startDate on. */
-  newGrowthRatePct: z.number(),
-});
-export type GrowthRateChangeEvent = z.infer<typeof growthRateChangeEventSchema>;
-
 export const scenarioEventSchema = z
   .discriminatedUnion("type", [
     retireEventSchema,
     buyHomeEventSchema,
     haveAKidEventSchema,
     customTransferEventSchema,
-    growthRateChangeEventSchema,
   ])
   .refine((e) => e.type !== "custom_transfer" || e.fromAccountId !== e.toAccountId, {
     message: "fromAccountId and toAccountId must differ",

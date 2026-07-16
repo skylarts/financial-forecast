@@ -24,7 +24,6 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   buy_home: "Buy a home",
   have_a_kid: "Have a kid",
   custom_transfer: "Transfer",
-  growth_rate_change: "Growth rate",
 };
 
 export function freqLabel(frequency: string, intervalYears?: number): string {

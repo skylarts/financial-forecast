@@ -112,19 +112,18 @@ export function ExpenseDrawer({
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Rent" />
         </Field>
-        <Field label="Amount (per occurrence, today's dollars)">
+        <Field label="Amount" hint="Per occurrence, today's dollars.">
           <TextInput reg={register("amount", { valueAsNumber: true, required: true })} type="number" step="0.01" />
         </Field>
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
         </Field>
-        <Field label="Or repeat every N years (optional)">
+        <Field
+          label="Or repeat every N years (optional)"
+          hint="For a repeat purchase like a car every few years. Overrides the Frequency above."
+        >
           <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
         </Field>
-        <p className="-mt-1 text-xs text-dim">
-          For a repeat purchase like a car every few years: repeats every N years from the start date and overrides the
-          frequency above.
-        </p>
         <Field label="Category">
           <SelectInput reg={register("category")} options={CATEGORY_OPTIONS} />
         </Field>
@@ -140,10 +139,10 @@ export function ExpenseDrawer({
         <Field label="Start Date">
           <TextInput reg={register("startDate", { required: true })} type="date" />
         </Field>
-        <Field label="End Date (optional -- leave blank to continue indefinitely)">
+        <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
           <TextInput reg={register("endDate")} type="date" />
         </Field>
-        <Field label="Annual Growth Rate (actual, e.g. 0.03 to track inflation)">
+        <Field label="Annual Growth Rate (e.g. 0.03 to track inflation)" hint="Actual rate, not just inflation.">
           <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
         </Field>
 
