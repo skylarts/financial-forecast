@@ -289,9 +289,13 @@ export function NetWorthChart({
           <button
             type="button"
             onClick={() => setCompareMenuOpen((v) => !v)}
-            className="rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
+            title={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
+            aria-label={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
+            className={`rounded-md border px-2 py-1 text-sm leading-none ${
+              compareName ? "border-accent text-accent" : "border-border text-dim hover:text-foreground"
+            }`}
           >
-            {compareName ? "Comparing ▾" : "Compare ▾"}
+            ⇄
           </button>
           {compareMenuOpen && (
             <div className="absolute left-1/2 top-full z-30 mt-1 w-48 -translate-x-1/2 rounded-md border border-border bg-panel p-1 shadow-lg">
