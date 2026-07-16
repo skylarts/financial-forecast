@@ -215,7 +215,7 @@ export function AccountsTable({
             </tr>
             <Section
               title="Assets"
-              accounts={accounts.filter((a) => a.category === "asset")}
+              accounts={accounts.filter((a) => a.category === "asset" && !a.isExtraSavings)}
               years={years}
               groups={ASSET_CLASS_GROUPS}
               editableIds={editableAccountIds}
@@ -237,6 +237,35 @@ export function AccountsTable({
               }}
               mode={dollarMode}
             />
+            {/* Extra Savings is the mandatory system account, not a class of
+                accounts -- shown as its own peer section at the very bottom
+                instead of folded into the Cash group under Assets. */}
+            {(() => {
+              const extraSavings = accounts.find((a) => a.isExtraSavings);
+              if (!extraSavings) return null;
+              return (
+                <Fragment>
+                  <tr className="border-t border-border bg-background/40">
+                    <td className="py-2 pl-2 font-semibold">Extra Savings</td>
+                    {years.map((y) => (
+                      <td key={y.year} className="py-2 pr-2 text-right font-semibold">
+                        {formatMoney(deflate(balanceOf(y, extraSavings.id), y, dollarMode))}
+                      </td>
+                    ))}
+                  </tr>
+                  <AccountRow
+                    account={extraSavings}
+                    years={years}
+                    editable={editableAccountIds.has(extraSavings.id)}
+                    onEdit={() => {
+                      setDrawerAccount(extraSavings);
+                      setDrawerOpen(true);
+                    }}
+                    mode={dollarMode}
+                  />
+                </Fragment>
+              );
+            })()}
           </tbody>
         </table>
         </div>

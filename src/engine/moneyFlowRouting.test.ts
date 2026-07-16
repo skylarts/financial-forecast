@@ -124,6 +124,49 @@ describe("Extra Savings split: balance caps still apply", () => {
   });
 });
 
+describe("automatic account routing", () => {
+  it("an income/expense with no depositAccountId/paymentAccountId posts automatically through Extra Savings", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 0, growthRatePct: 0 });
+    const scenario = makeScenario({
+      // No account is tagged isSpendingAccount -- makeScenario auto-injects a
+      // fresh Extra Savings account, mirroring scenarioSchema's transform.
+      accounts: [checking],
+      incomeSources: [makeIncome({ name: "Salary", amount: 5_000, frequency: "monthly" })], // depositAccountId omitted -> null
+      expenses: [makeExpense({ name: "Living", amount: 3_000, frequency: "monthly" })], // paymentAccountId omitted -> null
+      startDate: "2026-01-01",
+      horizonEndDate: "2026-12-31",
+    });
+    const extraSavings = scenario.accounts.find((a) => a.isExtraSavings)!;
+    const result = projectScenario(scenario);
+    const year = result.years[0];
+
+    // $2k/mo net surplus, nowhere else to go (no splitOrder configured) -- it
+    // all lands and stays in the auto-injected Extra Savings account.
+    expect(year.accountBalances[extraSavings.id]).toBeCloseTo(24_000, 0);
+    // Checking was never targeted by anything, so it's untouched.
+    expect(year.accountBalances[checking.id]).toBeCloseTo(0, 0);
+  });
+
+  it("an explicit depositAccountId/paymentAccountId still overrides the automatic default", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 0, growthRatePct: 0 });
+    const scenario = makeScenario({
+      accounts: [checking],
+      // Explicitly directed at Checking -- e.g. an inheritance landing
+      // straight in a specific account, bypassing Extra Savings entirely.
+      incomeSources: [makeIncome({ name: "Inheritance", amount: 50_000, frequency: "one_time", depositAccountId: checking.id })],
+      startDate: "2026-01-01",
+      horizonEndDate: "2026-12-31",
+    });
+    const extraSavings = scenario.accounts.find((a) => a.isExtraSavings)!;
+    const result = projectScenario(scenario);
+    const year = result.years[0];
+
+    expect(year.accountBalances[checking.id]).toBeCloseTo(50_000, 0);
+    // Never touched Extra Savings at all.
+    expect(year.accountBalances[extraSavings.id]).toBeCloseTo(0, 0);
+  });
+});
+
 describe("Extra Savings deficit cascade", () => {
   it("still refills Extra Savings to its hardcoded $0 floor from an active drain source", () => {
     const { scenario, extraSavings } = buildScenario(
