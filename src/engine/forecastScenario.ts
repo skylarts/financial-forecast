@@ -9,7 +9,7 @@ import type {
   ProjectionResult,
   ProjectionWarning,
   LedgerEvent,
-  MoneyFlowStop,
+  SplitStop,
   DrainStop,
 } from "@/domain";
 import { ageOn, compareDates, eachMonthStart, endOfYear, yearOf } from "./dateMath";
@@ -143,7 +143,7 @@ function isDrainStopActive(stop: DrainStop, month: ISODate): boolean {
   return true;
 }
 
-function effectiveMaxBalance(stop: MoneyFlowStop, yearsSinceStart: number, inflationRatePct: number): number {
+function effectiveMaxBalance(stop: SplitStop, yearsSinceStart: number, inflationRatePct: number): number {
   if (stop.maxBalance == null) return Infinity;
   const rate = stop.maxBalanceGrowthRatePct ?? inflationRatePct;
   return stop.maxBalance * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
@@ -218,45 +218,31 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const mortgageByAccountId = new Map<Id, MortgageSpec>(resolved.mortgages.map((m) => [m.accountId, m]));
 
   // Resolve the money-flow waterfall against the actual (active) accounts:
-  // hubs are the spending accounts (each with its own buffer), fillOrder is
-  // the ordered surplus-target chain, drainOrder is the ordered deficit
-  // cascade. List order IS the priority -- no numeric priority fields anymore.
-  const spendingHubs = moneyFlow.hubs
-    .map((hub) => {
-      const account = accountById.get(hub.accountId);
-      return account && !account.isExcluded ? { account, hub } : null;
-    })
-    .filter((x): x is { account: EngineAccount; hub: (typeof moneyFlow.hubs)[number] } => x !== null);
-  const fillStops = moneyFlow.fillOrder
+  // Extra Savings is the sole hub (see resolvePrimarySpendingAccountId and
+  // scenarioSchema's auto-inject transform), splitOrder is the ordered
+  // surplus-target chain, drainOrder is the ordered deficit cascade. List
+  // order IS the priority -- no numeric priority fields anywhere.
+  const primarySpendingAccountId = resolvePrimarySpendingAccountId(activeAccounts);
+  const extraSavingsAccount = primarySpendingAccountId ? accountById.get(primarySpendingAccountId) : undefined;
+  const splitStops = moneyFlow.splitOrder
     .map((stop) => {
       const account = accountById.get(stop.accountId);
       return account && !account.isExcluded ? { account, stop } : null;
     })
-    .filter((x): x is { account: EngineAccount; stop: MoneyFlowStop } => x !== null);
+    .filter((x): x is { account: EngineAccount; stop: SplitStop } => x !== null);
   const drainStops = moneyFlow.drainOrder
     .map((stop) => {
       const account = accountById.get(stop.accountId);
       return account && account.category === "asset" && !account.isExcluded ? { account, stop } : null;
     })
     .filter((x): x is { account: EngineAccount; stop: DrainStop } => x !== null);
-  // A hub's buffer ("keep $X here") and a fill stop's cap ("hold at most $X
-  // here") are contradictory instructions when they name the SAME account and
-  // the cap is the lower of the two: the cap-overflow pass would push cash out
-  // to the next fill stop, and the deficit cascade would immediately drag it
-  // back to refill the buffer -- churning the same dollars every month, with
-  // each round trip booked as a withdrawal (and taxed, for a taxable source).
-  // The buffer wins: it's the floor the cascade actively defends, so a ceiling
-  // below it can never hold. Ceilings are therefore raised to the buffer for
-  // any account that is both, and the conflict is surfaced as a warning rather
-  // than silently resolved.
-  const hubBufferByAccountId = new Map<Id, number>(
-    spendingHubs.map(({ account, hub }) => [account.id, hub.bufferAmount ?? 0])
-  );
-  const primarySpendingAccountId = resolvePrimarySpendingAccountId(activeAccounts, moneyFlow);
-  // Outflows from a spending hub are ordinary expenses; outflows from any
-  // OTHER asset account (a savings/investment) are "withdrawals" for the
-  // Cash Flow tab's Withdrawals section.
-  const hubIds = new Set(spendingHubs.map((h) => h.account.id));
+  // Outflows from Extra Savings are ordinary expenses; outflows from any
+  // OTHER asset account (checking, savings, an investment) are "withdrawals"
+  // for the Cash Flow tab's Withdrawals section -- checking is no longer a
+  // privileged hub, so a directed expense paid straight from it now reports
+  // as a withdrawal like any other account, and "cash on hand" means Extra
+  // Savings' balance specifically, not checking's.
+  const hubIds = new Set<Id>(extraSavingsAccount ? [extraSavingsAccount.id] : []);
 
   const balances = new Map<Id, number>(accounts.map((a) => [a.id, 0]));
   // Cost basis for taxable_investment accounts (average-cost method -- no
@@ -402,6 +388,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     const month = months[i];
     const yearMonth = month.slice(0, 7);
     const isJanuary = month.endsWith("-01-01");
+
+    // Captured BEFORE this month's growth/postings/mortgages/RMDs run, so the
+    // surplus split (step 5) can size itself off exactly this month's FRESH
+    // inflow to Extra Savings -- see step 5 for why that distinction matters.
+    const extraSavingsMonthStart = extraSavingsAccount ? balances.get(extraSavingsAccount.id) ?? 0 : 0;
 
     // 1. Growth (skipped in an account's creation month -- mirrors the
     //    proven prior engine's "no interest on day one" rule -- and skipped
@@ -598,57 +589,36 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       }
     }
 
-    // 5. Surplus routing. Each hub floats between its floor (bufferAmount)
-    //    and its ceiling (ceilingAmount, defaulting to the floor); only the
-    //    amount above the ceiling sweeps out. Each fill stop has an optional
-    //    maxBalance ceiling (grown yearly for inflation); a stop is filled
-    //    only up to its ceiling and the overflow spills to the next stop in
-    //    list order. Uncapped stops absorb everything (Infinity room),
-    //    matching the legacy behavior.
+    // 5. Extra Savings surplus split. Extra Savings has no user-configurable
+    //    floor/ceiling of its own -- freshSurplus is exactly what THIS MONTH
+    //    added to its balance (captured before growth/postings/mortgages/RMDs
+    //    ran, at the top of this iteration), not its running total. This is
+    //    deliberate: splitting against the whole balance would re-offer money
+    //    that already accumulated in a prior month -- left unclaimed on
+    //    purpose, as a reserve -- to the split again, slowly draining it
+    //    instead of letting it grow. Each stop is either a flat $ amount or a
+    //    percentage of what's left after the stops above it (cascading, not a
+    //    share of the original total); a stop's own maxBalance ceiling still
+    //    applies on top of that, and anything a capped stop can't absorb
+    //    spills to the next stop, same as the old fill order. Whatever the
+    //    whole list doesn't claim simply stays in Extra Savings.
     const yearsSinceStart = currentYear - yearOf(settings.startDate);
     const inflationFactor = Math.pow(1 + settings.inflationRatePct, Math.max(0, yearsSinceStart));
-    // This stop's ceiling, floored at its own hub buffer if the account is also
-    // a hub -- see hubBufferByAccountId above for why the buffer wins.
-    const ceilingForStop = (stop: MoneyFlowStop): number => {
-      const cap = effectiveMaxBalance(stop, yearsSinceStart, settings.inflationRatePct);
-      const buffer = (hubBufferByAccountId.get(stop.accountId) ?? 0) * inflationFactor;
-      return Math.max(cap, buffer);
-    };
-    for (const { account: spender, hub } of spendingHubs) {
-      const balance = balances.get(spender.id) ?? 0;
-      // Keep a cash buffer in the spending account (grown for inflation) and
-      // only sweep what's above it -- prevents zeroing out checking each month
-      // and the resulting sweep/withdraw churn.
-      const buffer = (hub.bufferAmount ?? 0) * inflationFactor;
-      // A hub's ceiling is the sweep-out trigger and can sit above its floor
-      // (e.g. "keep 50k, sweep anything past 100k"), letting the balance
-      // float in that range without moving money. ceilingAmount defaults to
-      // the floor (legacy single-number behavior: sweep everything past the
-      // buffer) and is clamped so it can never be set below the floor --
-      // otherwise the deficit cascade would immediately refill what the
-      // sweep just pushed out, the same churn a mis-set fill cap used to cause.
-      const ceilingRate = hub.ceilingGrowthRatePct ?? settings.inflationRatePct;
-      const rawCeiling =
-        hub.ceilingAmount == null ? buffer : hub.ceilingAmount * Math.pow(1 + ceilingRate, Math.max(0, yearsSinceStart));
-      const ceiling = Math.max(buffer, rawCeiling);
-      let remaining = balance - ceiling;
-      if (remaining <= 0) continue;
-      // Fixed-split percentages apply to the whole sweepable surplus, not the
-      // running remainder, so each target's share is independent of order.
-      const splitBase = remaining;
-      for (const { account: target, stop } of fillStops) {
-        if (remaining <= 0) break;
-        if (target.id === spender.id) continue;
-        const cap = ceilingForStop(stop);
+    if (extraSavingsAccount) {
+      const freshSurplus = (balances.get(extraSavingsAccount.id) ?? 0) - extraSavingsMonthStart;
+      let remaining = freshSurplus;
+      for (const { account: target, stop } of splitStops) {
+        if (remaining <= 0.005) break;
+        if (target.id === extraSavingsAccount.id) continue;
+        const cap = effectiveMaxBalance(stop, yearsSinceStart, settings.inflationRatePct);
         const room = cap - (balances.get(target.id) ?? 0);
         if (room <= 0) continue; // target already at/over its ceiling -- spill onward
-        const requested =
-          moneyFlow.fillSplitMode === "fixed_split" ? splitBase * (stop.splitPct ?? 0) : remaining; // priority_fill: this target takes all it can hold
-        const take = Math.min(requested, room, remaining);
+        const offered = stop.kind === "flat" ? (stop.amount ?? 0) * inflationFactor : remaining * (stop.pct ?? 0);
+        const take = Math.min(offered, room, remaining);
         if (take <= 0) continue;
-        balances.set(spender.id, (balances.get(spender.id) ?? 0) - take);
+        balances.set(extraSavingsAccount.id, (balances.get(extraSavingsAccount.id) ?? 0) - take);
         balances.set(target.id, (balances.get(target.id) ?? 0) + take);
-        acc.rollforward.get(spender.id)!.withdrawals += take;
+        acc.rollforward.get(extraSavingsAccount.id)!.withdrawals += take;
         acc.rollforward.get(target.id)!.deposits += take;
         acc.surplusRouted += take;
         addTo(acc.surplusByAccount, target.id, take);
@@ -657,31 +627,31 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         ledger.push({
           date: month,
           kind: "surplus_route",
-          accountId: spender.id,
+          accountId: extraSavingsAccount.id,
           toAccountId: target.id,
           amount: take,
-          note: `Surplus swept from ${spender.name} to ${target.name}`,
+          note: `Surplus split from ${extraSavingsAccount.name} to ${target.name}`,
         });
       }
     }
 
-    // 5b. Cap overflow. The sweep above only catches money entering a target
-    //     from a spending account. A target can also exceed its cap via a
-    //     custom transfer landing on it directly, income deposited straight
-    //     into it, or its own organic growth. So: for every fill stop
-    //     currently above its cap, walk later stops in list order and push
-    //     the excess down the chain, landing wherever there's room. This is a
-    //     rebalance between the user's own accounts, so it's recorded in
-    //     rollforwards (balances must still reconcile) but explicitly NOT
-    //     counted in the surplusRouted headline, which tracks routed income only.
-    for (let ti = 0; ti < fillStops.length; ti++) {
-      const over = fillStops[ti];
-      const overCap = ceilingForStop(over.stop);
+    // 5b. Cap overflow. The split above only catches money entering a target
+    //     from Extra Savings. A target can also exceed its cap via a custom
+    //     transfer landing on it directly, income deposited straight into it,
+    //     or its own organic growth. So: for every split stop currently above
+    //     its cap, walk later stops in list order and push the excess down
+    //     the chain, landing wherever there's room. This is a rebalance
+    //     between the user's own accounts, so it's recorded in rollforwards
+    //     (balances must still reconcile) but explicitly NOT counted in the
+    //     surplusRouted headline, which tracks routed income only.
+    for (let ti = 0; ti < splitStops.length; ti++) {
+      const over = splitStops[ti];
+      const overCap = effectiveMaxBalance(over.stop, yearsSinceStart, settings.inflationRatePct);
       let excess = (balances.get(over.account.id) ?? 0) - overCap;
       if (excess <= 0.005) continue;
-      for (let tj = ti + 1; tj < fillStops.length && excess > 0.005; tj++) {
-        const dest = fillStops[tj];
-        const destCap = ceilingForStop(dest.stop);
+      for (let tj = ti + 1; tj < splitStops.length && excess > 0.005; tj++) {
+        const dest = splitStops[tj];
+        const destCap = effectiveMaxBalance(dest.stop, yearsSinceStart, settings.inflationRatePct);
         const room = destCap - (balances.get(dest.account.id) ?? 0);
         if (room <= 0) continue; // next target also full -- keep spilling onward
         const move = Math.min(excess, room);
@@ -710,49 +680,47 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // money out with no destination.
     }
 
-    // 6. Deficit cascade. Triggers once a hub drops below its OWN configured
-    //    buffer (the same "Keep $" amount section 5 sweeps surplus down to),
-    //    not just once it goes negative -- so a hub with a buffer set stays
-    //    topped up at that floor instead of running down toward $0 before
-    //    getting any help. A hub with no buffer configured (the common case)
-    //    reproduces the original $0-trigger behavior exactly. Only drain
-    //    stops whose optional date window covers this month participate --
-    //    lets e.g. a brokerage fund a shortfall for a few years until a
+    // 6. Deficit cascade. Triggers once Extra Savings drops below $0 --
+    //    hardcoded, not user-configurable (see splitStopSchema/moneyFlowSchema
+    //    docs: Extra Savings has no floor/ceiling input of its own). Only
+    //    drain stops whose optional date window covers this month participate
+    //    -- lets e.g. a brokerage fund a shortfall for a few years until a
     //    later account becomes the active source.
-    for (const { account: spender, hub } of spendingHubs) {
-      const floor = (hub.bufferAmount ?? 0) * inflationFactor;
-      let shortfall = floor - (balances.get(spender.id) ?? 0);
-      if (shortfall <= 0) continue;
-      const active = drainStops.filter(({ stop }) => isDrainStopActive(stop, month));
-      const totalSplit = active.reduce((s, { stop }) => s + (stop.splitPct ?? 0), 0);
+    if (extraSavingsAccount) {
+      const spender = extraSavingsAccount;
+      let shortfall = 0 - (balances.get(spender.id) ?? 0);
+      if (shortfall > 0) {
+        const active = drainStops.filter(({ stop }) => isDrainStopActive(stop, month));
+        const totalSplit = active.reduce((s, { stop }) => s + (stop.splitPct ?? 0), 0);
 
-      if (moneyFlow.drainSplitMode === "fixed_split" && totalSplit > 0) {
-        // Pass 1: each active source's target share of the ORIGINAL
-        // shortfall (not a shrinking remainder, so ratios stay meaningful
-        // regardless of draw order).
-        const originalShortfall = shortfall;
-        for (const { account: source, stop } of active) {
-          const target = originalShortfall * ((stop.splitPct ?? 0) / totalSplit);
-          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
-          shortfall -= drawFromSource(source, spender, target, month, floor);
-        }
-        // Pass 2: top up any unmet remainder from active sources in list
-        // order -- the split is a target ratio, not a hard cap, so the
-        // shortfall still gets fully covered whenever the combined active
-        // balance allows it, rather than leaving the household short
-        // because one bucket ran low this month.
-        for (const { account: source, stop } of active) {
-          if (shortfall <= 0) break;
-          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
-          shortfall -= drawFromSource(source, spender, shortfall, month, floor);
-        }
-      } else {
-        // priority_fill (default): drain each active source fully (down to
-        // its floor) before moving to the next, in list order.
-        for (const { account: source, stop } of active) {
-          if (shortfall <= 0) break;
-          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
-          shortfall -= drawFromSource(source, spender, shortfall, month, floor);
+        if (moneyFlow.drainSplitMode === "fixed_split" && totalSplit > 0) {
+          // Pass 1: each active source's target share of the ORIGINAL
+          // shortfall (not a shrinking remainder, so ratios stay meaningful
+          // regardless of draw order).
+          const originalShortfall = shortfall;
+          for (const { account: source, stop } of active) {
+            const target = originalShortfall * ((stop.splitPct ?? 0) / totalSplit);
+            const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+            shortfall -= drawFromSource(source, spender, target, month, floor);
+          }
+          // Pass 2: top up any unmet remainder from active sources in list
+          // order -- the split is a target ratio, not a hard cap, so the
+          // shortfall still gets fully covered whenever the combined active
+          // balance allows it, rather than leaving the household short
+          // because one bucket ran low this month.
+          for (const { account: source, stop } of active) {
+            if (shortfall <= 0) break;
+            const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+            shortfall -= drawFromSource(source, spender, shortfall, month, floor);
+          }
+        } else {
+          // priority_fill (default): drain each active source fully (down to
+          // its floor) before moving to the next, in list order.
+          for (const { account: source, stop } of active) {
+            if (shortfall <= 0) break;
+            const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+            shortfall -= drawFromSource(source, spender, shortfall, month, floor);
+          }
         }
       }
     }
@@ -995,23 +963,6 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const unlinkedMortgages = activeAccounts.filter((a) => a.class === "mortgage" && !a.loanTerms?.linkedAssetId);
   for (const m of unlinkedMortgages) {
     warnings.unshift({ year: yearOf(m.effectiveStartDate), kind: "unlinked_mortgage", accountId: m.id, message: `${m.name} has no linked real estate asset.` });
-  }
-
-  // An account that is both a hub and a fill stop, with a cap below its own
-  // buffer, is asking the engine to hold two balances at once. The buffer wins
-  // (see hubBufferByAccountId); say so, since the cap the user typed is being
-  // overridden.
-  const startYear = yearOf(settings.startDate);
-  for (const { account, stop } of fillStops) {
-    if (stop.maxBalance == null) continue;
-    const buffer = hubBufferByAccountId.get(account.id);
-    if (buffer == null || stop.maxBalance >= buffer) continue;
-    warnings.unshift({
-      year: startYear,
-      kind: "routing_conflict",
-      accountId: account.id,
-      message: `${account.name} is set to keep a ${Math.round(buffer).toLocaleString()} spending buffer but also capped at ${Math.round(stop.maxBalance).toLocaleString()} as a surplus target. The buffer wins and the cap is ignored -- remove one of the two.`,
-    });
   }
 
   return {

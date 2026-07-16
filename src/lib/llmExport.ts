@@ -3,7 +3,7 @@ import type {
   DrainStop,
   ExpenseBaseline,
   IncomeSource,
-  MoneyFlowStop,
+  SplitStop,
   Scenario,
   ScenarioEvent,
   TemporaryAdjustment,
@@ -21,7 +21,7 @@ const GLOSSARY = `## Glossary
 - **Social Security & pension are gross**: these two income categories are entered as their **gross** (pre-tax) amount. The engine computes tax on them itself (Social Security is only partly taxable, per IRS rules); don't treat their listed amount as take-home cash.
 - **Account \`class\`**: the type of account — \`cash\`, \`taxable_investment\`, \`tax_deferred\` (traditional 401k/IRA), \`tax_free\` (Roth), \`real_estate\`, \`other_asset\`, \`credit_card\`, \`loan\`, or \`mortgage\`. Anything in \`credit_card\`/\`loan\`/\`mortgage\` is a liability; everything else is an asset.
 - **Account \`taxTreatment\`**: how withdrawals/growth are taxed — \`taxable\` (brokerage/savings), \`tax_deferred\` (pay ordinary income tax on withdrawal, e.g. traditional 401k/IRA), \`tax_free\` (Roth — no tax on qualified withdrawals), or \`n/a\` (real estate, loans, etc.). When left at \`n/a\`, the engine infers the treatment from the class, so a brokerage/traditional/Roth account is still taxed correctly.
-- **Routing (hubs / fill order / drain order)**: money doesn't move between accounts arbitrarily. One or more accounts are designated **spending hubs** (income deposits here, expenses pay from here). Surplus cash above each hub's buffer sweeps into the **fill order** (an ordered list of accounts that receive extra cash, each with an optional balance cap). When a hub runs short, the shortfall is covered by the **drain order** (an ordered list of accounts drawn down to cover the gap, e.g. selling investments to cover a deficit).
+- **Routing (Extra Savings / split order / drain order)**: money doesn't move between accounts arbitrarily. Exactly one account per scenario is flagged \`isExtraSavings\` — it's the mandatory spending hub: income deposits there, expenses pay from there, and it has no user-configurable floor or ceiling of its own. Each month it captures whatever net income-minus-expenses landed on it (the "fresh surplus"), and the **split order** (an ordered list of accounts, each a flat dollar amount or a cascading percentage of what's left after the stops above it, plus an optional balance cap) decides where that surplus goes; whatever the list doesn't claim simply stays in Extra Savings. When Extra Savings' balance would go below $0, the shortfall is covered by the **drain order** (an ordered list of accounts drawn down to cover the gap, e.g. selling investments to cover a deficit).
 - **Nominal vs. real dollars**: "nominal" = actual future dollar amounts (what your account statement will literally say). "real" = nominal amounts deflated back to today's purchasing power using the plan's inflation rate, so you can compare a dollar in 2050 to a dollar today.
 - **Growth rates are nominal**: every \`growthRatePct\` in this export (accounts, income, expenses, contributions) is a **nominal** annual rate that already includes inflation. A 0% growth rate means flat in *nominal* terms — i.e. shrinking in real terms. It is not an inflation-adjusted "real" return.
 - **Federal tax**: this export's federal tax figures are the plan's **exact annual bracket bill** for that year — computed from the real IRS bracket tables for the filing status below, not a flat estimate.
@@ -38,10 +38,10 @@ Each month, in this exact order:
 1. **Growth.** Every non-excluded asset account grows by its annual rate converted to a monthly rate. Liabilities (credit card / loan / mortgage) do not grow this way — they amortize in step 3. An account gets no growth in the month it's created.
 2. **Scheduled cash flows.** Income posts to its deposit account; expenses pay from their payment account; contributions post into their target account. Social Security and pension have estimated tax withheld here (they're the only gross-entered income).
 3. **Loan & mortgage amortization.** Each loan's monthly payment is split into interest and principal; the principal reduces the loan balance and the full payment is drawn from the paying account.
-4. **RMDs.** Every January, for accounts flagged \`subjectToRMD\`, the prior Dec-31 balance divided by the IRS life-expectancy divisor for the owner's age is forced out, taxed, and deposited to the primary spending hub. Roth accounts are never subject to RMDs.
-5. **Surplus routing (the fill order).** Each hub keeps its buffer (grown for inflation) and sweeps everything above it down the fill order. In \`priority_fill\` mode each stop absorbs all it can hold up to its cap before the overflow spills to the next; in \`fixed_split\` mode each stop takes its configured share of the whole sweepable surplus. An uncapped stop is a catch-all that absorbs everything reaching it.
-6. **Cap overflow rebalance.** Any fill stop sitting above its cap (from growth, or money that landed in it directly) pushes the excess down to later stops with room. This is a transfer between the user's own accounts, so it doesn't count as routed surplus, but selling out of a taxable account still realizes tax.
-7. **Deficit cascade (the drain order).** If a hub falls below its own buffer, the shortfall is pulled from the drain order — in list order for \`priority_fill\`, or by configured share for \`fixed_split\`. Only stops whose date window covers the month participate, and no stop is drawn below its minimum-balance floor. Each draw is sized so the withdrawal *plus its own tax* fits in what's available.
+4. **RMDs.** Every January, for accounts flagged \`subjectToRMD\`, the prior Dec-31 balance divided by the IRS life-expectancy divisor for the owner's age is forced out, taxed, and deposited to Extra Savings. Roth accounts are never subject to RMDs.
+5. **Surplus split (Extra Savings).** Extra Savings' "fresh surplus" for the month is exactly what steps 1–4 added to its balance THIS month — not its whole running balance, so money left unclaimed in a prior month (a deliberate reserve) is never re-offered to the split. Each split-order stop, in list order, is offered either a flat dollar amount or a percentage of what's left after the stops above it (cascading — not a share of the original total), clamped by its own optional balance cap; whatever the whole list doesn't claim stays in Extra Savings.
+6. **Cap overflow rebalance.** Any split stop sitting above its cap (from growth, or money that landed in it directly) pushes the excess down to later stops with room. This is a transfer between the user's own accounts, so it doesn't count as routed surplus, but selling out of a taxable account still realizes tax.
+7. **Deficit cascade (the drain order).** If Extra Savings' balance would drop below $0, the shortfall is pulled from the drain order — in list order for \`priority_fill\`, or by configured share for \`fixed_split\`. Only stops whose date window covers the month participate, and no stop is drawn below its minimum-balance floor. Each draw is sized so the withdrawal *plus its own tax* fits in what's available.
 
 **Taxes.** Any dollar leaving a \`tax_deferred\` account is taxed as ordinary income in full. Any dollar leaving a \`taxable\` account is taxed only on its realized-gain portion, using **average-cost basis**: basis is the starting balance plus every dollar of new money added since (contributions, routed surplus, transfers); growth never adds basis. \`tax_free\` (Roth) and cash withdrawals realize no tax. The tax on a withdrawal is deducted from the same account it came out of.
 
@@ -129,41 +129,39 @@ export function buildLlmExport(scenario: Scenario): string {
   // than summarizing it as counts.
   lines.push(section("Money Flow / Routing"));
   const mf = s.moneyFlow;
-  lines.push(`### Spending hubs (income lands here, expenses pay from here)`);
-  if (mf.hubs.length === 0) {
-    lines.push("- None configured. Without a hub, income has nowhere to pool and no shortfall can be covered — this is almost certainly a misconfiguration.");
+  const extraSavings = scenario.accounts.find((a) => a.isExtraSavings);
+  lines.push(`### Extra Savings (income lands here, expenses pay from here)`);
+  if (!extraSavings) {
+    lines.push("- No account is flagged `isExtraSavings`. Every scenario should have exactly one — this is almost certainly a misconfiguration.");
   } else {
-    for (const hub of mf.hubs) {
-      const buffer = hub.bufferAmount
-        ? `keeps a ${formatMoney(hub.bufferAmount)} buffer (today's dollars, grown by inflation) before sweeping surplus, and is topped back up from the drain order if it falls below that`
-        : "keeps no buffer — every dollar above $0 is swept into the fill order, and the drain order only kicks in once it hits $0";
-      lines.push(`- **${accountName(hub.accountId)}** — ${buffer}.`);
-    }
+    lines.push(
+      `- **${extraSavings.name}** — the one mandatory spending account. No user-configurable floor or ceiling; its deficit-trigger floor is hardcoded at $0. Each month's "fresh surplus" (what steps 1-4 added to its balance THIS month, not its running total) is offered to the split order below; anything unclaimed simply stays here and keeps accumulating.`
+    );
   }
 
   lines.push("");
-  lines.push(`### Fill order (where surplus cash goes), mode: \`${mf.fillSplitMode}\``);
+  lines.push(`### Split order (where surplus cash goes)`);
   lines.push(
-    mf.fillSplitMode === "fixed_split"
-      ? "Each stop takes its configured share of the whole sweepable surplus."
-      : "Each stop absorbs all it can hold up to its cap, then the overflow spills to the next stop in this order."
+    "Each stop, in list order, is offered either a flat dollar amount or a percentage of what's left after the stops above it (cascading — not a share of the original total), then clamped by its own optional balance cap; the overflow spills to the next stop."
   );
-  if (mf.fillOrder.length === 0) {
-    lines.push("- None configured — surplus cash simply accumulates in the hub(s).");
+  if (mf.splitOrder.length === 0) {
+    lines.push("- None configured — surplus cash simply accumulates in Extra Savings.");
   } else {
-    mf.fillOrder.forEach((stop: MoneyFlowStop, i) => {
+    mf.splitOrder.forEach((stop: SplitStop, i) => {
       const parts: string[] = [];
+      parts.push(
+        stop.kind === "flat"
+          ? `flat ${stop.amount == null ? "unset (receives nothing)" : formatMoney(stop.amount)} (today's dollars, grown by inflation)`
+          : `${stop.pct == null ? "unset (receives nothing)" : fmtPct(stop.pct)} of what's left after the stops above it`
+      );
       if (stop.maxBalance == null) {
-        parts.push("uncapped (catch-all — absorbs everything that reaches it)");
+        parts.push("uncapped (catch-all — absorbs everything offered to it)");
       } else {
         const capGrowth =
           stop.maxBalanceGrowthRatePct == null
             ? `growing with inflation (${fmtPct(s.inflationRatePct)}/yr)`
             : `growing ${fmtPct(stop.maxBalanceGrowthRatePct)}/yr`;
         parts.push(`capped at ${formatMoney(stop.maxBalance)}, ${capGrowth}`);
-      }
-      if (mf.fillSplitMode === "fixed_split") {
-        parts.push(`share of surplus: ${stop.splitPct == null ? "unset (receives nothing)" : fmtPct(stop.splitPct)}`);
       }
       lines.push(`${i + 1}. **${accountName(stop.accountId)}** — ${parts.join("; ")}.`);
     });
@@ -180,7 +178,7 @@ export function buildLlmExport(scenario: Scenario): string {
     "This order determines which accounts' gains and ordinary income are realized in which years, so it is the primary lever on the lifetime tax bill."
   );
   if (mf.drainOrder.length === 0) {
-    lines.push("- None configured — a hub shortfall cannot be covered and the account will simply run negative (raising an insufficient-funds warning).");
+    lines.push("- None configured — an Extra Savings shortfall cannot be covered and the account will simply run negative (raising an insufficient-funds warning).");
   } else {
     mf.drainOrder.forEach((stop: DrainStop, i) => {
       const parts: string[] = [];
@@ -204,7 +202,7 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push(section("Accounts"));
   for (const a of scenario.accounts as Account[]) {
     lines.push(
-      `- **${a.name}** (id: \`${a.id}\`) — class: ${a.class} (${a.category}), tax treatment: ${a.taxTreatment}, owner: ${personName(a.ownerId)}, starting balance: ${formatMoney(a.startingBalance)}, growth rate: ${fmtPct(a.growthRatePct)}/yr nominal${a.subjectToRMD ? ", subject to RMDs" : ""}${a.isExcluded ? " — **excluded from the plan** (engine skips it entirely)" : ""}`
+      `- **${a.name}** (id: \`${a.id}\`) — class: ${a.class} (${a.category}), tax treatment: ${a.taxTreatment}, owner: ${personName(a.ownerId)}, starting balance: ${formatMoney(a.startingBalance)}, growth rate: ${fmtPct(a.growthRatePct)}/yr nominal${a.subjectToRMD ? ", subject to RMDs" : ""}${a.isExtraSavings ? " — **this is the mandatory Extra Savings account** (see Money Flow / Routing above)" : ""}${a.isExcluded ? " — **excluded from the plan** (engine skips it entirely)" : ""}`
     );
     if (a.propertyGrowthRatePct !== undefined) {
       lines.push(`  - Property growth rate: ${fmtPct(a.propertyGrowthRatePct)}/yr (overrides the growth rate above).`);

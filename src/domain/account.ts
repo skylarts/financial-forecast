@@ -119,6 +119,14 @@ export const accountObjectSchema = z
      *  don't want counted as part of the plan (e.g. a kid's UTMA) while
      *  still keeping a record of it. */
     isExcluded: z.boolean().optional(),
+    /**
+     * Marks the one mandatory, undeletable system account that captures 100%
+     * of net income-minus-expenses every month -- see ForecastSettings.moneyFlow
+     * and scenarioSchema's auto-inject transform. Exactly one account per
+     * scenario should carry this; enforced by construction (scenarioSchema),
+     * not by this schema.
+     */
+    isExtraSavings: z.boolean().optional(),
     taxTreatment: taxTreatmentSchema.default("n/a"),
     /** Only meaningful when class='tax_deferred' and ownerId is set. */
     subjectToRMD: z.boolean().default(false),

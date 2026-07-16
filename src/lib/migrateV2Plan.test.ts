@@ -187,14 +187,24 @@ describe("migrateV2PlanToV3", () => {
     expect(result.success).toBe(true);
   });
 
+  it("translates the isSpendingAccount hub into isExtraSavings on the account itself", () => {
+    const checking = scenario.accounts.find((a: { id: string }) => a.id === "checking");
+    expect(checking.isExtraSavings).toBe(true);
+    // bufferAmount (the old hub's own floor) has no home in v3 -- Extra
+    // Savings has no user-configurable floor/ceiling -- so it's best-effort
+    // dropped rather than translated.
+    expect(checking.targetCashBalance).toBeUndefined();
+  });
+
   it("translates per-account routing fields into settings.moneyFlow", () => {
     const mf = scenario.settings.moneyFlow;
-    expect(mf.hubs).toEqual([{ accountId: "checking", bufferAmount: 5_000 }]);
-    expect(mf.fillOrder.map((f: { accountId: string }) => f.accountId)).toEqual(["savings", "brokerage"]);
-    expect(mf.fillOrder[0].maxBalance).toBe(20_000);
-    expect(mf.fillOrder[0].maxBalanceGrowthRatePct).toBe(0.03);
+    // Old priority_fill fill-order entries map onto the new cascading
+    // splitOrder as pct=1 each -- an exact behavioral match (see migrateMoneyFlow's docs).
+    expect(mf.splitOrder.map((f: { accountId: string }) => f.accountId)).toEqual(["savings", "brokerage"]);
+    expect(mf.splitOrder[0].pct).toBe(1);
+    expect(mf.splitOrder[0].maxBalance).toBe(20_000);
+    expect(mf.splitOrder[0].maxBalanceGrowthRatePct).toBe(0.03);
     expect(mf.drainOrder.map((d: { accountId: string }) => d.accountId)).toEqual(["savings", "brokerage"]);
-    expect(mf.fillSplitMode).toBe("priority_fill");
   });
 
   it("folds income_change into an adjustment on the target income source", () => {

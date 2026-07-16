@@ -48,7 +48,7 @@ describe("buildLlmExport", () => {
     });
 
     it("explains the surplus, deficit, and tax mechanics that drive the numbers", () => {
-      expect(output).toContain("Surplus routing (the fill order)");
+      expect(output).toContain("Surplus split (Extra Savings)");
       expect(output).toContain("Deficit cascade (the drain order)");
       expect(output).toContain("average-cost basis");
       expect(output).toContain("RMD");
@@ -56,19 +56,19 @@ describe("buildLlmExport", () => {
   });
 
   describe("routing configuration", () => {
-    it("spells out the actual hubs, fill order, and drain order rather than counts", () => {
+    it("spells out Extra Savings, the split order, and the drain order rather than counts", () => {
       expect(output).toContain("## Money Flow / Routing");
-      expect(output).toContain("### Spending hubs");
-      expect(output).toContain("### Fill order");
+      expect(output).toContain("### Extra Savings");
+      expect(output).toContain("### Split order");
       expect(output).toContain("### Drain order");
     });
 
     it("names each routed account and resolves ids to account names", () => {
       const named = (id: string) => mockScenario.accounts.find((a) => a.id === id)?.name;
-      for (const hub of mockScenario.settings.moneyFlow.hubs) {
-        expect(output).toContain(named(hub.accountId)!);
-      }
-      for (const stop of mockScenario.settings.moneyFlow.fillOrder) {
+      const extraSavings = mockScenario.accounts.find((a) => a.isExtraSavings);
+      expect(extraSavings).toBeDefined();
+      expect(output).toContain(extraSavings!.name);
+      for (const stop of mockScenario.settings.moneyFlow.splitOrder) {
         expect(output).toContain(named(stop.accountId)!);
       }
       for (const stop of mockScenario.settings.moneyFlow.drainOrder) {
@@ -76,8 +76,7 @@ describe("buildLlmExport", () => {
       }
     });
 
-    it("reports the split modes, which change how stops are filled and drained", () => {
-      expect(output).toContain(mockScenario.settings.moneyFlow.fillSplitMode);
+    it("reports the drain split mode, which changes how stops are drained", () => {
       expect(output).toContain(mockScenario.settings.moneyFlow.drainSplitMode);
     });
   });

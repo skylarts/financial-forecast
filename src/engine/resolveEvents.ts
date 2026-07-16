@@ -170,7 +170,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // of the spending account ("contribution_out"), so they cost cash; payroll-
   // deducted ones don't, since take-home income was entered net of them. This is
   // independent of tax treatment (a Roth 401k is payroll-deducted but after-tax).
-  const contributionSpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts, settings.moneyFlow);
+  const contributionSpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts);
   const postContribution = (account: (typeof scenario.accounts)[number], occ: ISODate, amount: number, payrollDeducted: boolean) => {
     if (amount === 0) return;
     pushPosting({
@@ -310,7 +310,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             annualInterestRatePct: event.mortgage.annualInterestRatePct,
             termMonths: event.mortgage.termMonths,
           },
-          payingAccountId: resolvePrimarySpendingAccountId(scenario.accounts, settings.moneyFlow),
+          payingAccountId: resolvePrimarySpendingAccountId(scenario.accounts),
         });
         linkedLiabilityId = mortgageId;
       }
