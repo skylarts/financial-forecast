@@ -102,6 +102,11 @@ function HomeContent() {
               : null
           }
         />
+      </main>
+      {/* Breaks out of <main>'s max-w-6xl so the tab section can use the
+          full window width -- w-screen + centering offsets the parent's
+          horizontal margin regardless of where <main> sits on the page. */}
+      <div className="w-screen relative left-1/2 right-1/2 -mx-[50vw] px-6 pb-6">
         <DetailTabs
           accounts={projection.accounts}
           years={years}
@@ -132,7 +137,7 @@ function HomeContent() {
               : null
           }
         />
-      </main>
+      </div>
       <Footer />
     </div>
   );

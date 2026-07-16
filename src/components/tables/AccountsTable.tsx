@@ -227,7 +227,7 @@ export function AccountsTable({
         </button>
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
-        <div className="max-h-[70vh] overflow-auto">
+        <div className="max-h-[85vh] overflow-auto">
         <table className="w-full text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
