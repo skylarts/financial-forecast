@@ -160,8 +160,7 @@ export function NetWorthChart({
     return map;
   }, [markers, dataYears]);
 
-  const maxStack = Math.max(1, ...[...markersByYear.values()].map((l) => l.length));
-  const chartTopMargin = viewMode === "net_worth" ? TOP_PAD + maxStack * (ICON_SIZE + ICON_GAP) + 8 : 4;
+  const chartTopMargin = 4;
 
   const applyDrag = useCallback(
     (d: DragState) => {
@@ -331,7 +330,7 @@ export function NetWorthChart({
             {[...markersByYear.entries()].map(([year, list]) => {
               const x = layout.xByYear.get(year);
               if (x === undefined) return null;
-              const stackBottom = TOP_PAD + list.length * (ICON_SIZE + ICON_GAP) - ICON_GAP;
+              const stackBottom = layout.top + TOP_PAD + list.length * (ICON_SIZE + ICON_GAP) - ICON_GAP;
               return (
                 <div key={year}>
                   <div
@@ -345,7 +344,7 @@ export function NetWorthChart({
                     }}
                   />
                   {list.map((m, i) => {
-                    const top = TOP_PAD + i * (ICON_SIZE + ICON_GAP);
+                    const top = layout.top + TOP_PAD + i * (ICON_SIZE + ICON_GAP);
                     const isDragging = drag?.key === m.key;
                     return (
                       <div
@@ -383,7 +382,7 @@ export function NetWorthChart({
                 if (x === undefined) return null;
                 const list = markersByYear.get(m.year) ?? [];
                 const idx = list.findIndex((mm) => mm.key === m.key);
-                const top = TOP_PAD + Math.max(0, idx) * (ICON_SIZE + ICON_GAP);
+                const top = layout.top + TOP_PAD + Math.max(0, idx) * (ICON_SIZE + ICON_GAP);
                 return (
                   <div
                     className="absolute z-20 w-56 -translate-x-1/2 rounded-md border border-border bg-panel p-2 text-xs shadow-lg"
