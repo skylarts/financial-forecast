@@ -1,11 +1,20 @@
-import type { ProjectionResult } from "@/domain";
+import type { ProjectionResult, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 
-export function KpiStrip({ kpis, dollarMode }: { kpis: ProjectionResult["kpis"]; dollarMode: DollarMode }) {
+export function KpiStrip({
+  kpis,
+  years,
+  dollarMode,
+}: {
+  kpis: ProjectionResult["kpis"];
+  years: YearSnapshot[];
+  dollarMode: DollarMode;
+}) {
   const real = dollarMode === "real";
   const eoy = real ? kpis.netWorthEndOfYear1Real : kpis.netWorthEndOfYear1;
   const atRetirement = real ? kpis.netWorthAtRetirementReal : kpis.netWorthAtRetirement;
-  const atEnd = real ? kpis.netWorthAtEndReal : kpis.netWorthAtEnd;
+  const lastYear = years[years.length - 1];
+  const atEnd = lastYear ? (real ? lastYear.netWorthReal : lastYear.netWorthNominal) : 0;
 
   const cards: { label: string; value: string }[] = [
     { label: "Net worth (EOY)", value: formatMoney(eoy) },

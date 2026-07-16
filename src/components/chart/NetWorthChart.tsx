@@ -94,6 +94,15 @@ export function NetWorthChart({
           {viewMode === "net_worth" ? "Net Worth Projection" : "Balance by Account"}
         </h2>
         <div className="flex items-center gap-2">
+          {viewMode === "by_account" && (
+            <button
+              type="button"
+              onClick={toggleAllAccounts}
+              className="rounded-md border border-border px-2 py-1 text-xs text-dim"
+            >
+              {allHidden ? "Show all" : "Hide all"}
+            </button>
+          )}
           <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
             <button
               type="button"
@@ -126,15 +135,6 @@ export function NetWorthChart({
               Real
             </button>
           </div>
-          {viewMode === "by_account" && (
-            <button
-              type="button"
-              onClick={toggleAllAccounts}
-              className="rounded-md border border-border px-2 py-1 text-xs text-dim"
-            >
-              {allHidden ? "Show all" : "Hide all"}
-            </button>
-          )}
         </div>
       </div>
 
