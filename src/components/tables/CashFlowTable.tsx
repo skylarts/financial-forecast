@@ -159,7 +159,7 @@ export function CashFlowTable({
   // Sum of a row's deflated per-year values across the selected range.
   const totalOf = (get: (yi: number) => number) => years.reduce((s, _y, yi) => s + d(get(yi), yi), 0);
 
-  const totalCellClass = "py-1.5 pr-3 text-right tabular-nums bg-background/40 font-medium";
+  const totalCellClass = "py-2 pr-3 text-right tabular-nums bg-background/40 font-medium";
 
   const totalCell = (v: number, opts?: { signed?: boolean }) => (
     <td className={totalCellClass}>
@@ -179,7 +179,7 @@ export function CashFlowTable({
       {years.map((y, yi) => {
         const v = d(get(yi), yi);
         return (
-          <td key={y.year} className="py-1.5 pr-3 text-right tabular-nums">
+          <td key={y.year} className="py-2 pr-3 text-right tabular-nums">
             {Math.abs(v) < 0.5 ? <span className="text-dim">—</span> : formatMoney(v)}
           </td>
         );
@@ -190,11 +190,11 @@ export function CashFlowTable({
 
   const summaryRow = (label: string, get: (yi: number) => number, opts?: { totalIsMeaningful?: boolean; strong?: boolean }) => (
     <tr className={`border-t border-border ${opts?.strong ? "bg-background/40" : ""}`}>
-      <td className="py-2 pl-2 font-bold">{label}</td>
+      <td className="py-2.5 pl-2 font-bold">{label}</td>
       {years.map((y, yi) => {
         const v = d(get(yi), yi);
         return (
-          <td key={y.year} className="py-1.5 pr-3 text-right font-semibold tabular-nums">
+          <td key={y.year} className="py-2 pr-3 text-right font-semibold tabular-nums">
             <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
           </td>
         );
@@ -213,7 +213,7 @@ export function CashFlowTable({
 
   const sectionHeader = (key: string, label: string, get: (yi: number) => number) => (
     <tr className="border-t border-border bg-background/40">
-      <td className="py-2 pl-2 font-semibold">
+      <td className="py-2.5 pl-2 font-semibold">
         <ToggleLabel label={label} expanded={isOpen(key)} onToggle={() => toggle(key)} />
       </td>
       {cells(get)}
@@ -223,14 +223,14 @@ export function CashFlowTable({
   const itemRows = (items: { id: string; label: string }[], maps: Map<string, number>[], indent = "pl-10") =>
     items.map((item) => (
       <tr key={item.id} className="text-dim hover:bg-accent/15">
-        <td className={`py-1.5 ${indent}`}>{item.label}</td>
+        <td className={`py-2 ${indent}`}>{item.label}</td>
         {cells((yi) => maps[yi].get(item.id) ?? 0)}
       </tr>
     ));
 
   const emptyRow = (text: string) => (
     <tr className="text-xs text-dim">
-      <td className="py-1.5 pl-10" colSpan={col}>
+      <td className="py-2 pl-10" colSpan={col}>
         {text}
       </td>
     </tr>
@@ -239,16 +239,16 @@ export function CashFlowTable({
   return (
     <div className="flex flex-col gap-2">
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
-        <table className="w-full text-xs tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <table className="w-full text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
-              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel py-2 pl-2 font-medium">Category</th>
+              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel py-2.5 pl-2 font-medium">Category</th>
               {years.map((y) => (
-                <th key={y.year} className="py-2 pr-3 text-right font-medium">
+                <th key={y.year} className="py-2.5 pr-3 text-right font-medium">
                   {y.year}
                 </th>
               ))}
-              <th className="bg-background/40 py-2 pr-3 text-right font-medium">
+              <th className="bg-background/40 py-2.5 pr-3 text-right font-medium">
                 Total ({years[0].year}–{years[years.length - 1].year})
               </th>
             </tr>
@@ -275,14 +275,21 @@ export function CashFlowTable({
               (hasWithdrawals
                 ? withdrawalGroups.map((g) => (
                     <Fragment key={g.key}>
-                      <tr className="text-dim">
-                        <td className="py-1.5 pl-6 font-medium">{g.label}</td>
+                      <tr className="text-dim hover:bg-accent/15">
+                        <td className="py-2 pl-6 font-medium">
+                          <ToggleLabel
+                            label={g.label}
+                            expanded={isOpen(`wd:${g.key}`)}
+                            onToggle={() => toggle(`wd:${g.key}`)}
+                          />
+                        </td>
                         {cells((yi) => g.accounts.reduce((s, a) => s + (wdGrossMaps[yi].get(a.id) ?? 0), 0))}
                       </tr>
-                      {g.accounts.map((a) => (
+                      {isOpen(`wd:${g.key}`) &&
+                      g.accounts.map((a) => (
                         <Fragment key={a.id}>
                           <tr className="text-dim hover:bg-accent/15">
-                            <td className="py-1.5 pl-12">{a.label}</td>
+                            <td className="py-2 pl-12">{a.label}</td>
                             {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
                           </tr>
                           {years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5) && (
@@ -312,13 +319,13 @@ export function CashFlowTable({
                 approximate per-withdrawal figures above. Expandable into its exact components,
                 which sum to this total. */}
             <tr className="border-t border-border">
-              <td className="py-2 pl-2 font-bold">
+              <td className="py-2.5 pl-2 font-bold">
                 <ToggleLabel label="Federal tax" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
               </td>
               {years.map((y, yi) => {
                 const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
                 return (
-                  <td key={y.year} className="py-1.5 pr-3 text-right font-semibold tabular-nums">
+                  <td key={y.year} className="py-2 pr-3 text-right font-semibold tabular-nums">
                     <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
                   </td>
                 );
@@ -341,14 +348,14 @@ export function CashFlowTable({
               <>
                 {surplusItems.length > 0 && (
                   <tr className="text-dim">
-                    <td className="py-1.5 pl-10 font-medium">Surplus swept to savings/investments</td>
+                    <td className="py-2 pl-10 font-medium">Surplus swept to savings/investments</td>
                     {cells((yi) => years[yi].cashFlow.surplusRouted)}
                   </tr>
                 )}
                 {itemRows(surplusItems, surplusMaps, "pl-14")}
                 {contribItems.map((item) => (
                   <tr key={item.id} className={`hover:bg-accent/15 ${item.fromPaycheck ? "text-dim/60" : "text-dim"}`}>
-                    <td className="py-1.5 pl-10">
+                    <td className="py-2 pl-10">
                       {item.label}
                       {item.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
                     </td>
@@ -365,13 +372,13 @@ export function CashFlowTable({
                 reconciling exactly to the bottom line. */}
             {hasCashInterest && (
               <tr className="text-dim">
-                <td className="py-1.5 pl-2">Interest earned on cash</td>
+                <td className="py-2 pl-2">Interest earned on cash</td>
                 {cells((yi) => years[yi].cashFlow.cashInterest)}
               </tr>
             )}
             {hasOtherActivity && (
               <tr className="text-dim">
-                <td className="py-1.5 pl-2">
+                <td className="py-2 pl-2">
                   Other account activity
                   <span className="ml-1 text-xs">(direct transfers, income to other accounts)</span>
                 </td>
@@ -392,7 +399,10 @@ export function CashFlowTable({
         income drops in retirement), the <strong>Withdrawals</strong> below pull from your accounts to cover it &mdash; shown
         gross by account and grouped by tax treatment, with the tax each draw triggers. <strong>Net change in cash</strong> =
         operating result + the after-tax withdrawals that reached your spending &minus; money saved into accounts; it lands
-        near $0 in a year where you draw just what you need (your cash buffer holds steady). Moving money between your own
+        near $0 in a year where you draw just what you need (your cash buffer holds steady). <strong>Ending cash on
+        hand</strong> is your total balance across all cash accounts (Extra Savings, checking, an emergency fund, etc.),
+        not just Extra Savings, so a small gap between it and the rows above is expected &mdash; it reflects cash moved
+        between those accounts that isn&apos;t broken out as its own line. Moving money between your own
         accounts (a transfer) appears under Withdrawals for visibility but doesn&apos;t change your total cash. <strong>Federal
         tax</strong> is the exact bill for the year computed from real IRS brackets on your actual realized income &mdash;
         expand it to see exactly which income sources it came from (RMDs/tax-deferred withdrawals, pension, taxable Social
