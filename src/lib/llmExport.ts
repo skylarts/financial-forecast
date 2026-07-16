@@ -357,7 +357,7 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push("- **Accounts** — name, class, tax treatment, owner, starting balance, growth rate (or a dated growth-rate schedule), RMD flag, loan terms, and the contribution (amount, frequency, growth, payroll-deducted flag, end date) or a multi-segment contribution schedule.");
   lines.push("- **Income sources** — amount, frequency (or an every-N-years interval), nominal growth rate, owner, deposit account, start/end dates, category, and temporary adjustment windows.");
   lines.push("- **Expenses** — amount, frequency (or an every-N-years interval), nominal growth rate, payment account, start/end dates, category, and temporary adjustment windows.");
-  lines.push("- **Events** — retire, buy a home, have a kid, custom transfer, and growth-rate change, each with its own fields as shown above.");
+  lines.push("- **Events** — retire, buy a home, have a kid, and custom transfer, each with its own fields as shown above.");
   lines.push("- **`isExcluded`** — on any account, income source, expense, or event. Toggling this is the cleanest way to test one item's impact without deleting it.");
   lines.push("");
   lines.push(
