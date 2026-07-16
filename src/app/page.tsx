@@ -48,6 +48,10 @@ function HomeContent() {
     () => new Set(scenario.accounts.map((a) => a.id)),
     [scenario.accounts]
   );
+  const editableAccounts = useMemo(
+    () => projection.accounts.filter((a) => editableAccountIds.has(a.id)),
+    [projection.accounts, editableAccountIds]
+  );
   const compareOptions = useMemo(
     () => allScenarios.filter((s) => s.id !== scenario.id).map((s) => ({ id: s.id, name: s.name })),
     [allScenarios, scenario.id]
@@ -76,13 +80,13 @@ function HomeContent() {
         />
         <NetWorthChart
           accounts={projection.accounts}
+          editableAccounts={editableAccounts}
           years={years}
           dollarMode={dollarMode}
           onDollarModeChange={setDollarMode}
           events={scenario.events}
           incomeSources={scenario.incomeSources}
           expenses={scenario.expenses}
-          timeline={projection.timeline}
           people={scenario.household.people}
           scenarioName={scenario.name}
           compareOptions={compareOptions}
@@ -96,7 +100,6 @@ function HomeContent() {
                   events: compareScenarioRaw!.events,
                   incomeSources: compareScenarioRaw!.incomeSources,
                   expenses: compareScenarioRaw!.expenses,
-                  timeline: compareProjection.timeline,
                   people: compareScenarioRaw!.household.people,
                 }
               : null
