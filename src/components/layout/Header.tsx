@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Scenario } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useUiStore } from "@/store/useUiStore";
+import { useWizardStore } from "@/store/useWizardStore";
 import { AssumptionsDrawer } from "@/components/assumptions/AssumptionsDrawer";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { BackupControls } from "@/components/layout/BackupControls";
@@ -161,6 +162,7 @@ export function Header({ scenario }: { scenario: Scenario }) {
   const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
   const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const isPink = useUiStore((s) => s.theme) === "pink";
+  const openWizard = useWizardStore((s) => s.openWizard);
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-6 py-4">
@@ -178,6 +180,13 @@ export function Header({ scenario }: { scenario: Scenario }) {
         </nav>
         <BackupControls />
         <LoginButton />
+        <button
+          type="button"
+          onClick={openWizard}
+          className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
+        >
+          🧭 Setup Guide
+        </button>
         <button
           type="button"
           id="assumptions-button"

@@ -22,6 +22,21 @@ const defaultPlan: Plan = {
   activeScenarioId: mockScenario.id,
 };
 
+const PLAN_STORAGE_KEY = "forecast-plan";
+
+// Captured synchronously at module load -- before persist's rehydration can
+// write anything back to storage (that write is deferred at least a tick, to
+// avoid an SSR hydration mismatch; see the loading gate in page.tsx). This is
+// the only reliable way to tell whether this browser already had a saved
+// plan, used to decide whether the first-run setup wizard should auto-open.
+const hadPersistedPlanAtLoad =
+  typeof window !== "undefined" && window.localStorage.getItem(PLAN_STORAGE_KEY) !== null;
+
+/** True if this browser already had a saved plan before this page load. */
+export function hadExistingPlanOnLoad(): boolean {
+  return hadPersistedPlanAtLoad;
+}
+
 interface PlanState {
   plan: Plan;
   lastSavedAt: number;
@@ -304,7 +319,7 @@ export const usePlanStore = create<PlanState>()(
         withActiveScenario(set, (s) => ({ ...s, events: s.events.filter((e) => e.id !== id) })),
     }),
     {
-      name: "forecast-plan",
+      name: PLAN_STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ plan: state.plan }),
       merge: (persisted, current) => {
