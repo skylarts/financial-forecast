@@ -5,6 +5,7 @@ import type { Scenario } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useUiStore } from "@/store/useUiStore";
 import { useWizardStore } from "@/store/useWizardStore";
+import { useAssumptionsStore } from "@/store/useAssumptionsStore";
 import { AssumptionsDrawer } from "@/components/assumptions/AssumptionsDrawer";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { BackupControls } from "@/components/layout/BackupControls";
@@ -160,9 +161,11 @@ function NewScenarioControl({ scenario }: { scenario: Scenario }) {
 export function Header({ scenario }: { scenario: Scenario }) {
   const scenarios = usePlanStore((s) => s.plan.scenarios);
   const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
-  const [assumptionsOpen, setAssumptionsOpen] = useState(false);
   const isPink = useUiStore((s) => s.theme) === "pink";
   const openWizard = useWizardStore((s) => s.openWizard);
+  const assumptionsOpen = useAssumptionsStore((s) => s.open);
+  const openAssumptions = useAssumptionsStore((s) => s.openAssumptions);
+  const closeAssumptions = useAssumptionsStore((s) => s.closeAssumptions);
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-6 py-4">
@@ -190,7 +193,7 @@ export function Header({ scenario }: { scenario: Scenario }) {
         <button
           type="button"
           id="assumptions-button"
-          onClick={() => setAssumptionsOpen(true)}
+          onClick={openAssumptions}
           className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
         >
           ⚙ Assumptions
@@ -199,7 +202,7 @@ export function Header({ scenario }: { scenario: Scenario }) {
       {/* key=scenario.id forces a full remount on scenario switch, so the
           drawer's local form state (settingsDraft, each PersonRow's draft)
           can't go stale relative to whichever scenario is now active. */}
-      <AssumptionsDrawer key={scenario.id} open={assumptionsOpen} onClose={() => setAssumptionsOpen(false)} scenario={scenario} />
+      <AssumptionsDrawer key={scenario.id} open={assumptionsOpen} onClose={closeAssumptions} scenario={scenario} />
     </header>
   );
 }

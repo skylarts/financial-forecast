@@ -10,6 +10,7 @@ import { KpiStrip } from "@/components/kpi/KpiStrip";
 import { NetWorthChart } from "@/components/chart/NetWorthChart";
 import { DetailTabs } from "@/components/tables/DetailTabs";
 import { WarningsBanner } from "@/components/layout/WarningsBanner";
+import { StalePlanBanner } from "@/components/layout/StalePlanBanner";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useProjection } from "@/store/useProjection";
 import { useCloudSync } from "@/store/useCloudSync";
@@ -71,6 +72,7 @@ function HomeContent() {
           compareYears={compareYears}
           compareName={hasCompare ? compareScenarioRaw!.name : null}
         />
+        <StalePlanBanner scenario={scenario} />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
         <YearRangePicker
           minYear={minYear}
