@@ -28,7 +28,7 @@ export function InfoTooltip({ text }: { text: string }) {
       {/* Anchored to the icon's left edge rather than centered -- most call
           sites place this right after a short label near the drawer's left
           margin, where a centered w-56 tooltip would overflow off-screen. */}
-      <span className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 hidden w-56 rounded-md border border-border bg-panel p-2 text-xs font-normal normal-case text-foreground shadow-lg group-hover:block group-focus:block">
+      <span className="pointer-events-none absolute bottom-full left-0 z-50 mb-1.5 hidden w-56 whitespace-normal rounded-md border border-border bg-panel p-2 text-xs font-normal normal-case text-foreground shadow-lg group-hover:block group-focus:block">
         {text}
       </span>
     </span>
