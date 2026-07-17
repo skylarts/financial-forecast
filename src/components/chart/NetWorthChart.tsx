@@ -27,7 +27,7 @@ import { EventDrawer } from "@/components/events/EventDrawer";
 const CLICK_MOVE_THRESHOLD = 4;
 
 const CHART_COLORS = ["#5b8def", "#3ecf8e", "#e8555a", "#f4b740", "#a97bea", "#3ec7cf", "#f2789f", "#8fd14f"];
-const PINK_CHART_COLORS = ["#ff4fa3", "#c874e8", "#ff8fab", "#f4a63b", "#8a6bea", "#3ec7cf", "#e8555a", "#5b8def"];
+const JOY_CHART_COLORS = ["#ff7a59", "#f4a63b", "#2fb98d", "#3ec7cf", "#ff9d6f", "#e8555a", "#7bc47f", "#c874e8"];
 
 /** One base hue per account class, so "By Account" reads as a color family
  *  per class (e.g. every blue is cash) with individual accounts as shades
@@ -47,10 +47,10 @@ const ACCOUNT_CLASS_HUE: Record<AccountClass, number> = {
 /** Evenly spread lightness across a class's accounts so shades stay visually
  *  distinct even with several accounts in the same class; a single account
  *  gets a mid-range shade. Ranges differ per theme since dark backgrounds
- *  need brighter lines and the light pink theme needs darker ones. */
-function accountClassColor(hue: number, index: number, count: number, isPink: boolean): string {
-  const saturation = isPink ? 70 : 72;
-  const [minL, maxL] = isPink ? [32, 56] : [42, 78];
+ *  need brighter lines and the light joy theme needs darker ones. */
+function accountClassColor(hue: number, index: number, count: number, isJoy: boolean): string {
+  const saturation = isJoy ? 70 : 72;
+  const [minL, maxL] = isJoy ? [32, 56] : [42, 78];
   const t = count <= 1 ? 0.5 : index / (count - 1);
   const lightness = Math.round(maxL - t * (maxL - minL));
   return `hsl(${hue} ${saturation}% ${lightness}%)`;
@@ -59,7 +59,7 @@ function accountClassColor(hue: number, index: number, count: number, isPink: bo
 // Recharts needs concrete color strings, so mirror the two palettes here.
 const CHART_THEME = {
   dark: { grid: "#2a3245", axis: "#9aa4b8", tooltipBg: "#171d2b", tooltipBorder: "#2a3245", label: "#e6e9f0" },
-  pink: { grid: "#ffc9e0", axis: "#c06e93", tooltipBg: "#ffe4ef", tooltipBorder: "#ffbcda", label: "#6a2748" },
+  joy: { grid: "#f4e5d3", axis: "#a68a72", tooltipBg: "#ffffff", tooltipBorder: "#ffe0c7", label: "#4a3729" },
 } as const;
 
 type ViewMode = "net_worth" | "by_account";
@@ -187,9 +187,9 @@ export function NetWorthChart({
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
   const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
   const [compareMenuOpen, setCompareMenuOpen] = useState(false);
-  const isPink = useUiStore((s) => s.theme) === "pink";
-  const theme = isPink ? CHART_THEME.pink : CHART_THEME.dark;
-  const palette = isPink ? PINK_CHART_COLORS : CHART_COLORS;
+  const isJoy = useUiStore((s) => s.theme) === "joy";
+  const theme = isJoy ? CHART_THEME.joy : CHART_THEME.dark;
+  const palette = isJoy ? JOY_CHART_COLORS : CHART_COLORS;
 
   const updateEvent = usePlanStore((s) => s.updateEvent);
   const updateIncomeSource = usePlanStore((s) => s.updateIncomeSource);
@@ -251,11 +251,11 @@ export function NetWorthChart({
     for (const group of groupAccountsByClass(accounts)) {
       const hue = ACCOUNT_CLASS_HUE[group.cls];
       group.accounts.forEach((a, i) => {
-        map.set(a.id, accountClassColor(hue, i, group.accounts.length, isPink));
+        map.set(a.id, accountClassColor(hue, i, group.accounts.length, isJoy));
       });
     }
     return map;
-  }, [accounts, isPink]);
+  }, [accounts, isJoy]);
 
   const compareByYear = useMemo(() => {
     if (!compareScenario) return null;
@@ -283,6 +283,105 @@ export function NetWorthChart({
   }, [years, viewMode, dollarMode, accounts, compareByYear]);
 
   const dataYears = useMemo(() => data.map((d) => d.year as number), [data]);
+
+  // Years where net worth first crosses a big round milestone ($1M, $5M, ...).
+  // Joy mode twinkles a sparkle on those points to celebrate the climb.
+  const milestoneIndices = useMemo(() => {
+    const thresholds = [1_000_000, 5_000_000, 10_000_000, 25_000_000, 50_000_000, 100_000_000];
+    const reached = new Set<number>();
+    const indices = new Set<number>();
+    data.forEach((row, i) => {
+      const v = typeof row.value === "number" ? row.value : null;
+      if (v == null) return;
+      for (const t of thresholds) {
+        if (v >= t && !reached.has(t)) {
+          reached.add(t);
+          indices.add(i);
+        }
+      }
+    });
+    return indices;
+  }, [data]);
+
+  // Joy mode dresses up the net-worth line: milestone years twinkle with a
+  // sparkle, and the final year is capped with a pulsing sun (rotating rays +
+  // coral halo) -- a cheery "destination" that makes the payoff feel exciting.
+  const renderSunDot = useCallback(
+    (props: { cx?: number; cy?: number; index?: number }) => {
+      const { cx, cy, index } = props;
+      if (cx == null || cy == null || index == null) return <g key={`joy-dot-${index}`} />;
+
+      if (index === data.length - 1) {
+        return (
+          <g key={`joy-dot-${index}`} style={{ pointerEvents: "none" }}>
+            {/* soft coral halo */}
+            <circle cx={cx} cy={cy} r={15} fill="#ff7a59" opacity={0.18} />
+            {/* slowly-rotating rays (SMIL keeps them pinned to the point) */}
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="rotate"
+                from={`0 ${cx} ${cy}`}
+                to={`360 ${cx} ${cy}`}
+                dur="9s"
+                repeatCount="indefinite"
+              />
+              {Array.from({ length: 12 }).map((_, k) => {
+                const ang = (k * 30 * Math.PI) / 180;
+                return (
+                  <line
+                    key={k}
+                    x1={cx + Math.cos(ang) * 12}
+                    y1={cy + Math.sin(ang) * 12}
+                    x2={cx + Math.cos(ang) * 17}
+                    y2={cy + Math.sin(ang) * 17}
+                    stroke="#ffb14e"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                  />
+                );
+              })}
+            </g>
+            <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={20} className="joy-sun">
+              ☀️
+            </text>
+          </g>
+        );
+      }
+
+      if (milestoneIndices.has(index)) {
+        return (
+          <text
+            key={`joy-dot-${index}`}
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize={16}
+            className="joy-sparkle"
+            style={{ pointerEvents: "none" }}
+          >
+            ✨
+          </text>
+        );
+      }
+
+      return <g key={`joy-dot-${index}`} />;
+    },
+    [data.length, milestoneIndices]
+  );
+
+  // Hovering any year pops a little sun on that point, so exploring the line
+  // feels playful instead of clinical.
+  const renderSunActiveDot = useCallback((props: { cx?: number; cy?: number }) => {
+    const { cx, cy } = props;
+    if (cx == null || cy == null) return <g />;
+    return (
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={18} className="joy-sun">
+        ☀️
+      </text>
+    );
+  }, []);
 
   const markers = useMemo(
     () => buildChartMarkers({ events, incomeSources, expenses, people }),
@@ -549,7 +648,7 @@ export function NetWorthChart({
 
       <div ref={containerRef} className="relative">
         <ResponsiveContainer width="100%" height={320}>
-          <LineChart data={data} margin={{ top: chartTopMargin, right: 8, left: 8, bottom: 4 }}>
+          <LineChart data={data} margin={{ top: chartTopMargin, right: isJoy ? 24 : 8, left: 8, bottom: 4 }}>
             <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
             <XAxis dataKey="year" stroke={theme.axis} tick={{ fontSize: 12 }} />
             <YAxis stroke={theme.axis} tick={{ fontSize: 12 }} tickFormatter={(v) => formatMoney(v)} width={80} />
@@ -571,7 +670,15 @@ export function NetWorthChart({
             />
             {viewMode === "net_worth" ? (
               <>
-                <Line type="monotone" dataKey="value" stroke={palette[0]} dot={false} strokeWidth={2} />
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  stroke={palette[0]}
+                  dot={isJoy ? renderSunDot : false}
+                  activeDot={isJoy ? renderSunActiveDot : undefined}
+                  strokeWidth={2}
+                />
+
                 {compareName && (
                   <Line
                     type="monotone"

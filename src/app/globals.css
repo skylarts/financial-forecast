@@ -15,19 +15,114 @@
   --chart-line: #5b8def;
 }
 
-/* 🩷 Pink mode -- a soft, cute second color scheme. */
-:root[data-theme="pink"] {
-  --background: #fff0f6;
-  --panel: #ffe4ef;
-  --border-color: #ffbcda;
-  --foreground: #6a2748;
-  --dim: #c06e93;
-  --accent: #ff4fa3;
-  --positive: #21b58a;
+/* ☀️ Joy mode -- a sunny, warm second color scheme that makes finance feel
+   cozy, optimistic, and welcoming instead of cold and spreadsheet-y.
+   Cream background, coral + sunny-yellow accents, mint for the good news. */
+:root[data-theme="joy"] {
+  --background: #fff8f0;
+  --panel: #ffffff;
+  --border-color: #ffe0c7;
+  --foreground: #4a3729;
+  --dim: #a68a72;
+  --accent: #ff7a59;
+  --positive: #2fb98d;
   --negative: #f0506b;
-  --chart-grid: #ffc9e0;
-  --chart-axis: #c06e93;
-  --chart-line: #ff4fa3;
+  --chart-grid: #f4e5d3;
+  --chart-axis: #a68a72;
+  --chart-line: #ff7a59;
+  /* Sunny background wash + a warm glow used by cards and buttons below. */
+  --joy-gradient: linear-gradient(160deg, #fff8f0 0%, #fff1e2 42%, #fef6e4 100%);
+  --joy-accent-gradient: linear-gradient(135deg, #ffb14e 0%, #ff7a59 100%);
+  --joy-glow: 0 8px 24px -10px rgba(255, 122, 89, 0.35);
+}
+
+/* -- Joy mode delight layer ------------------------------------------------
+   These rules only fire under [data-theme="joy"], so the default dark theme
+   is untouched. They lean on the utility classes the app already uses
+   (bg-panel, bg-accent) so every card and primary button gets the joyful
+   treatment at once, without editing each component. */
+
+:root[data-theme="joy"] body {
+  background: var(--joy-gradient);
+  background-attachment: fixed;
+}
+
+/* Cards: soft warm glow and a gentle lift on hover so the whole page feels
+   light and alive. */
+:root[data-theme="joy"] .bg-panel {
+  box-shadow: var(--joy-glow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+:root[data-theme="joy"] .bg-panel:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px -12px rgba(255, 122, 89, 0.45);
+}
+
+/* Primary/active buttons (scenario tabs, sign-in) get a sunset gradient. */
+:root[data-theme="joy"] .bg-accent {
+  background-image: var(--joy-accent-gradient);
+  box-shadow: 0 4px 14px -4px rgba(255, 122, 89, 0.5);
+}
+
+/* Everything eases when you flip the theme, so the switch feels magical. */
+:root[data-theme="joy"] * {
+  transition-property: background-color, border-color, color;
+  transition-duration: 0.25s;
+}
+
+/* The sun that caps the net-worth line gently pulses, like it's shining. */
+.joy-sun {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: joy-sun-pulse 1.8s ease-in-out infinite;
+}
+@keyframes joy-sun-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+/* Milestone sparkles twinkle along the line as net worth crosses $1M, $5M... */
+.joy-sparkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: joy-twinkle 2.2s ease-in-out infinite;
+}
+@keyframes joy-twinkle {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* Confetti burst when a plan reaches its retirement number. */
+.joy-confetti-piece {
+  position: absolute;
+  top: -8%;
+  border-radius: 2px;
+  animation-name: joy-confetti-fall;
+  animation-timing-function: ease-in;
+  animation-iteration-count: 1;
+  animation-fill-mode: forwards;
+}
+@keyframes joy-confetti-fall {
+  0% {
+    top: -8%;
+    opacity: 1;
+  }
+  100% {
+    top: 108%;
+    opacity: 0.9;
+  }
 }
 
 @theme inline {

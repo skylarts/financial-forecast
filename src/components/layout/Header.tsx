@@ -161,7 +161,7 @@ function NewScenarioControl({ scenario }: { scenario: Scenario }) {
 export function Header({ scenario }: { scenario: Scenario }) {
   const scenarios = usePlanStore((s) => s.plan.scenarios);
   const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
-  const isPink = useUiStore((s) => s.theme) === "pink";
+  const isJoy = useUiStore((s) => s.theme) === "joy";
   const openWizard = useWizardStore((s) => s.openWizard);
   const assumptionsOpen = useAssumptionsStore((s) => s.open);
   const openAssumptions = useAssumptionsStore((s) => s.openAssumptions);
@@ -171,7 +171,12 @@ export function Header({ scenario }: { scenario: Scenario }) {
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-6 py-4">
       <div className="flex items-center gap-3">
         <ThemeToggle />
-        <h1 className="text-xl font-bold">{isPink ? "Forecast ✨" : "Forecast"}</h1>
+        <div className="flex flex-col">
+          <h1 className="text-xl font-bold">{isJoy ? "Forecast ✨" : "Forecast"}</h1>
+          {isJoy && (
+            <span className="text-xs font-medium text-accent">Bright days ahead — let&apos;s grow your money ☀️</span>
+          )}
+        </div>
         {lastSavedAt > 0 && <span className="text-xs text-dim">Saved to this browser</span>}
       </div>
       <div className="flex items-center gap-3">
