@@ -351,14 +351,17 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
 
           {step === "person-more" && (
             <>
-              <h2 className="text-lg font-semibold">Anyone else in this plan?</h2>
+              <h2 className="text-lg font-semibold">
+                {people.length > 1 ? "Anyone else to add?" : "Anyone else in this plan?"}
+              </h2>
               <p className="text-sm text-dim">
-                Is this plan just for you, or is someone else&rsquo;s money part of it too — a spouse, partner, or
-                anyone else you manage finances jointly with?
+                {people.length > 1
+                  ? "You can add as many people as apply — or continue once everyone's in."
+                  : "Is this plan just for you, or is someone else’s money part of it too — a spouse, partner, or anyone else you manage finances jointly with?"}
               </p>
               <div className="flex flex-col gap-2">
                 <button type="button" onClick={() => setStep("person-add")} className={optionButtonClass}>
-                  Yes, add someone else
+                  {people.length > 1 ? "Yes, add another person" : "Yes, add someone else"}
                 </button>
                 <button
                   type="button"
@@ -368,7 +371,7 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
                   }}
                   className={optionButtonClass}
                 >
-                  No, just me
+                  {people.length > 1 ? "No, that's everyone" : "No, just me"}
                 </button>
               </div>
               {people.length > 1 && (
@@ -492,11 +495,18 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
                   + Add a home you already own
                 </button>
               </div>
-              {nonHubAccounts.length > 0 && (
+              {nonHubAccounts.length > 0 ? (
                 <p className="text-xs text-dim">Added so far: {nonHubAccounts.map((a) => a.name).join(", ")}</p>
+              ) : (
+                <p className="text-xs text-dim">Add at least one account to continue — a forecast needs somewhere to start from.</p>
               )}
               <div className="mt-2 flex justify-end">
-                <button type="button" onClick={() => setStep("income")} className={primaryButtonClass}>
+                <button
+                  type="button"
+                  onClick={() => setStep("income")}
+                  disabled={nonHubAccounts.length === 0}
+                  className={primaryButtonClass}
+                >
                   Continue →
                 </button>
               </div>
