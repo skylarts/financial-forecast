@@ -371,7 +371,10 @@ export function AccountDrawer({
         {selectedClass !== "loan" && selectedClass !== "credit_card" && (
           <Field
             label="Annual Growth Rate (e.g. 0.07 for 7%)"
-            hint={growthRows.length > 0 ? "Applies until the first scheduled change below." : undefined}
+            hint={
+              "Use a nominal rate (i.e. the rate you'd actually see reported, already including inflation) — not an inflation-adjusted \"real\" rate. For example, use 0.07 for a 7% stock market return, not 0.045 for its inflation-adjusted equivalent." +
+              (growthRows.length > 0 ? " Applies until the first scheduled change below." : "")
+            }
           >
             <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
           </Field>

@@ -163,6 +163,11 @@ export function buildLlmExport(scenario: Scenario): string {
             : `growing ${fmtPct(stop.maxBalanceGrowthRatePct)}/yr`;
         parts.push(`capped at ${formatMoney(stop.maxBalance)}, ${capGrowth}`);
       }
+      if (stop.startDate || stop.endDate) {
+        parts.push(`active ${stop.startDate ?? "plan start"} → ${stop.endDate ?? "plan end"}`);
+      } else {
+        parts.push("active for the whole plan");
+      }
       lines.push(`${i + 1}. **${accountName(stop.accountId)}** — ${parts.join("; ")}.`);
     });
   }
@@ -190,7 +195,11 @@ export function buildLlmExport(scenario: Scenario): string {
         parts.push("active for the whole plan");
       }
       if (stop.minBalance != null) {
-        parts.push(`never drained below ${formatMoney(stop.minBalance)} (today's dollars, grown by inflation)`);
+        const floorGrowth =
+          stop.minBalanceGrowthRatePct == null
+            ? `inflation (${fmtPct(s.inflationRatePct)}/yr)`
+            : `${fmtPct(stop.minBalanceGrowthRatePct)}/yr`;
+        parts.push(`never drained below ${formatMoney(stop.minBalance)} (today's dollars, grown by ${floorGrowth})`);
       }
       if (mf.drainSplitMode === "fixed_split") {
         parts.push(`share of shortfall: ${stop.splitPct == null ? "unset" : fmtPct(stop.splitPct)}`);

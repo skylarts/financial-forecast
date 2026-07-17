@@ -45,7 +45,7 @@ describe("Extra Savings split: flow-based, not stock-based", () => {
     // $3k/mo, uncapped, leaving $7k/mo unclaimed in Extra Savings every month.
     const { scenario, extraSavings, checking } = buildScenario((extraSavingsId, checkingId) => ({
       splitOrder: [
-        { id: "s1", accountId: checkingId, kind: "flat", amount: 3_000, pct: null, maxBalance: null, maxBalanceGrowthRatePct: null },
+        { id: "s1", accountId: checkingId, kind: "flat", amount: 3_000, pct: null, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
       drainOrder: [],
       drainSplitMode: "priority_fill",
@@ -65,7 +65,7 @@ describe("Extra Savings split: flow-based, not stock-based", () => {
   it("keeps growing a deliberately-unclaimed reserve year over year rather than letting it plateau", () => {
     const { scenario, extraSavings } = buildScenario((extraSavingsId, checkingId) => ({
       splitOrder: [
-        { id: "s1", accountId: checkingId, kind: "flat", amount: 3_000, pct: null, maxBalance: null, maxBalanceGrowthRatePct: null },
+        { id: "s1", accountId: checkingId, kind: "flat", amount: 3_000, pct: null, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
       drainOrder: [],
       drainSplitMode: "priority_fill",
@@ -88,8 +88,8 @@ describe("Extra Savings split: cascading percentages", () => {
     // would instead give Brokerage 50% of the original $10k = $5k.
     const { scenario, checking, brokerage } = buildScenario((extraSavingsId, checkingId, brokerageId) => ({
       splitOrder: [
-        { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 0.5, maxBalance: null, maxBalanceGrowthRatePct: null },
-        { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 0.5, maxBalance: null, maxBalanceGrowthRatePct: null },
+        { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 0.5, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+        { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 0.5, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
       drainOrder: [],
       drainSplitMode: "priority_fill",
@@ -107,8 +107,8 @@ describe("Extra Savings split: balance caps still apply", () => {
     const { scenario, checking } = buildScenario(
       (extraSavingsId, checkingId, brokerageId) => ({
         splitOrder: [
-          { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 5_000, maxBalanceGrowthRatePct: null },
-          { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null },
+          { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 5_000, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+          { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
         ],
         drainOrder: [],
         drainSplitMode: "priority_fill",
@@ -172,7 +172,7 @@ describe("Extra Savings deficit cascade", () => {
     const { scenario, extraSavings } = buildScenario(
       (extraSavingsId, checkingId, brokerageId) => ({
         splitOrder: [],
-        drainOrder: [{ id: "d1", accountId: brokerageId, startDate: null, endDate: null, splitPct: null, minBalance: null }],
+        drainOrder: [{ id: "d1", accountId: brokerageId, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null }],
         drainSplitMode: "priority_fill",
       }),
       { incomeAmount: 5_000, expenseAmount: 20_000 } // $15k/mo shortfall
@@ -190,7 +190,7 @@ describe("Extra Savings deficit cascade", () => {
       (extraSavingsId) => ({
         splitOrder: [],
         // The only drain stop IS Extra Savings itself -- drawFromSource no-ops on self.
-        drainOrder: [{ id: "d1", accountId: extraSavingsId, startDate: null, endDate: null, splitPct: null, minBalance: null }],
+        drainOrder: [{ id: "d1", accountId: extraSavingsId, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null }],
         drainSplitMode: "priority_fill",
       }),
       { incomeAmount: 5_000, expenseAmount: 20_000 }
