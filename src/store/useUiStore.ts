@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type Theme = "dark" | "pink";
+export type Theme = "dark" | "joy";
 
 interface UiState {
   theme: Theme;
@@ -14,7 +14,7 @@ export const useUiStore = create<UiState>()(
   persist(
     (set) => ({
       theme: "dark",
-      toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "pink" : "dark" })),
+      toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "joy" : "dark" })),
       setTheme: (theme) => set({ theme }),
     }),
     { name: "forecast-ui" }

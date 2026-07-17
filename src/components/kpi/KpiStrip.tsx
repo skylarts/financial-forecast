@@ -1,8 +1,13 @@
+"use client";
+
 import type { ProjectionResult, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
+import { useUiStore } from "@/store/useUiStore";
 
 interface Card {
   label: string;
+  /** Cheerful emoji shown in joy mode to make each milestone feel friendly. */
+  icon: string;
   value: string;
   compareValue: string | null;
   delta: string | null;
@@ -48,6 +53,7 @@ export function KpiStrip({
   const cards: Card[] = [
     {
       label: "Net worth (EOY)",
+      icon: "🌱",
       value: formatMoney(eoy),
       compareValue: compareKpis ? formatMoney(cmpEoy ?? 0) : null,
       delta: moneyDelta(eoy, cmpEoy),
@@ -55,6 +61,7 @@ export function KpiStrip({
     },
     {
       label: "Net worth at retirement",
+      icon: "🌴",
       value: atRetirement !== null ? formatMoney(atRetirement) : "—",
       compareValue: compareKpis ? (cmpAtRetirement !== null ? formatMoney(cmpAtRetirement) : "—") : null,
       delta: atRetirement !== null ? moneyDelta(atRetirement, cmpAtRetirement) : null,
@@ -63,6 +70,7 @@ export function KpiStrip({
     },
     {
       label: "Retirement age",
+      icon: "🎂",
       value: kpis.retirementAge !== null ? String(kpis.retirementAge) : "—",
       compareValue: compareKpis ? (compareKpis.retirementAge !== null ? String(compareKpis.retirementAge) : "—") : null,
       // A lower retirement age is the "better" outcome, so the delta's color sense is inverted vs. net worth.
@@ -74,6 +82,7 @@ export function KpiStrip({
     },
     {
       label: isFullRange ? "Net worth at end" : `Net worth in ${lastYear?.year ?? ""}`,
+      icon: "🌟",
       value: formatMoney(atEnd),
       compareValue: compareKpis ? formatMoney(cmpAtEnd ?? 0) : null,
       delta: moneyDelta(atEnd, cmpAtEnd),
@@ -81,11 +90,16 @@ export function KpiStrip({
     },
   ];
 
+  const isJoy = useUiStore((s) => s.theme) === "joy";
+
   return (
     <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
       {cards.map((card) => (
         <div key={card.label} className="rounded-lg border border-border bg-panel p-4">
-          <div className="text-xs text-dim">{card.label}</div>
+          <div className="flex items-center gap-1.5 text-xs text-dim">
+            {isJoy && <span className="text-sm leading-none">{card.icon}</span>}
+            {card.label}
+          </div>
           {card.compareValue === null ? (
             <div className="mt-1 text-2xl font-bold">{card.value}</div>
           ) : (

@@ -14,11 +14,15 @@ import { StalePlanBanner } from "@/components/layout/StalePlanBanner";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useProjection } from "@/store/useProjection";
 import { useCloudSync } from "@/store/useCloudSync";
+import { useUiStore } from "@/store/useUiStore";
 import { SetupWizardHost } from "@/components/wizard/SetupWizardHost";
+import { JoyConfetti } from "@/components/joy/JoyConfetti";
+import { JoyQuote } from "@/components/joy/JoyQuote";
 
 function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());
   const projection = useProjection(scenario);
+  const isJoy = useUiStore((s) => s.theme) === "joy";
 
   const allScenarios = usePlanStore((s) => s.plan.scenarios);
   const compareScenarioId = usePlanStore((s) => s.compareScenarioId);
@@ -61,6 +65,8 @@ function HomeContent() {
 
   return (
     <div className="flex min-h-screen flex-1 flex-col">
+      {/* Celebrate once when joy mode is on and the plan reaches retirement. */}
+      <JoyConfetti fire={isJoy && projection.kpis.retirementAge !== null} />
       <Header scenario={scenario} />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-6">
         <KpiStrip
@@ -72,6 +78,7 @@ function HomeContent() {
           compareYears={compareYears}
           compareName={hasCompare ? compareScenarioRaw!.name : null}
         />
+        {isJoy && <JoyQuote />}
         <StalePlanBanner scenario={scenario} />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
         <YearRangePicker
