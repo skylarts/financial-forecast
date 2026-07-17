@@ -69,6 +69,22 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // income, expenses, contribution draws, and mortgage payments below.
   const primarySpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts);
 
+  // A loan/mortgage account entered directly (Accounts tab, or the setup
+  // wizard's "home you already own") rather than synthesized by a buy_home
+  // event still needs to amortize -- register it here so the "Amortize
+  // mortgages/loans" step in forecastScenario.ts (which looks accounts up by
+  // id in this same `mortgages` list) picks it up. Payments are funded from
+  // the primary spending account, same fallback as every other cashflow.
+  for (const account of scenario.accounts) {
+    if (excludedAccountIds.has(account.id)) continue;
+    if ((account.class !== "loan" && account.class !== "mortgage") || !account.loanTerms) continue;
+    mortgages.push({
+      accountId: account.id,
+      loanTerms: account.loanTerms,
+      payingAccountId: primarySpendingAccountId,
+    });
+  }
+
   // --- Income sources: today's-dollars amount, own growth rate, plus any
   //     temporary adjustment windows entered directly on the source. ---
   const retirementByPerson = new Map<Id, ISODate>();

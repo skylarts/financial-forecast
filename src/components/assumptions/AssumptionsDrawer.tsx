@@ -125,6 +125,18 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
         <section className="flex flex-col gap-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-dim">Global Assumptions</h3>
           <label className="flex flex-col gap-1 text-xs text-dim">
+            <span className="inline-flex items-center gap-1">
+              Start date
+              <InfoTooltip text="Every account's balance is treated as being as of this date, and growth/contributions compound forward from here (accounts created by an event, like a home purchase, use that event's date instead). Moving this date without also updating each account's Starting Balance will make the projection skip or double-count time." />
+            </span>
+            <input
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+              type="date"
+              value={settingsDraft.startDate}
+              onChange={(e) => saveSettings({ ...settingsDraft, startDate: e.target.value })}
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-dim">
             Inflation rate (e.g. 0.03 for 3%)
             <input
               className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { planSchema } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useAuth } from "@/components/auth/AuthProvider";
@@ -13,12 +13,21 @@ const SYNC_DEBOUNCE_MS = 1500;
  * the user's cloud plan on sign-in (cloud wins, matching the app's
  * last-write-wins model) and pushes local edits up on a short debounce,
  * keyed off `lastSavedAt` -- the same timestamp every plan mutation
- * (including a local JSON restore) already stamps. */
-export function useCloudSync() {
+ * (including a local JSON restore) already stamps.
+ *
+ * Returns `cloudSyncReady`: true immediately for a signed-out user (nothing
+ * to pull), true once the pull attempt for the current user has settled
+ * (success, empty, or error) for a signed-in one. Callers that need to know
+ * whether *this* browser is truly first-run (e.g. the setup wizard's
+ * auto-prompt) should wait for this before checking local state, otherwise
+ * a returning user signed in on a new device could be prompted for a moment
+ * before their cloud plan lands. */
+export function useCloudSync(): { cloudSyncReady: boolean } {
   const { user } = useAuth();
   const hasHydrated = usePlanStore((s) => s.hasHydrated);
   const loadPlan = usePlanStore((s) => s.loadPlan);
   const pulledForUserId = useRef<string | null>(null);
+  const [pullCompleteForUserId, setPullCompleteForUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user || !hasHydrated) return;
@@ -28,30 +37,34 @@ export function useCloudSync() {
     const supabase = createClient();
 
     (async () => {
-      const { data, error } = await supabase
-        .from("plans")
-        .select("plan")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      try {
+        const { data, error } = await supabase
+          .from("plans")
+          .select("plan")
+          .eq("user_id", user.id)
+          .maybeSingle();
 
-      if (error) {
-        console.warn("Failed to load cloud plan; keeping local plan.", error);
-        return;
-      }
-
-      if (data?.plan) {
-        const result = planSchema.safeParse(data.plan);
-        if (result.success) {
-          loadPlan(result.data);
+        if (error) {
+          console.warn("Failed to load cloud plan; keeping local plan.", error);
           return;
         }
-        console.warn("Cloud plan failed validation; keeping local plan.", result.error);
-        return;
-      }
 
-      // No cloud row yet -- push the current local plan up as the first copy.
-      const localPlan = usePlanStore.getState().plan;
-      await supabase.from("plans").upsert({ user_id: user.id, plan: localPlan, updated_at: new Date().toISOString() });
+        if (data?.plan) {
+          const result = planSchema.safeParse(data.plan);
+          if (result.success) {
+            loadPlan(result.data);
+            return;
+          }
+          console.warn("Cloud plan failed validation; keeping local plan.", result.error);
+          return;
+        }
+
+        // No cloud row yet -- push the current local plan up as the first copy.
+        const localPlan = usePlanStore.getState().plan;
+        await supabase.from("plans").upsert({ user_id: user.id, plan: localPlan, updated_at: new Date().toISOString() });
+      } finally {
+        setPullCompleteForUserId(user.id);
+      }
     })();
   }, [user, hasHydrated, loadPlan]);
 
@@ -83,4 +96,6 @@ export function useCloudSync() {
       unsubscribe();
     };
   }, [user, hasHydrated]);
+
+  return { cloudSyncReady: !user || pullCompleteForUserId === user.id };
 }

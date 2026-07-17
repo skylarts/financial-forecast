@@ -56,6 +56,27 @@ interface FormValues {
   isExcluded: boolean;
 }
 
+/** Loan terms for class "loan" -- amortized monthly by the engine (see
+ *  resolveEvents.ts, which registers any loan/mortgage-class account with
+ *  loanTerms for amortization, not just ones created via a buy_home event).
+ *  `originalPrincipal` isn't user-edited here -- it's set to the account's
+ *  current Starting Balance at save time, same convention the buy_home event
+ *  and the setup wizard's "home you already own" flow use. */
+interface LoanDraft {
+  annualInterestRatePct: string;
+  termYears: string;
+  monthlyPayment: string;
+}
+
+function toLoanDraft(account?: Account): LoanDraft {
+  const lt = account?.loanTerms;
+  return {
+    annualInterestRatePct: lt ? lt.annualInterestRatePct.toString() : "0.07",
+    termYears: lt ? Math.round(lt.termMonths / 12).toString() : "5",
+    monthlyPayment: lt?.monthlyPayment?.toString() ?? "",
+  };
+}
+
 /** A scheduled growth-rate change, edited as its own row (beyond the base rate above). */
 interface GrowthRow {
   key: string;
@@ -151,6 +172,7 @@ export function AccountDrawer({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [growthRows, setGrowthRows] = useState<GrowthRow[]>(() => toGrowthRows(account));
   const [contribRows, setContribRows] = useState<ContribRow[]>(() => toContribRows(account));
+  const [loanDraft, setLoanDraft] = useState<LoanDraft>(() => toLoanDraft(account));
 
   const { register, handleSubmit, reset, watch } = useForm<FormValues>({
     defaultValues: toFormValues(account),
@@ -160,6 +182,7 @@ export function AccountDrawer({
     reset(toFormValues(account));
     setGrowthRows(toGrowthRows(account));
     setContribRows(toContribRows(account));
+    setLoanDraft(toLoanDraft(account));
     setError(null);
     // Auto-expand Advanced when editing an account that already has
     // something set there, so it's never silently hidden.
@@ -241,13 +264,29 @@ export function AccountDrawer({
       }));
     }
 
+    // Amortized classes don't grow via growthRatePct at all (see
+    // forecastScenario.ts's monthly growth step, which skips credit_card/
+    // loan/mortgage entirely) -- force it to 0 rather than leave a stale,
+    // misleading rate on the record.
+    const isLoan = cls === "loan";
+    const termMonths = Math.max(1, Math.round(Number(loanDraft.termYears) || 0) * 12);
+    const loanTerms: Account["loanTerms"] = isLoan
+      ? {
+          originalPrincipal: Number(values.startingBalance) || 0,
+          originationDate: planStartDate,
+          annualInterestRatePct: Number(loanDraft.annualInterestRatePct) || 0,
+          termMonths,
+          monthlyPayment: loanDraft.monthlyPayment.trim() !== "" ? Number(loanDraft.monthlyPayment) : undefined,
+        }
+      : undefined;
+
     const candidate = {
       name: values.name.trim(),
       class: cls,
       category: categoryForClass(cls),
       ownerId: values.ownerId || null,
       startingBalance: Number(values.startingBalance),
-      growthRatePct: Number(values.growthRatePct),
+      growthRatePct: cls === "loan" || cls === "credit_card" ? 0 : Number(values.growthRatePct),
       isExcluded: values.isExcluded,
       taxTreatment: values.taxTreatment,
       // A Roth account (class or explicit taxTreatment) can never be subject
@@ -257,6 +296,7 @@ export function AccountDrawer({
       contribution,
       growthRateSchedule: growthRateSchedule.length > 0 ? growthRateSchedule : undefined,
       contributionSchedule,
+      loanTerms,
     };
 
     const result = accountObjectSchema.omit({ id: true }).safeParse(candidate);
@@ -283,13 +323,60 @@ export function AccountDrawer({
         <Field label="Starting Balance">
           <TextInput reg={register("startingBalance", { valueAsNumber: true })} type="number" step="0.01" />
         </Field>
-        <Field
-          label="Annual Growth Rate (e.g. 0.07 for 7%)"
-          hint={growthRows.length > 0 ? "Applies until the first scheduled change below." : undefined}
-        >
-          <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
-        </Field>
-        {growthRows.map((row) => (
+        {selectedClass === "loan" && (
+          <div className="rounded-md border border-border p-3">
+            <div className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
+              Loan Details
+              <InfoTooltip text="The balance above is amortized monthly at this rate and term -- a payment is drawn from your spending account automatically, same as a mortgage." />
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className={labelClass}>
+                Interest rate (e.g. 0.07 for 7%)
+                <input
+                  className={inputClass}
+                  type="number"
+                  step="0.001"
+                  value={loanDraft.annualInterestRatePct}
+                  onChange={(e) => setLoanDraft((d) => ({ ...d, annualInterestRatePct: e.target.value }))}
+                />
+              </label>
+              <label className={labelClass}>
+                Years remaining
+                <input
+                  className={inputClass}
+                  type="number"
+                  step="1"
+                  min="1"
+                  value={loanDraft.termYears}
+                  onChange={(e) => setLoanDraft((d) => ({ ...d, termYears: e.target.value }))}
+                />
+              </label>
+              <label className={labelClass}>
+                <span className="inline-flex items-center gap-1">
+                  Monthly payment (optional)
+                  <InfoTooltip text="Leave blank to calculate automatically from the balance, rate, and remaining term." />
+                </span>
+                <input
+                  className={inputClass}
+                  type="number"
+                  step="0.01"
+                  placeholder="auto"
+                  value={loanDraft.monthlyPayment}
+                  onChange={(e) => setLoanDraft((d) => ({ ...d, monthlyPayment: e.target.value }))}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+        {selectedClass !== "loan" && selectedClass !== "credit_card" && (
+          <Field
+            label="Annual Growth Rate (e.g. 0.07 for 7%)"
+            hint={growthRows.length > 0 ? "Applies until the first scheduled change below." : undefined}
+          >
+            <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
+          </Field>
+        )}
+        {selectedClass !== "loan" && selectedClass !== "credit_card" && growthRows.map((row) => (
           <div key={row.key} className="flex items-end gap-2 rounded-md border border-border p-2">
             <label className={labelClass}>
               Starting
@@ -316,13 +403,15 @@ export function AccountDrawer({
             </button>
           </div>
         ))}
-        <button
-          type="button"
-          onClick={addGrowthRow}
-          className="self-start rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
-        >
-          + Add growth-rate change
-        </button>
+        {selectedClass !== "loan" && selectedClass !== "credit_card" && (
+          <button
+            type="button"
+            onClick={addGrowthRow}
+            className="self-start rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
+          >
+            + Add growth-rate change
+          </button>
+        )}
         <Field label="Owner">
           <SelectInput
             reg={register("ownerId")}
