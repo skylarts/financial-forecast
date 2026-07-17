@@ -15,6 +15,10 @@ import { idSchema, isoDateSchema } from "./common";
  * allocation above -- if a stop's offered share would push its account over
  * this ceiling, only the room up to the ceiling is taken and the rest
  * cascades to the next stop, same spillover behavior as before.
+ *
+ * The optional date window mirrors drainStopSchema's: it lets a stop only
+ * receive surplus for part of the plan -- e.g. an account that shouldn't
+ * start filling until a few years before retirement.
  */
 export const splitStopSchema = z.object({
   id: idSchema.default(() => nanoid()),
@@ -28,6 +32,10 @@ export const splitStopSchema = z.object({
   maxBalance: z.number().nonnegative().nullable().default(null),
   /** Annual growth of the cap; null = follow settings.inflationRatePct. */
   maxBalanceGrowthRatePct: z.number().nullable().default(null),
+  /** null = active from the plan's start. */
+  startDate: isoDateSchema.nullable().default(null),
+  /** null = active through the plan's end. */
+  endDate: isoDateSchema.nullable().default(null),
 });
 export type SplitStop = z.infer<typeof splitStopSchema>;
 
@@ -54,6 +62,8 @@ export const drainStopSchema = z.object({
   splitPct: z.number().min(0).max(1).nullable().default(null),
   /** Minimum balance (today's dollars, grown by inflation) this stop won't be drained below; null = no floor. */
   minBalance: z.number().nonnegative().nullable().default(null),
+  /** Annual growth of the floor; null = follow settings.inflationRatePct. */
+  minBalanceGrowthRatePct: z.number().nullable().default(null),
 });
 export type DrainStop = z.infer<typeof drainStopSchema>;
 

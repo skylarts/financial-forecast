@@ -1277,7 +1277,7 @@ describe("forecastScenario -- moneyFlow (Extra Savings, expressed directly)", ()
       ],
       horizonEndDate: "2026-12-31",
       moneyFlow: {
-        splitOrder: [{ id: "s1", accountId: savings.id, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null }],
+        splitOrder: [{ id: "s1", accountId: savings.id, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null }],
         drainOrder: [],
         drainSplitMode: "priority_fill",
       },
@@ -1319,8 +1319,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2027-12-31", splitPct: null, minBalance: null },
-          { id: nanoid(), accountId: ira.id, startDate: "2028-01-01", endDate: null, splitPct: null, minBalance: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2027-12-31", splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: ira.id, startDate: "2028-01-01", endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
         ],
         drainSplitMode: "priority_fill",
       },
@@ -1357,7 +1357,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         // IRA isn't active until 2027 -- 2026's shortfall has nowhere to go.
-        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: null, splitPct: null, minBalance: null }],
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null }],
         drainSplitMode: "priority_fill",
       },
     });
@@ -1393,8 +1393,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null },
-          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null, minBalanceGrowthRatePct: null },
         ],
         drainSplitMode: "fixed_split",
       },
@@ -1430,8 +1430,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null },
-          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.4 , minBalance: null, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.6 , minBalance: null, minBalanceGrowthRatePct: null },
         ],
         drainSplitMode: "fixed_split",
       },
@@ -1477,9 +1477,9 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null },
-          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null },
-          { id: nanoid(), accountId: roth.id, startDate: "2030-01-01", endDate: null, splitPct: 0.4 , minBalance: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: 0.3 , minBalance: null, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: roth.id, startDate: "2030-01-01", endDate: null, splitPct: 0.4 , minBalance: null, minBalanceGrowthRatePct: null },
         ],
         drainSplitMode: "fixed_split",
       },
@@ -1520,9 +1520,9 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
         splitOrder: [],
         drainOrder: [
           // Brokerage funds 2026, IRA takes 2027-2028, then Brokerage again from 2029.
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2026-12-31", splitPct: null, minBalance: null },
-          { id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: "2028-12-31", splitPct: null, minBalance: null },
-          { id: nanoid(), accountId: brokerage.id, startDate: "2029-01-01", endDate: null, splitPct: null, minBalance: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: "2026-12-31", splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: ira.id, startDate: "2027-01-01", endDate: "2028-12-31", splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: "2029-01-01", endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
         ],
         drainSplitMode: "priority_fill",
       },
@@ -1558,7 +1558,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       horizonEndDate: "2026-12-31",
       moneyFlow: {
         splitOrder: [],
-        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null }],
+        drainOrder: [{ id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null }],
         drainSplitMode: "priority_fill",
       },
     });
@@ -1593,8 +1593,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000 },
-          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
         ],
         drainSplitMode: "priority_fill",
       },
@@ -1626,13 +1626,84 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         // Only source, floored at $100k -- can only ever cover $10k of the $60k shortfall.
-        drainOrder: [{ id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000 }],
+        drainOrder: [{ id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000, minBalanceGrowthRatePct: null }],
         drainSplitMode: "priority_fill",
       },
     });
     const result = forecastScenario(scenario);
     expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.year === 2026)).toBe(true);
     expect(result.years[0].accountBalances[brokerage.id]).toBeCloseTo(100_000, 0);
+  });
+});
+
+describe("forecastScenario -- split order date windows and floor growth override", () => {
+  it("only routes surplus to a split stop within its date window", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0 });
+    const buffer = makeAccount({ class: "cash", name: "Retirement Buffer", startingBalance: 0, growthRatePct: 0 });
+    const scenario = makeScenario({
+      accounts: [checking, buffer],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5_000 })],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+      moneyFlow: {
+        // Buffer doesn't start absorbing surplus until 2027.
+        splitOrder: [
+          { id: nanoid(), accountId: buffer.id, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: "2027-01-01", endDate: null },
+        ],
+        drainOrder: [],
+        drainSplitMode: "priority_fill",
+      },
+    });
+    const result = forecastScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+    const y2027 = result.years.find((y) => y.year === 2027)!;
+
+    // 2026: the stop isn't active yet -- all $60k of surplus stays in checking.
+    expect(y2026.accountBalances[buffer.id]).toBeCloseTo(0, 0);
+    expect(y2026.accountBalances[checking.id]).toBeCloseTo(60_000, 0);
+    // 2027: the stop is active -- that year's $60k surplus routes to the buffer,
+    // 2026's accumulated $60k stays behind in checking (untouched retroactively).
+    expect(y2027.accountBalances[buffer.id]).toBeCloseTo(60_000, 0);
+    expect(y2027.accountBalances[checking.id]).toBeCloseTo(60_000, 0);
+  });
+
+  it("uses the drain floor's own growth rate instead of inflation when one is set", () => {
+    const runWith = (minBalanceGrowthRatePct: number | null) => {
+      const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0, growthRatePct: 0 });
+      const brokerage = makeAccount({
+        class: "taxable_investment",
+        name: "Brokerage",
+        taxTreatment: "taxable",
+        startingBalance: 200_000,
+        growthRatePct: 0,
+      });
+      const scenario = makeScenario({
+        accounts: [checking, brokerage],
+        expenses: [makeExpense({ paymentAccountId: checking.id, amount: 50_000 / 12 })], // ~$50k/yr shortfall
+        startDate: "2026-01-01",
+        horizonEndDate: "2027-12-31",
+        inflationRatePct: 0.03,
+        moneyFlow: {
+          splitOrder: [],
+          drainOrder: [
+            { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, splitPct: null, minBalance: 100_000, minBalanceGrowthRatePct },
+          ],
+          drainSplitMode: "priority_fill",
+        },
+      });
+      const result = forecastScenario(scenario);
+      return result.years.find((y) => y.year === 2027)!.accountBalances[brokerage.id];
+    };
+
+    // Year 1 draws the balance from 200k down to the (identical, year-0) 100k
+    // floor's headroom without fully hitting it; year 2 is where the two
+    // floors diverge: inflation grows it to 103k, the explicit override to
+    // 110k, so the override leaves a visibly higher balance behind.
+    const withInflationFloor = runWith(null);
+    const withCustomFloor = runWith(0.10);
+    expect(withInflationFloor).toBeCloseTo(103_000, 0);
+    expect(withCustomFloor).toBeCloseTo(110_000, 0);
+    expect(withCustomFloor).toBeGreaterThan(withInflationFloor);
   });
 });
 

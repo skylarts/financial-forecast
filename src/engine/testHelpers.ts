@@ -125,11 +125,21 @@ function deriveMoneyFlow(
           : 1,
       maxBalance: a.maxBalance ?? null,
       maxBalanceGrowthRatePct: a.maxBalanceGrowthRatePct ?? null,
+      startDate: null,
+      endDate: null,
     }));
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
     .sort((a, b) => (a.withdrawalPriority as number) - (b.withdrawalPriority as number))
-    .map((a) => ({ id: nanoid(), accountId: a.id, startDate: null, endDate: null, splitPct: null, minBalance: null }));
+    .map((a) => ({
+      id: nanoid(),
+      accountId: a.id,
+      startDate: null,
+      endDate: null,
+      splitPct: null,
+      minBalance: null,
+      minBalanceGrowthRatePct: null,
+    }));
   return {
     splitOrder,
     drainOrder,

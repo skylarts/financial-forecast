@@ -48,7 +48,17 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       ...moneyFlow,
       splitOrder: [
         ...moneyFlow.splitOrder,
-        { id: nanoid(), accountId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null },
+        {
+          id: nanoid(),
+          accountId,
+          kind: "percent_of_remainder",
+          amount: null,
+          pct: 1,
+          maxBalance: null,
+          maxBalanceGrowthRatePct: null,
+          startDate: null,
+          endDate: null,
+        },
       ],
     });
   };
@@ -78,7 +88,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       ...moneyFlow,
       drainOrder: [
         ...moneyFlow.drainOrder,
-        { id: nanoid(), accountId, startDate: null, endDate: null, splitPct: null, minBalance: null },
+        { id: nanoid(), accountId, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
       ],
     });
   };
@@ -113,7 +123,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       <section className="flex flex-col gap-2">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
           When there&rsquo;s extra cash, split it
-          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total). Whatever the list doesn't claim stays in Extra Savings." />
+          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total). Whatever the list doesn't claim stays in Extra Savings. Each stop can also have a Start/End date -- leave either blank for 'always'." />
         </h3>
         {moneyFlow.splitOrder.length === 0 && <p className="text-xs text-dim">No surplus targets configured yet.</p>}
         {moneyFlow.splitOrder.map((stop, i) => (
@@ -198,6 +208,24 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 />
                 /yr
               </label>
+              <label className="flex items-center gap-1">
+                Start
+                <input
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="date"
+                  value={stop.startDate ?? ""}
+                  onChange={(e) => updateSplitStop(stop.id, { startDate: e.target.value === "" ? null : e.target.value })}
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                End
+                <input
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="date"
+                  value={stop.endDate ?? ""}
+                  onChange={(e) => updateSplitStop(stop.id, { endDate: e.target.value === "" ? null : e.target.value })}
+                />
+              </label>
             </div>
           </div>
         ))}
@@ -257,7 +285,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
               </label>
               <label className="flex items-center gap-1">
                 Keep at least $
-                <InfoTooltip text="Today's dollars, grown with inflation. Stops this source draining below that floor -- once hit, the remaining shortfall spills to the next active source." />
+                <InfoTooltip text="Today's dollars, grown by the rate below (or inflation, if left blank). Stops this source draining below that floor -- once hit, the remaining shortfall spills to the next active source." />
                 <input
                   className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
                   type="number"
@@ -266,6 +294,18 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   value={stop.minBalance ?? ""}
                   onChange={(e) => updateDrainStop(stop.id, { minBalance: e.target.value === "" ? null : Number(e.target.value) })}
                 />
+              </label>
+              <label className="flex items-center gap-1">
+                Floor grows
+                <input
+                  className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="number"
+                  step="0.001"
+                  placeholder="inflation"
+                  value={stop.minBalanceGrowthRatePct ?? ""}
+                  onChange={(e) => updateDrainStop(stop.id, { minBalanceGrowthRatePct: e.target.value === "" ? null : Number(e.target.value) })}
+                />
+                /yr
               </label>
               {moneyFlow.drainSplitMode === "fixed_split" && (
                 <label className="flex items-center gap-1">

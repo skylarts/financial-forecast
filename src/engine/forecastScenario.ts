@@ -143,6 +143,13 @@ function isDrainStopActive(stop: DrainStop, month: ISODate): boolean {
   return true;
 }
 
+/** Mirrors isDrainStopActive: whether a split stop's optional date window covers this month. */
+function isSplitStopActive(stop: SplitStop, month: ISODate): boolean {
+  if (stop.startDate && compareDates(month, stop.startDate) < 0) return false;
+  if (stop.endDate && compareDates(month, stop.endDate) > 0) return false;
+  return true;
+}
+
 function effectiveMaxBalance(stop: SplitStop, yearsSinceStart: number, inflationRatePct: number): number {
   if (stop.maxBalance == null) return Infinity;
   const rate = stop.maxBalanceGrowthRatePct ?? inflationRatePct;
@@ -152,7 +159,8 @@ function effectiveMaxBalance(stop: SplitStop, yearsSinceStart: number, inflation
 /** Mirrors effectiveMaxBalance's inflation handling, so a drain floor stays a "today's dollars" amount. */
 function effectiveDrainFloor(stop: DrainStop, yearsSinceStart: number, inflationRatePct: number): number {
   if (stop.minBalance == null) return 0;
-  return stop.minBalance * Math.pow(1 + inflationRatePct, Math.max(0, yearsSinceStart));
+  const rate = stop.minBalanceGrowthRatePct ?? inflationRatePct;
+  return stop.minBalance * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
 }
 
 /**
@@ -606,13 +614,17 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    share of the original total); a stop's own maxBalance ceiling still
     //    applies on top of that, and anything a capped stop can't absorb
     //    spills to the next stop, same as the old fill order. Whatever the
-    //    whole list doesn't claim simply stays in Extra Savings.
+    //    whole list doesn't claim simply stays in Extra Savings. Only stops
+    //    whose optional date window covers this month participate -- lets a
+    //    target sit out of the split entirely until, say, a few years before
+    //    retirement.
     const yearsSinceStart = currentYear - yearOf(settings.startDate);
     const inflationFactor = Math.pow(1 + settings.inflationRatePct, Math.max(0, yearsSinceStart));
+    const activeSplitStops = splitStops.filter(({ stop }) => isSplitStopActive(stop, month));
     if (extraSavingsAccount) {
       const freshSurplus = (balances.get(extraSavingsAccount.id) ?? 0) - extraSavingsMonthStart;
       let remaining = freshSurplus;
-      for (const { account: target, stop } of splitStops) {
+      for (const { account: target, stop } of activeSplitStops) {
         if (remaining <= 0.005) break;
         if (target.id === extraSavingsAccount.id) continue;
         const cap = effectiveMaxBalance(stop, yearsSinceStart, settings.inflationRatePct);
@@ -648,14 +660,15 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //     the chain, landing wherever there's room. This is a rebalance
     //     between the user's own accounts, so it's recorded in rollforwards
     //     (balances must still reconcile) but explicitly NOT counted in the
-    //     surplusRouted headline, which tracks routed income only.
-    for (let ti = 0; ti < splitStops.length; ti++) {
-      const over = splitStops[ti];
+    //     surplusRouted headline, which tracks routed income only. Uses the
+    //     same active (date-window) subset as the split above.
+    for (let ti = 0; ti < activeSplitStops.length; ti++) {
+      const over = activeSplitStops[ti];
       const overCap = effectiveMaxBalance(over.stop, yearsSinceStart, settings.inflationRatePct);
       let excess = (balances.get(over.account.id) ?? 0) - overCap;
       if (excess <= 0.005) continue;
-      for (let tj = ti + 1; tj < splitStops.length && excess > 0.005; tj++) {
-        const dest = splitStops[tj];
+      for (let tj = ti + 1; tj < activeSplitStops.length && excess > 0.005; tj++) {
+        const dest = activeSplitStops[tj];
         const destCap = effectiveMaxBalance(dest.stop, yearsSinceStart, settings.inflationRatePct);
         const room = destCap - (balances.get(dest.account.id) ?? 0);
         if (room <= 0) continue; // next target also full -- keep spilling onward

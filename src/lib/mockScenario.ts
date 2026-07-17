@@ -258,15 +258,16 @@ export const mockScenario: Scenario = {
       // emergency fund up to a cap that keeps pace with inflation, then
       // whatever's left spills to the uncapped brokerage catch-all.
       splitOrder: [
-        { id: nanoid(), accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 20_000, maxBalanceGrowthRatePct: null },
-        { id: nanoid(), accountId: emergencyFundId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 30_000, maxBalanceGrowthRatePct: null },
-        { id: nanoid(), accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null },
+        { id: nanoid(), accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 20_000, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+        { id: nanoid(), accountId: emergencyFundId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 30_000, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+        { id: nanoid(), accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
       drainOrder: [checkingId, emergencyFundId, brokerageId, alex401kId, jordan401kId, alexRothId].map((accountId) => ({
         id: nanoid(),
         accountId,
         startDate: null,
         endDate: null,
+        minBalanceGrowthRatePct: null,
         splitPct: null,
         minBalance: null,
       })),

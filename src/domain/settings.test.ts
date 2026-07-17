@@ -73,8 +73,8 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
       },
     });
     expect(parsed.moneyFlow.drainOrder.map((d) => ({ ...d, id: undefined }))).toEqual([
-      { id: undefined, accountId: "savings", startDate: null, endDate: null, splitPct: null, minBalance: null },
-      { id: undefined, accountId: "brokerage", startDate: null, endDate: null, splitPct: null, minBalance: null },
+      { id: undefined, accountId: "savings", startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
+      { id: undefined, accountId: "brokerage", startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
     ]);
     // Each migrated entry gets its own freshly-generated, non-empty id.
     const ids = parsed.moneyFlow.drainOrder.map((d) => d.id);
