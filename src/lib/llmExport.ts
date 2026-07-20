@@ -294,9 +294,10 @@ export function buildLlmExport(scenario: Scenario): string {
           const ownership = [
             ev.propertyTaxRatePct ? `property tax ${fmtPct(ev.propertyTaxRatePct)}/yr of value` : null,
             ev.homeInsuranceRatePct ? `insurance ${fmtPct(ev.homeInsuranceRatePct)}/yr of value` : null,
+            ev.maintenanceRatePct ? `maintenance ${fmtPct(ev.maintenanceRatePct)}/yr of value` : null,
           ].filter(Boolean);
           lines.push(
-            `  - Purchase price ${formatMoney(ev.purchasePrice)}, property grows ${fmtPct(ev.propertyGrowthRatePct)}/yr. ${financing}${ownership.length ? ` Ongoing: ${ownership.join(", ")}.` : ""}`
+            `  - Purchase price ${formatMoney(ev.purchasePrice)}, property grows ${fmtPct(ev.propertyGrowthRatePct)}/yr. ${financing}${ownership.length ? ` Ongoing: ${ownership.join(", ")}.` : ""}${ev.replaceHousingExpenses ? " Replaces any existing 'Housing' category expense as of this purchase date." : ""}`
           );
           break;
         }

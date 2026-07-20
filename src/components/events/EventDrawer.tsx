@@ -60,6 +60,8 @@ interface FormValues {
   mortgageExtraPrincipal: string;
   propertyTaxRatePct: string;
   homeInsuranceRatePct: string;
+  maintenanceRatePct: string;
+  replaceHousingExpenses: boolean;
   childcareMonthlyExpense: string;
   childcareYears: string;
   additionalOneTimeCost: string;
@@ -94,6 +96,8 @@ const DEFAULTS: FormValues = {
   mortgageExtraPrincipal: "",
   propertyTaxRatePct: "0.01",
   homeInsuranceRatePct: "0.005",
+  maintenanceRatePct: "0.01",
+  replaceHousingExpenses: false,
   childcareMonthlyExpense: "",
   childcareYears: "",
   additionalOneTimeCost: "",
@@ -139,6 +143,8 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         mortgageExtraPrincipal: event.mortgage?.extraPrincipalMonthly?.toString() ?? "",
         propertyTaxRatePct: event.propertyTaxRatePct?.toString() ?? "",
         homeInsuranceRatePct: event.homeInsuranceRatePct?.toString() ?? "",
+        maintenanceRatePct: event.maintenanceRatePct?.toString() ?? "",
+        replaceHousingExpenses: event.replaceHousingExpenses ?? false,
       };
     case "have_a_kid":
       return {
@@ -215,7 +221,8 @@ export function EventDrawer({
     : 0;
   const homeTaxMonthly = (homePrice * (Number(watch("propertyTaxRatePct")) || 0)) / 12;
   const homeInsuranceMonthly = (homePrice * (Number(watch("homeInsuranceRatePct")) || 0)) / 12;
-  const homeMonthlyTotal = homePI + homeExtra + homeTaxMonthly + homeInsuranceMonthly;
+  const homeMaintenanceMonthly = (homePrice * (Number(watch("maintenanceRatePct")) || 0)) / 12;
+  const homeMonthlyTotal = homePI + homeExtra + homeTaxMonthly + homeInsuranceMonthly + homeMaintenanceMonthly;
   const money0 = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
   const onSubmit = (v: FormValues) => {
@@ -269,6 +276,8 @@ export function EventDrawer({
             : null,
           propertyTaxRatePct: v.propertyTaxRatePct.trim() !== "" ? Number(v.propertyTaxRatePct) : undefined,
           homeInsuranceRatePct: v.homeInsuranceRatePct.trim() !== "" ? Number(v.homeInsuranceRatePct) : undefined,
+          maintenanceRatePct: v.maintenanceRatePct.trim() !== "" ? Number(v.maintenanceRatePct) : undefined,
+          replaceHousingExpenses: v.replaceHousingExpenses,
         };
         schema = buyHomeEventSchema.omit({ id: true });
         break;
@@ -438,6 +447,18 @@ export function EventDrawer({
               <Field label="Home Insurance Rate (per year, optional)" hint="Share of the home's value per year, e.g. 0.005 = 0.5%. Grows with the home.">
                 <TextInput reg={register("homeInsuranceRatePct")} type="number" step="0.001" placeholder="e.g. 0.005" />
               </Field>
+              <Field label="Maintenance Rate (per year, optional)" hint="Share of the home's value per year -- the classic '1% rule' upkeep estimate. Grows with the home.">
+                <TextInput reg={register("maintenanceRatePct")} type="number" step="0.001" placeholder="e.g. 0.01" />
+              </Field>
+              <CheckboxInput
+                reg={register("replaceHousingExpenses")}
+                label="Replace existing housing expenses"
+              />
+              {watch("replaceHousingExpenses") && (
+                <p className="-mt-2 pl-6 text-xs text-dim">
+                  Any expense categorized as "Housing" (e.g. rent) stops the day before this purchase closes.
+                </p>
+              )}
 
               {homePrice > 0 && (
                 <div className="rounded-md border border-border p-3 text-sm">
@@ -470,8 +491,14 @@ export function EventDrawer({
                         <span>{money0(homeInsuranceMonthly)}</span>
                       </div>
                     )}
+                    {homeMaintenanceMonthly > 0 && (
+                      <div className="flex justify-between">
+                        <span>Maintenance</span>
+                        <span>{money0(homeMaintenanceMonthly)}</span>
+                      </div>
+                    )}
                   </div>
-                  <p className="mt-2 text-[11px] text-dim">Today's dollars. Tax &amp; insurance grow with the home's value.</p>
+                  <p className="mt-2 text-[11px] text-dim">Today's dollars. Tax, insurance &amp; maintenance grow with the home's value.</p>
                 </div>
               )}
             </>

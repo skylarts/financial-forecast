@@ -63,6 +63,11 @@ export const buyHomeEventSchema = z.object({
   propertyTaxRatePct: z.number().nonnegative().optional(),
   /** Annual home insurance as a fraction of the home's (growing) value, e.g. 0.005 = 0.5%/yr. */
   homeInsuranceRatePct: z.number().nonnegative().optional(),
+  /** Annual maintenance as a fraction of the home's (growing) value, e.g. 0.01 = 1%/yr -- the classic "1% rule" upkeep estimate. */
+  maintenanceRatePct: z.number().nonnegative().optional(),
+  /** When true, any Expense with category "housing" stops the day before this
+   *  purchase closes -- the old rent/mortgage payment it's replacing. */
+  replaceHousingExpenses: z.boolean().optional(),
 });
 export type BuyHomeEvent = z.infer<typeof buyHomeEventSchema>;
 

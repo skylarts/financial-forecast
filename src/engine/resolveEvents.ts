@@ -89,6 +89,11 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   //     temporary adjustment windows entered directly on the source. ---
   const retirementByPerson = new Map<Id, ISODate>();
   const incomeEndOverrides = new Map<Id, ISODate>();
+  // A buy_home event with replaceHousingExpenses trims every category="housing"
+  // Expense (the old rent/mortgage it's replacing) to end the day before this
+  // purchase closes -- same "earliest wins" pattern as a retire event trimming
+  // salary income above, for the case of multiple home purchases in one plan.
+  const housingExpenseEndOverrides = new Map<Id, ISODate>();
   for (const event of events) {
     if (event.type === "retire") {
       const existingRetire = retirementByPerson.get(event.personId);
@@ -102,6 +107,15 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           if (!existing || compareDates(trimmedEnd, existing) < 0) {
             incomeEndOverrides.set(src.id, trimmedEnd);
           }
+        }
+      }
+    } else if (event.type === "buy_home" && event.replaceHousingExpenses) {
+      const trimmedEnd = addDays(event.startDate, -1);
+      for (const exp of scenario.expenses) {
+        if (exp.category !== "housing") continue;
+        const existing = housingExpenseEndOverrides.get(exp.id);
+        if (!existing || compareDates(trimmedEnd, existing) < 0) {
+          housingExpenseEndOverrides.set(exp.id, trimmedEnd);
         }
       }
     }
@@ -152,8 +166,9 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // --- Expenses: same pattern as income ---
   for (const exp of scenario.expenses) {
     if (exp.isExcluded) continue;
+    const effectiveEnd = housingExpenseEndOverrides.get(exp.id) ?? exp.endDate;
     const windows = exp.adjustments ?? [];
-    const occurrences = expandOccurrences(exp.startDate, exp.endDate, exp.frequency, horizonEnd, exp.intervalYears);
+    const occurrences = expandOccurrences(exp.startDate, effectiveEnd, exp.frequency, horizonEnd, exp.intervalYears);
     for (const occ of occurrences) {
       // Entered in today's dollars; inflates from plan start to this expense's
       // own start, then grows at its own configured rate from there.
@@ -353,15 +368,16 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         effectiveStartDate: event.startDate,
       });
 
-      // Property tax + home insurance are entered as an annual fraction of the
-      // home's value. The home starts at purchasePrice (nominal at the purchase
-      // date) and grows at propertyGrowthRatePct, so these ongoing costs track
-      // the same growing value -- recomputed each month and paid from the
-      // primary spending account, running through the end of the plan (there's
-      // no "sell the home" event yet).
+      // Property tax, home insurance, and maintenance are entered as an annual
+      // fraction of the home's value. The home starts at purchasePrice (nominal
+      // at the purchase date) and grows at propertyGrowthRatePct, so these
+      // ongoing costs track the same growing value -- recomputed each month and
+      // paid from the primary spending account, running through the end of the
+      // plan (there's no "sell the home" event yet).
       const ongoingRates: { rate: number; label: string; key: string }[] = [];
       if (event.propertyTaxRatePct) ongoingRates.push({ rate: event.propertyTaxRatePct, label: "Property tax", key: "property_tax" });
       if (event.homeInsuranceRatePct) ongoingRates.push({ rate: event.homeInsuranceRatePct, label: "Home insurance", key: "home_insurance" });
+      if (event.maintenanceRatePct) ongoingRates.push({ rate: event.maintenanceRatePct, label: "Maintenance", key: "maintenance" });
       if (ongoingRates.length) {
         const occurrences = expandOccurrences(event.startDate, null, "monthly", horizonEnd);
         for (const occ of occurrences) {

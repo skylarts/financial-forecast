@@ -124,6 +124,8 @@ export function buildChartMarkers({
         }
         if (ev.propertyTaxRatePct) rows.push({ label: "Property tax", value: `${(ev.propertyTaxRatePct * 100).toFixed(2)}%/yr` });
         if (ev.homeInsuranceRatePct) rows.push({ label: "Home insurance", value: `${(ev.homeInsuranceRatePct * 100).toFixed(2)}%/yr` });
+        if (ev.maintenanceRatePct) rows.push({ label: "Maintenance", value: `${(ev.maintenanceRatePct * 100).toFixed(2)}%/yr` });
+        if (ev.replaceHousingExpenses) rows.push({ label: "Replaces housing expenses", value: "Yes" });
         break;
       case "have_a_kid":
         rows.push({ label: "Repeat every", value: "1 month" });

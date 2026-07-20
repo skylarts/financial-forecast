@@ -435,7 +435,7 @@ describe("forecastScenario -- buy_home", () => {
     expect(extraPayments[extraPayments.length - 1].amount).toBeGreaterThan(0);
   });
 
-  it("charges property tax and home insurance as a share of the home's value", () => {
+  it("charges property tax, home insurance, and maintenance as a share of the home's value", () => {
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
     const eventId = nanoid();
     const scenario = makeScenario({
@@ -453,6 +453,7 @@ describe("forecastScenario -- buy_home", () => {
           mortgage: null,
           propertyTaxRatePct: 0.01,
           homeInsuranceRatePct: 0.005,
+          maintenanceRatePct: 0.01,
         },
       ],
       startDate: "2026-01-01",
@@ -462,8 +463,40 @@ describe("forecastScenario -- buy_home", () => {
     const y2027 = result.years.find((y) => y.year === 2027)!; // full year, home value flat at 500k
     const tax = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:property_tax`);
     const insurance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:home_insurance`);
+    const maintenance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:maintenance`);
     expect(tax?.amount).toBeCloseTo(5_000, 0); // 1% of $500k
     expect(insurance?.amount).toBeCloseTo(2_500, 0); // 0.5% of $500k
+    expect(maintenance?.amount).toBeCloseTo(5_000, 0); // 1% of $500k
+  });
+
+  it("replaceHousingExpenses stops any category=housing expense the day before the purchase closes", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
+    const rent = makeExpense({ category: "housing", paymentAccountId: checking.id, amount: 2_000, growthRatePct: 0 });
+    const groceries = makeExpense({ category: "food", paymentAccountId: checking.id, amount: 500, growthRatePct: 0 });
+    const scenario = makeScenario({
+      accounts: [checking],
+      expenses: [rent, groceries],
+      events: [
+        {
+          id: nanoid(),
+          type: "buy_home",
+          name: "Buy a home",
+          startDate: "2026-07-01",
+          purchasePrice: 400_000,
+          downPaymentAmount: 400_000,
+          downPaymentFromAccountId: checking.id,
+          propertyGrowthRatePct: 0,
+          mortgage: null,
+          replaceHousingExpenses: true,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const y2027 = result.years.find((y) => y.year === 2027)!; // full year after the purchase
+    expect(y2027.cashFlow.expenseByItem.some((i) => i.id === rent.id)).toBe(false); // rent stopped
+    expect(y2027.cashFlow.expenseByItem.some((i) => i.id === groceries.id)).toBe(true); // untouched, wrong category
   });
 });
 
