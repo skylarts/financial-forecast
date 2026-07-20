@@ -14,7 +14,10 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
       case "retire": {
         const person = scenario.household.people.find((p) => p.id === event.personId);
         const age = person ? ageOn(person.birthDate, event.startDate) : null;
-        description = `${personName(event.personId)} retires${age !== null ? ` at age ${age}` : ""}`;
+        const expense = event.retirementExpense
+          ? ` · $${event.retirementExpense.amount.toLocaleString()}/yr expense`
+          : "";
+        description = `${personName(event.personId)} retires${age !== null ? ` at age ${age}` : ""}${expense}`;
         break;
       }
       case "buy_home": {

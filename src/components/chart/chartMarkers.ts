@@ -106,6 +106,9 @@ export function buildChartMarkers({
       case "retire":
         rows.push({ label: "Person", value: personName(ev.personId) });
         if (ev.retirementAge) rows.push({ label: "Retirement age", value: String(ev.retirementAge) });
+        if (ev.retirementExpense) {
+          rows.push({ label: "Retirement expense", value: `${formatMoney(ev.retirementExpense.amount)}/yr` });
+        }
         break;
       case "buy_home":
         rows.push({ label: "Purchase price", value: formatMoney(ev.purchasePrice) });

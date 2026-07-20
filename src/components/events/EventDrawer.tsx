@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import type { Account, EventType, Person, RecurrenceFrequency, ScenarioEvent } from "@/domain";
+import type { Account, EventType, Person, RecurrenceFrequency, ScenarioEvent, TemporaryAdjustment } from "@/domain";
 import {
   retireEventSchema,
   buyHomeEventSchema,
@@ -13,6 +13,7 @@ import { addMonths, elapsedYears } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
+import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 
 // income_change / expense_change and windfall are not separate event types
 // here -- a temporary raise/pause/cut lives directly on the income or
@@ -43,6 +44,11 @@ interface FormValues {
   isExcluded: boolean;
   personId: string;
   retirementAge: string;
+  hasRetirementExpense: boolean;
+  retirementExpenseAmount: string;
+  retirementExpenseGrowthRatePct: string;
+  retirementExpensePaymentAccountId: string;
+  retirementExpenseEndDate: string;
   purchasePrice: string;
   downPaymentAmount: string;
   downPaymentFromAccountId: string;
@@ -69,6 +75,11 @@ const DEFAULTS: FormValues = {
   isExcluded: false,
   personId: "",
   retirementAge: "",
+  hasRetirementExpense: false,
+  retirementExpenseAmount: "",
+  retirementExpenseGrowthRatePct: "0",
+  retirementExpensePaymentAccountId: "",
+  retirementExpenseEndDate: "",
   purchasePrice: "",
   downPaymentAmount: "",
   downPaymentFromAccountId: "",
@@ -98,7 +109,16 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
   };
   switch (event.type) {
     case "retire":
-      return { ...base, personId: event.personId, retirementAge: event.retirementAge?.toString() ?? "" };
+      return {
+        ...base,
+        personId: event.personId,
+        retirementAge: event.retirementAge?.toString() ?? "",
+        hasRetirementExpense: !!event.retirementExpense,
+        retirementExpenseAmount: event.retirementExpense?.amount.toString() ?? "",
+        retirementExpenseGrowthRatePct: event.retirementExpense?.growthRatePct.toString() ?? "0",
+        retirementExpensePaymentAccountId: event.retirementExpense?.paymentAccountId ?? "",
+        retirementExpenseEndDate: event.retirementExpense?.endDate ?? "",
+      };
     case "buy_home":
       return {
         ...base,
@@ -152,6 +172,9 @@ export function EventDrawer({
 
   const [selectedType, setSelectedType] = useState<EventType | null>(event?.type ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [retirementExpenseAdjustments, setRetirementExpenseAdjustments] = useState<TemporaryAdjustment[]>(
+    event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []
+  );
   const { register, handleSubmit, watch, reset } = useForm<FormValues>({
     defaultValues: event ? eventToFormValues(event) : DEFAULTS,
   });
@@ -159,12 +182,14 @@ export function EventDrawer({
   useEffect(() => {
     setSelectedType(event?.type ?? null);
     reset(event ? eventToFormValues(event) : DEFAULTS);
+    setRetirementExpenseAdjustments(event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []);
     setError(null);
   }, [event, open, reset]);
 
   const accountOptions = accounts.map((a) => ({ value: a.id, label: a.name }));
   const personOptions = people.map((p) => ({ value: p.id, label: p.name }));
   const financed = watch("financed");
+  const hasRetirementExpense = watch("hasRetirementExpense");
 
   const onSubmit = (v: FormValues) => {
     if (!selectedType) return;
@@ -179,7 +204,21 @@ export function EventDrawer({
 
     switch (selectedType) {
       case "retire":
-        candidate = { ...base, type: "retire", personId: v.personId, retirementAge: v.retirementAge ? Number(v.retirementAge) : undefined };
+        candidate = {
+          ...base,
+          type: "retire",
+          personId: v.personId,
+          retirementAge: v.retirementAge ? Number(v.retirementAge) : undefined,
+          retirementExpense: v.hasRetirementExpense
+            ? {
+                amount: Number(v.retirementExpenseAmount),
+                growthRatePct: Number(v.retirementExpenseGrowthRatePct) || 0,
+                paymentAccountId: v.retirementExpensePaymentAccountId || null,
+                endDate: v.retirementExpenseEndDate || null,
+                adjustments: retirementExpenseAdjustments,
+              }
+            : null,
+        };
         schema = retireEventSchema.omit({ id: true });
         break;
       case "buy_home":
@@ -270,6 +309,34 @@ export function EventDrawer({
               <Field label="Retirement Age" hint="Optional -- overrides the person's default retirement age from Assumptions for this event only.">
                 <TextInput reg={register("retirementAge")} type="number" />
               </Field>
+              <CheckboxInput
+                reg={register("hasRetirementExpense")}
+                label="Add a retirement expense (e.g. more travel, hobbies)"
+              />
+              {hasRetirementExpense && (
+                <div className="flex flex-col gap-3 border-l border-border pl-3">
+                  <Field label="Yearly Amount" hint="Today's dollars -- starts the day retirement begins.">
+                    <TextInput reg={register("retirementExpenseAmount", { required: true })} type="number" step="0.01" />
+                  </Field>
+                  <Field label="Annual Growth Rate" hint="Actual rate, not just inflation. 0 = flat in nominal terms.">
+                    <TextInput reg={register("retirementExpenseGrowthRatePct")} type="number" step="0.001" />
+                  </Field>
+                  <Field label="Payment Account">
+                    <SelectInput
+                      reg={register("retirementExpensePaymentAccountId")}
+                      options={[{ value: "", label: "Extra Savings (Default)" }, ...accountOptions]}
+                    />
+                  </Field>
+                  <Field label="End Date (optional)" hint="Leave blank to continue through the end of the plan.">
+                    <TextInput reg={register("retirementExpenseEndDate")} type="date" />
+                  </Field>
+                  <AdjustmentsEditor
+                    adjustments={retirementExpenseAdjustments}
+                    onChange={setRetirementExpenseAdjustments}
+                    helpText="A temporary boost or cut to this expense (e.g. a few extra years of travel budget)."
+                  />
+                </div>
+              )}
             </>
           )}
 

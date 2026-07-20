@@ -281,6 +281,11 @@ export function buildLlmExport(scenario: Scenario): string {
           lines.push(
             `  - ${personName(ev.personId)} retires${ev.retirementAge ? ` at age ${ev.retirementAge} (overriding their profile's retirement age)` : ""}. Payroll-deducted contributions stop here automatically.`
           );
+          if (ev.retirementExpense) {
+            lines.push(
+              `  - Retirement expense: ${formatMoney(ev.retirementExpense.amount)}/yr from ${accountName(ev.retirementExpense.paymentAccountId)}, growing ${fmtPct(ev.retirementExpense.growthRatePct)}/yr${ev.retirementExpense.endDate ? ` through ${ev.retirementExpense.endDate}` : ""}.`
+            );
+          }
           break;
         case "buy_home":
           lines.push(
