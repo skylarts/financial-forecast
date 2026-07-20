@@ -139,6 +139,13 @@ export const accountObjectSchema = z
     propertyGrowthRatePct: z.number().optional(),
     /** Present only for real_estate, points at its mortgage Account. */
     linkedLiabilityId: idSchema.optional(),
+    /** Present only for real_estate. Annual property tax as a fraction of the
+     *  home's (growing) value, e.g. 0.01 = 1%/yr -- same shape as a buy_home event. */
+    propertyTaxRatePct: z.number().nonnegative().optional(),
+    /** Present only for real_estate. Annual home insurance as a fraction of the home's (growing) value. */
+    homeInsuranceRatePct: z.number().nonnegative().optional(),
+    /** Present only for real_estate. Annual maintenance as a fraction of the home's (growing) value -- the "1% rule". */
+    maintenanceRatePct: z.number().nonnegative().optional(),
     /** Optional recurring contribution into this account. Ignored when contributionSchedule is set. */
     contribution: contributionSchema.nullable().optional(),
     /** Optional date-ranged growth-rate schedule; growthRatePct above is the rate before the first entry starts. See resolveEvents.ts. */

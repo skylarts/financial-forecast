@@ -5,6 +5,7 @@ import type { Account, Id, Person, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ASSET_CLASS_GROUPS, LIABILITY_CLASS_GROUPS, type AccountClassGroup } from "@/lib/labels";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
+import { ExistingHomeDrawer } from "@/components/accounts/ExistingHomeDrawer";
 
 /** Deflate a nominal dollar amount to today's dollars when in real mode. */
 function deflate(value: number, year: YearSnapshot, mode: DollarMode): number {
@@ -201,6 +202,7 @@ export function AccountsTable({
 }) {
   const [drawerAccount, setDrawerAccount] = useState<Account | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [homeDrawerOpen, setHomeDrawerOpen] = useState(false);
 
   if (years.length === 0) {
     return (
@@ -214,7 +216,14 @@ export function AccountsTable({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setHomeDrawerOpen(true)}
+          className="rounded-md border border-border px-3 py-1.5 text-sm font-semibold text-foreground hover:border-accent"
+        >
+          + Add a Home You Already Own
+        </button>
         <button
           type="button"
           onClick={() => {
@@ -281,6 +290,7 @@ export function AccountsTable({
         </p>
       </div>
       <AccountDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} account={drawerAccount} people={people} />
+      <ExistingHomeDrawer open={homeDrawerOpen} onClose={() => setHomeDrawerOpen(false)} />
     </div>
   );
 }
