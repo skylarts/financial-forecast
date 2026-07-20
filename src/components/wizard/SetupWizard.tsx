@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import type { FilingStatus, Person } from "@/domain";
-import { accountObjectSchema, categoryForClass, forecastSettingsSchema, personSchema } from "@/domain";
+import { forecastSettingsSchema, personSchema } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { Field, ErrorBanner, inputClass } from "@/components/ui/formFields";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
+import { addExistingHome } from "@/lib/addExistingHome";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { EventDrawer } from "@/components/events/EventDrawer";
@@ -58,8 +59,6 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
   const updatePerson = usePlanStore((s) => s.updatePerson);
   const addPerson = usePlanStore((s) => s.addPerson);
   const updateSettings = usePlanStore((s) => s.updateSettings);
-  const addAccount = usePlanStore((s) => s.addAccount);
-  const updateAccount = usePlanStore((s) => s.updateAccount);
 
   const [step, setStep] = useState<Step>("welcome");
   const [scenarioId, setScenarioId] = useState<string | null>(null);
@@ -208,71 +207,13 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
 
   const handleAddHome = () => {
     if (!scenario || !scenarioId) return;
-    const value = Number(homeValue);
-    if (!value || value <= 0) {
-      setError("Enter the home's estimated value.");
+    const result = addExistingHome(
+      { homeValue, homeGrowthRatePct, hasMortgage, mortgageBalance, mortgageRate, mortgageYearsLeft },
+      scenario.settings.startDate
+    );
+    if (!result.ok) {
+      setError(result.error);
       return;
-    }
-    const realEstateCandidate = {
-      name: "Home",
-      class: "real_estate" as const,
-      category: categoryForClass("real_estate"),
-      ownerId: null,
-      startingBalance: value,
-      growthRatePct: Number(homeGrowthRatePct) || 0,
-      propertyGrowthRatePct: Number(homeGrowthRatePct) || 0,
-      taxTreatment: "n/a" as const,
-      subjectToRMD: false,
-    };
-    const reResult = accountObjectSchema.omit({ id: true }).safeParse(realEstateCandidate);
-    if (!reResult.success) {
-      setError(reResult.error.issues[0]?.message ?? "That doesn't look right.");
-      return;
-    }
-    addAccount(reResult.data);
-    const afterRE = usePlanStore.getState().plan.scenarios.find((s) => s.id === scenarioId);
-    const realEstateAccount = afterRE?.accounts[afterRE.accounts.length - 1];
-    if (!realEstateAccount) {
-      setError("Something went wrong adding the home.");
-      return;
-    }
-
-    if (hasMortgage) {
-      const balance = Number(mortgageBalance);
-      const rate = Number(mortgageRate);
-      const years = Number(mortgageYearsLeft);
-      if (!balance || balance <= 0 || !years || years <= 0) {
-        setError("Enter the mortgage's remaining balance and years left.");
-        return;
-      }
-      const mortgageCandidate = {
-        name: "Mortgage",
-        class: "mortgage" as const,
-        category: categoryForClass("mortgage"),
-        ownerId: null,
-        startingBalance: balance,
-        growthRatePct: 0,
-        taxTreatment: "n/a" as const,
-        subjectToRMD: false,
-        loanTerms: {
-          originalPrincipal: balance,
-          originationDate: scenario.settings.startDate,
-          annualInterestRatePct: rate,
-          termMonths: Math.round(years * 12),
-          linkedAssetId: realEstateAccount.id,
-        },
-      };
-      const mResult = accountObjectSchema.omit({ id: true }).safeParse(mortgageCandidate);
-      if (!mResult.success) {
-        setError(mResult.error.issues[0]?.message ?? "That doesn't look right.");
-        return;
-      }
-      addAccount(mResult.data);
-      const afterM = usePlanStore.getState().plan.scenarios.find((s) => s.id === scenarioId);
-      const mortgageAccount = afterM?.accounts[afterM.accounts.length - 1];
-      if (mortgageAccount) {
-        updateAccount(realEstateAccount.id, { ...realEstateAccount, linkedLiabilityId: mortgageAccount.id });
-      }
     }
 
     setHomeValue("");
