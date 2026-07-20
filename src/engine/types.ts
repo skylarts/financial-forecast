@@ -9,6 +9,14 @@ export interface EngineAccount extends Account {
    * current month, replacing growthRatePct / propertyGrowthRatePct.
    */
   growthRateOverrides?: { startDate: ISODate; growthRatePct: number }[];
+  /**
+   * Set by a sell_home event on the real_estate account being sold and its
+   * linked mortgage (if any) -- the balance is forced to exactly $0 starting
+   * this month (an actual retirement, not just a frozen balance) and stays
+   * there, since the sale's net-proceeds figure already accounts for paying
+   * off whatever was left on the mortgage.
+   */
+  soldDate?: ISODate;
 }
 
 export type PostingCategory =

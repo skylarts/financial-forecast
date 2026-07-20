@@ -29,6 +29,10 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
         description = `Buy a home for $${event.purchasePrice.toLocaleString()},${financing}`;
         break;
       }
+      case "sell_home": {
+        description = `Sell ${accountName(event.realEstateAccountId)} for a net $${event.netProceeds.toLocaleString()}`;
+        break;
+      }
       case "have_a_kid": {
         const end = event.childcareEndDate;
         const duration = end

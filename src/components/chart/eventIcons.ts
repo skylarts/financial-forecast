@@ -3,6 +3,7 @@ import type { EventType, ExpenseCategory, IncomeCategory } from "@/domain";
 export const EVENT_TYPE_ICONS: Record<EventType, string> = {
   retire: "🏖️",
   buy_home: "🏠",
+  sell_home: "🏷️",
   have_a_kid: "👶",
   custom_transfer: "🔁",
 };

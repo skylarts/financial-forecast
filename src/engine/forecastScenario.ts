@@ -407,6 +407,25 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     // inflow to Extra Savings -- see step 5 for why that distinction matters.
     const extraSavingsMonthStart = extraSavingsAccount ? balances.get(extraSavingsAccount.id) ?? 0 : 0;
 
+    // 0. Home sales: a sell_home event tags the real_estate account being
+    //    sold (and its linked mortgage, if any) with soldDate -- the balance
+    //    is forced to exactly $0 starting that month and every month after,
+    //    an actual retirement rather than the frozen-balance simplification
+    //    replaceHousingExpenses uses. Recorded as a withdrawal of whatever
+    //    was left so the rollforward still balances (start + growth +
+    //    deposits - withdrawals = end). Runs before growth (step 1) so
+    //    nothing accrues on a sold home's final month, and before
+    //    amortization (step 3) so a sold mortgage's currentBalance<=0 guard
+    //    already sees it as paid off -- no separate payment-skipping needed.
+    for (const account of accounts) {
+      if (!account.soldDate || compareDates(month, account.soldDate) < 0) continue;
+      const remaining = balances.get(account.id) ?? 0;
+      if (remaining === 0) continue;
+      balances.set(account.id, 0);
+      const bucket = acc.rollforward.get(account.id);
+      if (bucket) bucket.withdrawals += remaining;
+    }
+
     // 1. Growth (skipped in an account's creation month -- mirrors the
     //    proven prior engine's "no interest on day one" rule -- and skipped
     //    entirely for excluded accounts, which stay frozen at their starting
