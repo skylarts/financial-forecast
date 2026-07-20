@@ -6,7 +6,7 @@ import { forecastSettingsSchema, personSchema } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { Field, ErrorBanner, inputClass } from "@/components/ui/formFields";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
-import { addExistingHome } from "@/lib/addExistingHome";
+import { addExistingHome, EXISTING_HOME_DEFAULTS } from "@/lib/addExistingHome";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { EventDrawer } from "@/components/events/EventDrawer";
@@ -208,7 +208,10 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
   const handleAddHome = () => {
     if (!scenario || !scenarioId) return;
     const result = addExistingHome(
-      { homeValue, homeGrowthRatePct, hasMortgage, mortgageBalance, mortgageRate, mortgageYearsLeft },
+      // The wizard keeps onboarding lean (no tax/insurance/maintenance/extra-
+      // principal inputs here) -- those can be added via the Accounts tab's
+      // "Add a Home You Already Own" any time after setup.
+      { ...EXISTING_HOME_DEFAULTS, homeValue, homeGrowthRatePct, hasMortgage, mortgageBalance, mortgageRate, mortgageYearsLeft },
       scenario.settings.startDate
     );
     if (!result.ok) {

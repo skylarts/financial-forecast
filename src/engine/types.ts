@@ -45,6 +45,10 @@ export interface MortgageSpec {
   loanTerms: LoanTerms;
   /** Account the monthly payment is drawn from. */
   payingAccountId: Id | null;
+  /** No further payments are charged after this date (e.g. a buy_home event's
+   *  "replace existing housing expenses" retiring an already-owned home's
+   *  mortgage) -- the remaining balance simply stops amortizing. */
+  paymentEndDate?: ISODate;
 }
 
 export interface ResolvedSchedule {

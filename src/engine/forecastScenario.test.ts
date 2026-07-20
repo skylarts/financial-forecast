@@ -498,6 +498,88 @@ describe("forecastScenario -- buy_home", () => {
     expect(y2027.cashFlow.expenseByItem.some((i) => i.id === rent.id)).toBe(false); // rent stopped
     expect(y2027.cashFlow.expenseByItem.some((i) => i.id === groceries.id)).toBe(true); // untouched, wrong category
   });
+
+  it("charges property tax, insurance, and maintenance on a directly-entered real_estate account (the 'already own' flow)", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
+    const home = makeAccount({
+      class: "real_estate",
+      name: "Home",
+      startingBalance: 300_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      propertyTaxRatePct: 0.01,
+      homeInsuranceRatePct: 0.005,
+      maintenanceRatePct: 0.01,
+    });
+    const scenario = makeScenario({
+      accounts: [checking, home],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const y2027 = result.years.find((y) => y.year === 2027)!;
+    const tax = y2027.cashFlow.expenseByItem.find((i) => i.id === `${home.id}:property_tax`);
+    const insurance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${home.id}:home_insurance`);
+    const maintenance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${home.id}:maintenance`);
+    expect(tax?.amount).toBeCloseTo(3_000, 0); // 1% of $300k
+    expect(insurance?.amount).toBeCloseTo(1_500, 0); // 0.5% of $300k
+    expect(maintenance?.amount).toBeCloseTo(3_000, 0); // 1% of $300k
+  });
+
+  it("replaceHousingExpenses also retires an already-owned home's mortgage and its ongoing costs", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
+    const home = makeAccount({
+      class: "real_estate",
+      name: "Old Home",
+      startingBalance: 300_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      propertyTaxRatePct: 0.01,
+    });
+    const mortgage = makeAccount({
+      class: "mortgage",
+      name: "Old Mortgage",
+      startingBalance: 150_000,
+      growthRatePct: 0,
+      loanTerms: {
+        originalPrincipal: 150_000,
+        originationDate: "2026-01-01",
+        annualInterestRatePct: 0.06,
+        termMonths: 360,
+        linkedAssetId: home.id,
+      },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, { ...home, linkedLiabilityId: mortgage.id }, mortgage],
+      events: [
+        {
+          id: nanoid(),
+          type: "buy_home",
+          name: "Buy a new home",
+          startDate: "2027-06-01",
+          purchasePrice: 500_000,
+          downPaymentAmount: 500_000,
+          downPaymentFromAccountId: checking.id,
+          propertyGrowthRatePct: 0,
+          mortgage: null,
+          replaceHousingExpenses: true,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2028-12-31",
+    });
+    const result = forecastScenario(scenario);
+
+    // Old mortgage stops taking payments once the new home closes.
+    const y2028 = result.years.find((y) => y.year === 2028)!; // full year after the new purchase
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === mortgage.id)).toBe(false);
+    // Balance freezes wherever it was -- no payoff/sale modeled, just no more payments.
+    const y2027 = result.years.find((y) => y.year === 2027)!;
+    expect(y2028.accountBalances[mortgage.id]).toBeCloseTo(y2027.accountBalances[mortgage.id], 2);
+
+    // Old home's ongoing property tax stops too.
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${home.id}:property_tax`)).toBe(false);
+  });
 });
 
 describe("forecastScenario -- exposes the full resolved account list", () => {

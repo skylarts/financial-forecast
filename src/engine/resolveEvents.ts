@@ -23,10 +23,72 @@ function activeMultiplier(windows: TemporaryAdjustment[], onDate: ISODate): numb
   return multiplier;
 }
 
+/**
+ * Property tax, home insurance, and maintenance are entered as an annual
+ * fraction of a home's value -- same shape whether the home came from a
+ * buy_home event (baseValue = purchase price, referenceDate = purchase date)
+ * or was entered directly as an already-owned real_estate account (baseValue
+ * = its starting balance, referenceDate = plan start). Shared here so both
+ * call sites price them identically off the home's own growth rate.
+ */
+function pushOwnershipCosts(
+  pushPosting: (p: Posting) => void,
+  horizonEnd: ISODate,
+  input: {
+    rates: { rate: number | undefined; label: string; key: string }[];
+    baseValue: number;
+    growthRate: number;
+    referenceDate: ISODate;
+    startDate: ISODate;
+    /** null = runs through the end of the plan (or horizonEnd, whichever is sooner). */
+    endDate: ISODate | null;
+    accountId: Id | null;
+    sourceIdPrefix: string;
+    nameSuffix: string;
+  }
+) {
+  const active = input.rates.filter((r) => r.rate);
+  if (!active.length || !input.accountId) return;
+  const occurrences = expandOccurrences(input.startDate, input.endDate, "monthly", horizonEnd);
+  for (const occ of occurrences) {
+    const homeValue = growthAdjustedAmount(input.baseValue, elapsedYears(input.referenceDate, occ), input.growthRate);
+    for (const { rate, label, key } of active) {
+      const amount = (homeValue * (rate ?? 0)) / 12;
+      if (amount === 0) continue;
+      pushPosting({
+        date: occ,
+        yearMonth: occ.slice(0, 7),
+        accountId: input.accountId,
+        amount: -amount,
+        category: "expense",
+        label: `${label}${input.nameSuffix}`,
+        sourceId: `${input.sourceIdPrefix}:${key}`,
+      });
+    }
+  }
+}
+
 export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   const { settings } = scenario;
   const horizonEnd = settings.horizonEndDate;
   const events = scenario.events.filter((e) => !e.isExcluded);
+
+  // A buy_home event with replaceHousingExpenses retires the household's
+  // prior housing arrangement -- computed once, up front, since it's needed
+  // by the mortgage-registration and real-estate ownership-cost loops just
+  // below (to stop an already-owned home's mortgage payments and its own
+  // property tax/insurance/maintenance) as well as the Expenses loop further
+  // down (to stop its category="housing" Expense, e.g. old rent). "Earliest
+  // wins" across multiple qualifying events, same pattern as a retire event
+  // trimming salary income.
+  let earliestHousingReplaceCutoff: ISODate | null = null;
+  for (const event of events) {
+    if (event.type !== "buy_home" || !event.replaceHousingExpenses) continue;
+    const trimmedEnd = addDays(event.startDate, -1);
+    if (!earliestHousingReplaceCutoff || compareDates(trimmedEnd, earliestHousingReplaceCutoff) < 0) {
+      earliestHousingReplaceCutoff = trimmedEnd;
+    }
+  }
 
   // Accounts that are excluded from the plan never receive or emit a
   // posting -- the engine treats them as if they don't exist for cash-flow
@@ -69,12 +131,15 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // income, expenses, contribution draws, and mortgage payments below.
   const primarySpendingAccountId = resolvePrimarySpendingAccountId(scenario.accounts);
 
-  // A loan/mortgage account entered directly (Accounts tab, or the setup
-  // wizard's "home you already own") rather than synthesized by a buy_home
-  // event still needs to amortize -- register it here so the "Amortize
+  // A loan/mortgage account entered directly (Accounts tab, or the "add a
+  // home you already own" flow) rather than synthesized by a buy_home event
+  // still needs to amortize -- register it here so the "Amortize
   // mortgages/loans" step in forecastScenario.ts (which looks accounts up by
   // id in this same `mortgages` list) picks it up. Payments are funded from
-  // the primary spending account, same fallback as every other cashflow.
+  // the primary spending account, same fallback as every other cashflow. A
+  // mortgage (not a generic "loan") stops taking payments once a
+  // replaceHousingExpenses buy_home purchase retires it -- the remaining
+  // balance simply stops amortizing from that date on.
   for (const account of scenario.accounts) {
     if (excludedAccountIds.has(account.id)) continue;
     if ((account.class !== "loan" && account.class !== "mortgage") || !account.loanTerms) continue;
@@ -82,6 +147,32 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       accountId: account.id,
       loanTerms: account.loanTerms,
       payingAccountId: primarySpendingAccountId,
+      paymentEndDate: account.class === "mortgage" ? earliestHousingReplaceCutoff ?? undefined : undefined,
+    });
+  }
+
+  // A real_estate account entered directly the same way prices its own
+  // property tax, insurance, and maintenance off its starting balance,
+  // growing from the plan start at its own propertyGrowthRatePct (falling
+  // back to growthRatePct if that's unset) -- and stops the same day its
+  // mortgage's payments do, for the same reason.
+  for (const account of scenario.accounts) {
+    if (excludedAccountIds.has(account.id)) continue;
+    if (account.class !== "real_estate") continue;
+    pushOwnershipCosts(pushPosting, horizonEnd, {
+      rates: [
+        { rate: account.propertyTaxRatePct, label: "Property tax", key: "property_tax" },
+        { rate: account.homeInsuranceRatePct, label: "Home insurance", key: "home_insurance" },
+        { rate: account.maintenanceRatePct, label: "Maintenance", key: "maintenance" },
+      ],
+      baseValue: account.startingBalance,
+      growthRate: account.propertyGrowthRatePct ?? account.growthRatePct,
+      referenceDate: settings.startDate,
+      startDate: settings.startDate,
+      endDate: earliestHousingReplaceCutoff,
+      accountId: primarySpendingAccountId,
+      sourceIdPrefix: account.id,
+      nameSuffix: `: ${account.name}`,
     });
   }
 
@@ -89,33 +180,18 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   //     temporary adjustment windows entered directly on the source. ---
   const retirementByPerson = new Map<Id, ISODate>();
   const incomeEndOverrides = new Map<Id, ISODate>();
-  // A buy_home event with replaceHousingExpenses trims every category="housing"
-  // Expense (the old rent/mortgage it's replacing) to end the day before this
-  // purchase closes -- same "earliest wins" pattern as a retire event trimming
-  // salary income above, for the case of multiple home purchases in one plan.
-  const housingExpenseEndOverrides = new Map<Id, ISODate>();
   for (const event of events) {
-    if (event.type === "retire") {
-      const existingRetire = retirementByPerson.get(event.personId);
-      if (!existingRetire || compareDates(event.startDate, existingRetire) < 0) {
-        retirementByPerson.set(event.personId, event.startDate);
-      }
-      for (const src of scenario.incomeSources) {
-        if (src.ownerId === event.personId && src.category === "salary") {
-          const trimmedEnd = addDays(event.startDate, -1);
-          const existing = incomeEndOverrides.get(src.id);
-          if (!existing || compareDates(trimmedEnd, existing) < 0) {
-            incomeEndOverrides.set(src.id, trimmedEnd);
-          }
-        }
-      }
-    } else if (event.type === "buy_home" && event.replaceHousingExpenses) {
-      const trimmedEnd = addDays(event.startDate, -1);
-      for (const exp of scenario.expenses) {
-        if (exp.category !== "housing") continue;
-        const existing = housingExpenseEndOverrides.get(exp.id);
+    if (event.type !== "retire") continue;
+    const existingRetire = retirementByPerson.get(event.personId);
+    if (!existingRetire || compareDates(event.startDate, existingRetire) < 0) {
+      retirementByPerson.set(event.personId, event.startDate);
+    }
+    for (const src of scenario.incomeSources) {
+      if (src.ownerId === event.personId && src.category === "salary") {
+        const trimmedEnd = addDays(event.startDate, -1);
+        const existing = incomeEndOverrides.get(src.id);
         if (!existing || compareDates(trimmedEnd, existing) < 0) {
-          housingExpenseEndOverrides.set(exp.id, trimmedEnd);
+          incomeEndOverrides.set(src.id, trimmedEnd);
         }
       }
     }
@@ -166,7 +242,10 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // --- Expenses: same pattern as income ---
   for (const exp of scenario.expenses) {
     if (exp.isExcluded) continue;
-    const effectiveEnd = housingExpenseEndOverrides.get(exp.id) ?? exp.endDate;
+    // A category="housing" expense (e.g. rent) stops the day before a
+    // replaceHousingExpenses buy_home purchase closes, same as the old
+    // mortgage payments and ownership costs below.
+    const effectiveEnd = exp.category === "housing" ? earliestDate(exp.endDate, earliestHousingReplaceCutoff) : exp.endDate;
     const windows = exp.adjustments ?? [];
     const occurrences = expandOccurrences(exp.startDate, effectiveEnd, exp.frequency, horizonEnd, exp.intervalYears);
     for (const occ of occurrences) {
@@ -368,35 +447,24 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         effectiveStartDate: event.startDate,
       });
 
-      // Property tax, home insurance, and maintenance are entered as an annual
-      // fraction of the home's value. The home starts at purchasePrice (nominal
-      // at the purchase date) and grows at propertyGrowthRatePct, so these
-      // ongoing costs track the same growing value -- recomputed each month and
-      // paid from the primary spending account, running through the end of the
-      // plan (there's no "sell the home" event yet).
-      const ongoingRates: { rate: number; label: string; key: string }[] = [];
-      if (event.propertyTaxRatePct) ongoingRates.push({ rate: event.propertyTaxRatePct, label: "Property tax", key: "property_tax" });
-      if (event.homeInsuranceRatePct) ongoingRates.push({ rate: event.homeInsuranceRatePct, label: "Home insurance", key: "home_insurance" });
-      if (event.maintenanceRatePct) ongoingRates.push({ rate: event.maintenanceRatePct, label: "Maintenance", key: "maintenance" });
-      if (ongoingRates.length) {
-        const occurrences = expandOccurrences(event.startDate, null, "monthly", horizonEnd);
-        for (const occ of occurrences) {
-          const homeValue = growthAdjustedAmount(purchasePrice, elapsedYears(event.startDate, occ), event.propertyGrowthRatePct);
-          for (const { rate, label, key } of ongoingRates) {
-            const amount = (homeValue * rate) / 12;
-            if (amount === 0) continue;
-            pushPosting({
-              date: occ,
-              yearMonth: occ.slice(0, 7),
-              accountId: primarySpendingAccountId ?? event.downPaymentFromAccountId,
-              amount: -amount,
-              category: "expense",
-              label: `${label}: ${event.name}`,
-              sourceId: `${event.id}:${key}`,
-            });
-          }
-        }
-      }
+      // Property tax, home insurance, and maintenance -- runs through the end
+      // of the plan (there's no "sell the home" event yet, so a home from a
+      // buy_home event can't itself be "replaced" later).
+      pushOwnershipCosts(pushPosting, horizonEnd, {
+        rates: [
+          { rate: event.propertyTaxRatePct, label: "Property tax", key: "property_tax" },
+          { rate: event.homeInsuranceRatePct, label: "Home insurance", key: "home_insurance" },
+          { rate: event.maintenanceRatePct, label: "Maintenance", key: "maintenance" },
+        ],
+        baseValue: purchasePrice,
+        growthRate: event.propertyGrowthRatePct,
+        referenceDate: event.startDate,
+        startDate: event.startDate,
+        endDate: null,
+        accountId: primarySpendingAccountId ?? event.downPaymentFromAccountId,
+        sourceIdPrefix: event.id,
+        nameSuffix: `: ${event.name}`,
+      });
     } else if (event.type === "have_a_kid") {
       const end = event.childcareEndDate ?? horizonEnd;
       const occurrences = expandOccurrences(event.startDate, end, "monthly", horizonEnd);

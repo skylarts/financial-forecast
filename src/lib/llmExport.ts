@@ -237,11 +237,19 @@ export function buildLlmExport(scenario: Scenario): string {
     }
     if (a.loanTerms) {
       lines.push(
-        `  - Loan terms: original principal ${formatMoney(a.loanTerms.originalPrincipal)}, originated ${a.loanTerms.originationDate}, rate ${fmtPct(a.loanTerms.annualInterestRatePct)}, term ${a.loanTerms.termMonths} months${a.loanTerms.monthlyPayment ? `, payment ${formatMoney(a.loanTerms.monthlyPayment)}/mo` : " (payment computed by standard amortization)"}${a.loanTerms.linkedAssetId ? `, secured by ${accountName(a.loanTerms.linkedAssetId)}` : ""}.`
+        `  - Loan terms: original principal ${formatMoney(a.loanTerms.originalPrincipal)}, originated ${a.loanTerms.originationDate}, rate ${fmtPct(a.loanTerms.annualInterestRatePct)}, term ${a.loanTerms.termMonths} months${a.loanTerms.monthlyPayment ? `, payment ${formatMoney(a.loanTerms.monthlyPayment)}/mo` : " (payment computed by standard amortization)"}${a.loanTerms.extraPrincipalMonthly ? `, plus ${formatMoney(a.loanTerms.extraPrincipalMonthly)}/mo extra principal` : ""}${a.loanTerms.linkedAssetId ? `, secured by ${accountName(a.loanTerms.linkedAssetId)}` : ""}.`
       );
     }
     if (a.linkedLiabilityId) {
       lines.push(`  - Linked liability: ${accountName(a.linkedLiabilityId)}.`);
+    }
+    if (a.class === "real_estate") {
+      const ownership = [
+        a.propertyTaxRatePct ? `property tax ${fmtPct(a.propertyTaxRatePct)}/yr of value` : null,
+        a.homeInsuranceRatePct ? `insurance ${fmtPct(a.homeInsuranceRatePct)}/yr of value` : null,
+        a.maintenanceRatePct ? `maintenance ${fmtPct(a.maintenanceRatePct)}/yr of value` : null,
+      ].filter(Boolean);
+      if (ownership.length) lines.push(`  - Ongoing costs: ${ownership.join(", ")}.`);
     }
   }
 

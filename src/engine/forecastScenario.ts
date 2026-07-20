@@ -531,6 +531,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const mortgage = mortgageByAccountId.get(account.id);
       const payment = mortgagePayments.get(account.id);
       if (!mortgage || !payment) continue;
+      // A buy_home event's "replace existing housing expenses" retires an
+      // already-owned home's mortgage -- no further payments after that date.
+      // The remaining balance simply stops amortizing (no sale/payoff is
+      // modeled), same simplification as a housing Expense that just stops.
+      if (mortgage.paymentEndDate && compareDates(month, mortgage.paymentEndDate) > 0) continue;
       const step = amortizeMonth(currentBalance, mortgage.loanTerms.annualInterestRatePct, payment);
 
       // Extra principal on top of the scheduled payment -- capped at whatever

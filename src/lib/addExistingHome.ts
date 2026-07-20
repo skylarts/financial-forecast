@@ -4,19 +4,27 @@ import { usePlanStore } from "@/store/usePlanStore";
 export interface ExistingHomeInput {
   homeValue: string;
   homeGrowthRatePct: string;
+  propertyTaxRatePct: string;
+  homeInsuranceRatePct: string;
+  maintenanceRatePct: string;
   hasMortgage: boolean;
   mortgageBalance: string;
   mortgageRate: string;
   mortgageYearsLeft: string;
+  mortgageExtraPrincipal: string;
 }
 
 export const EXISTING_HOME_DEFAULTS: ExistingHomeInput = {
   homeValue: "",
   homeGrowthRatePct: "0.03",
+  propertyTaxRatePct: "",
+  homeInsuranceRatePct: "",
+  maintenanceRatePct: "",
   hasMortgage: false,
   mortgageBalance: "",
   mortgageRate: "0.065",
   mortgageYearsLeft: "25",
+  mortgageExtraPrincipal: "",
 };
 
 /**
@@ -53,6 +61,9 @@ export function addExistingHome(
     propertyGrowthRatePct: Number(input.homeGrowthRatePct) || 0,
     taxTreatment: "n/a" as const,
     subjectToRMD: false,
+    propertyTaxRatePct: input.propertyTaxRatePct.trim() !== "" ? Number(input.propertyTaxRatePct) : undefined,
+    homeInsuranceRatePct: input.homeInsuranceRatePct.trim() !== "" ? Number(input.homeInsuranceRatePct) : undefined,
+    maintenanceRatePct: input.maintenanceRatePct.trim() !== "" ? Number(input.maintenanceRatePct) : undefined,
   };
   const reResult = accountObjectSchema.omit({ id: true }).safeParse(realEstateCandidate);
   if (!reResult.success) {
@@ -86,6 +97,8 @@ export function addExistingHome(
         originationDate: planStartDate,
         annualInterestRatePct: rate,
         termMonths: Math.round(years * 12),
+        extraPrincipalMonthly:
+          input.mortgageExtraPrincipal.trim() !== "" ? Number(input.mortgageExtraPrincipal) : undefined,
         linkedAssetId: realEstateAccount.id,
       },
     };
