@@ -582,6 +582,119 @@ describe("forecastScenario -- buy_home", () => {
   });
 });
 
+describe("forecastScenario -- sell_home", () => {
+  it("credits net proceeds and fully retires the home's asset and mortgage (not just frozen)", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 100_000, growthRatePct: 0 });
+    const home = makeAccount({
+      class: "real_estate",
+      name: "Home",
+      startingBalance: 400_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      propertyTaxRatePct: 0.01,
+    });
+    const mortgage = makeAccount({
+      class: "mortgage",
+      name: "Mortgage",
+      startingBalance: 200_000,
+      growthRatePct: 0,
+      loanTerms: {
+        originalPrincipal: 200_000,
+        originationDate: "2026-01-01",
+        annualInterestRatePct: 0.06,
+        termMonths: 360,
+        linkedAssetId: home.id,
+      },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, { ...home, linkedLiabilityId: mortgage.id }, mortgage],
+      events: [
+        {
+          id: nanoid(),
+          type: "sell_home",
+          name: "Sell the house",
+          startDate: "2027-06-01",
+          realEstateAccountId: home.id,
+          netProceeds: 175_000,
+          proceedsAccountId: checking.id,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2028-12-31",
+    });
+    const result = forecastScenario(scenario);
+
+    // Proceeds landed straight in checking (a hub-touching transfer, same
+    // bucket a buy_home down payment uses).
+    const saleYear = result.years.find((y) => y.year === 2027)!;
+    expect(saleYear.cashFlow.otherAccountActivity).toBeCloseTo(175_000, 0);
+
+    // Both accounts fully zeroed (not just frozen) from the sale onward.
+    const y2028 = result.years.find((y) => y.year === 2028)!;
+    expect(y2028.accountBalances[home.id]).toBeCloseTo(0, 2);
+    expect(y2028.accountBalances[mortgage.id]).toBeCloseTo(0, 2);
+
+    // No more mortgage payments or property tax after the sale.
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === mortgage.id)).toBe(false);
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${home.id}:property_tax`)).toBe(false);
+  });
+
+  it("selling one of two homes leaves the other's mortgage and costs untouched", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 100_000, growthRatePct: 0 });
+    const homeA = makeAccount({ class: "real_estate", name: "Home A", startingBalance: 300_000, growthRatePct: 0, propertyGrowthRatePct: 0, propertyTaxRatePct: 0.01 });
+    const mortgageA = makeAccount({
+      class: "mortgage",
+      name: "Mortgage A",
+      startingBalance: 150_000,
+      growthRatePct: 0,
+      loanTerms: { originalPrincipal: 150_000, originationDate: "2026-01-01", annualInterestRatePct: 0.06, termMonths: 360, linkedAssetId: homeA.id },
+    });
+    const homeB = makeAccount({ class: "real_estate", name: "Home B", startingBalance: 500_000, growthRatePct: 0, propertyGrowthRatePct: 0, propertyTaxRatePct: 0.01 });
+    const mortgageB = makeAccount({
+      class: "mortgage",
+      name: "Mortgage B",
+      startingBalance: 300_000,
+      growthRatePct: 0,
+      loanTerms: { originalPrincipal: 300_000, originationDate: "2026-01-01", annualInterestRatePct: 0.06, termMonths: 360, linkedAssetId: homeB.id },
+    });
+    const scenario = makeScenario({
+      accounts: [
+        checking,
+        { ...homeA, linkedLiabilityId: mortgageA.id },
+        mortgageA,
+        { ...homeB, linkedLiabilityId: mortgageB.id },
+        mortgageB,
+      ],
+      events: [
+        {
+          id: nanoid(),
+          type: "sell_home",
+          name: "Sell Home A",
+          startDate: "2027-06-01",
+          realEstateAccountId: homeA.id,
+          netProceeds: 140_000,
+          proceedsAccountId: checking.id,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2028-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const y2028 = result.years.find((y) => y.year === 2028)!;
+
+    // Home A (sold) is fully retired.
+    expect(y2028.accountBalances[homeA.id]).toBeCloseTo(0, 2);
+    expect(y2028.accountBalances[mortgageA.id]).toBeCloseTo(0, 2);
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === mortgageA.id)).toBe(false);
+
+    // Home B (untouched) keeps its balance, mortgage payments, and property tax.
+    expect(y2028.accountBalances[homeB.id]).toBeCloseTo(500_000, 0);
+    expect(y2028.accountBalances[mortgageB.id]).toBeGreaterThan(0);
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === mortgageB.id)).toBe(true);
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${homeB.id}:property_tax`)).toBe(true);
+  });
+});
+
 describe("forecastScenario -- exposes the full resolved account list", () => {
   it("includes event-created accounts (real estate + mortgage), not just Scenario.accounts", () => {
     const result = forecastScenario(mockScenario);

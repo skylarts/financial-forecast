@@ -1,4 +1,5 @@
 import type {
+  Account,
   ExpenseBaseline,
   IncomeSource,
   Person,
@@ -89,13 +90,16 @@ export function buildChartMarkers({
   incomeSources,
   expenses,
   people,
+  accounts = [],
 }: {
   events: ScenarioEvent[];
   incomeSources: IncomeSource[];
   expenses: ExpenseBaseline[];
   people: Person[];
+  accounts?: Account[];
 }): ChartMarker[] {
   const personName = (id: string | null) => (id ? people.find((p) => p.id === id)?.name ?? "Someone" : "Joint");
+  const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "a home";
 
   const markers: ChartMarker[] = [];
 
@@ -126,6 +130,10 @@ export function buildChartMarkers({
         if (ev.homeInsuranceRatePct) rows.push({ label: "Home insurance", value: `${(ev.homeInsuranceRatePct * 100).toFixed(2)}%/yr` });
         if (ev.maintenanceRatePct) rows.push({ label: "Maintenance", value: `${(ev.maintenanceRatePct * 100).toFixed(2)}%/yr` });
         if (ev.replaceHousingExpenses) rows.push({ label: "Replaces housing expenses", value: "Yes" });
+        break;
+      case "sell_home":
+        rows.push({ label: "Home", value: accountName(ev.realEstateAccountId) });
+        rows.push({ label: "Net proceeds", value: formatMoney(ev.netProceeds) });
         break;
       case "have_a_kid":
         rows.push({ label: "Repeat every", value: "1 month" });

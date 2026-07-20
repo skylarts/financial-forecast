@@ -90,6 +90,28 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     }
   }
 
+  // A sell_home event retires exactly the one home it names -- unlike the
+  // blanket replaceHousingExpenses toggle above, this is scoped per account
+  // (a household with multiple homes can sell one without touching the
+  // others). Keyed by both the real_estate account and its linked mortgage
+  // (if any), since both need to stop the same day. Stores the sale's own
+  // startDate (the transaction date, same day the net-proceeds posting
+  // lands) -- callers that need "the day before" (recurring costs/payments,
+  // same convention as earliestHousingReplaceCutoff above) derive it with
+  // addDays(..., -1) at the point of use. "Earliest wins" if an account is
+  // somehow named by more than one sell_home event.
+  const soldAccountDates = new Map<Id, ISODate>();
+  for (const event of events) {
+    if (event.type !== "sell_home") continue;
+    const setSoldDate = (id: Id) => {
+      const existing = soldAccountDates.get(id);
+      if (!existing || compareDates(event.startDate, existing) < 0) soldAccountDates.set(id, event.startDate);
+    };
+    setSoldDate(event.realEstateAccountId);
+    const realEstateAccount = scenario.accounts.find((a) => a.id === event.realEstateAccountId);
+    if (realEstateAccount?.linkedLiabilityId) setSoldDate(realEstateAccount.linkedLiabilityId);
+  }
+
   // Accounts that are excluded from the plan never receive or emit a
   // posting -- the engine treats them as if they don't exist for cash-flow
   // purposes (they still appear in the resolved account list so the UI can
@@ -115,6 +137,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     ...a,
     effectiveStartDate: settings.startDate,
     growthRateOverrides: growthRateOverrides.get(a.id),
+    soldDate: soldAccountDates.get(a.id),
   }));
   const postings: Posting[] = [];
   const mortgages: MortgageSpec[] = [];
@@ -138,16 +161,20 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // id in this same `mortgages` list) picks it up. Payments are funded from
   // the primary spending account, same fallback as every other cashflow. A
   // mortgage (not a generic "loan") stops taking payments once a
-  // replaceHousingExpenses buy_home purchase retires it -- the remaining
-  // balance simply stops amortizing from that date on.
+  // replaceHousingExpenses buy_home purchase retires it (frozen balance) or a
+  // sell_home event sells it (zeroed balance -- see EngineAccount.soldDate
+  // and forecastScenario's amortization step, which skips once the balance
+  // is <= 0 regardless of paymentEndDate).
   for (const account of scenario.accounts) {
     if (excludedAccountIds.has(account.id)) continue;
     if ((account.class !== "loan" && account.class !== "mortgage") || !account.loanTerms) continue;
+    const soldDate = soldAccountDates.get(account.id);
+    const paymentEndDate = earliestDate(earliestHousingReplaceCutoff, soldDate ? addDays(soldDate, -1) : null);
     mortgages.push({
       accountId: account.id,
       loanTerms: account.loanTerms,
       payingAccountId: primarySpendingAccountId,
-      paymentEndDate: account.class === "mortgage" ? earliestHousingReplaceCutoff ?? undefined : undefined,
+      paymentEndDate: account.class === "mortgage" ? paymentEndDate ?? undefined : undefined,
     });
   }
 
@@ -155,10 +182,13 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // property tax, insurance, and maintenance off its starting balance,
   // growing from the plan start at its own propertyGrowthRatePct (falling
   // back to growthRatePct if that's unset) -- and stops the same day its
-  // mortgage's payments do, for the same reason.
+  // mortgage's payments do, for the same reason (a blanket
+  // replaceHousingExpenses purchase, or this specific home being sold).
   for (const account of scenario.accounts) {
     if (excludedAccountIds.has(account.id)) continue;
     if (account.class !== "real_estate") continue;
+    const soldDate = soldAccountDates.get(account.id);
+    const costsEndDate = earliestDate(earliestHousingReplaceCutoff, soldDate ? addDays(soldDate, -1) : null);
     pushOwnershipCosts(pushPosting, horizonEnd, {
       rates: [
         { rate: account.propertyTaxRatePct, label: "Property tax", key: "property_tax" },
@@ -169,7 +199,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       growthRate: account.propertyGrowthRatePct ?? account.growthRatePct,
       referenceDate: settings.startDate,
       startDate: settings.startDate,
-      endDate: earliestHousingReplaceCutoff,
+      endDate: costsEndDate,
       accountId: primarySpendingAccountId,
       sourceIdPrefix: account.id,
       nameSuffix: `: ${account.name}`,
@@ -465,6 +495,30 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         sourceIdPrefix: event.id,
         nameSuffix: `: ${event.name}`,
       });
+    } else if (event.type === "sell_home") {
+      // Net proceeds are entered directly (not sale price minus costs
+      // separately) since the mortgage payoff isn't known until the
+      // projection runs -- see EngineAccount.soldDate, which zeroes the
+      // real_estate account and its linked mortgage this same month in
+      // forecastScenario's monthly loop. Entered in today's dollars,
+      // inflated forward to the sale date like every other dollar amount.
+      const amount = growthAdjustedAmount(
+        event.netProceeds,
+        elapsedYears(settings.startDate, event.startDate),
+        settings.inflationRatePct
+      );
+      const accountId = event.proceedsAccountId ?? primarySpendingAccountId;
+      if (accountId && amount !== 0) {
+        pushPosting({
+          date: event.startDate,
+          yearMonth: event.startDate.slice(0, 7),
+          accountId,
+          amount,
+          category: "transfer", // asset-for-asset swap (home equity -> cash), not consumption
+          label: `Home sale: ${event.name}`,
+          sourceId: `${event.id}:proceeds`,
+        });
+      }
     } else if (event.type === "have_a_kid") {
       const end = event.childcareEndDate ?? horizonEnd;
       const occurrences = expandOccurrences(event.startDate, end, "monthly", horizonEnd);

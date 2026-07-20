@@ -71,6 +71,25 @@ export const buyHomeEventSchema = z.object({
 });
 export type BuyHomeEvent = z.infer<typeof buyHomeEventSchema>;
 
+export const sellHomeEventSchema = z.object({
+  ...baseEventFields,
+  type: z.literal("sell_home"),
+  /** The real_estate account being sold -- must be entered directly (Accounts
+   *  tab / "add a home you already own"), not one synthesized by an earlier
+   *  buy_home event. */
+  realEstateAccountId: idSchema,
+  /** What actually lands in your account: sale price minus agent commission,
+   *  closing costs, and whatever's left on the mortgage. Entered directly
+   *  (not sale price minus costs separately) since the mortgage payoff isn't
+   *  known until the projection runs -- today's dollars, inflated forward to
+   *  the sale date like every other dollar amount in this app. Can be
+   *  negative (an underwater sale where you bring cash to closing). */
+  netProceeds: z.number(),
+  /** Where net proceeds land. null = Extra Savings. */
+  proceedsAccountId: idSchema.nullable(),
+});
+export type SellHomeEvent = z.infer<typeof sellHomeEventSchema>;
+
 export const haveAKidEventSchema = z.object({
   ...baseEventFields,
   type: z.literal("have_a_kid"),
@@ -98,6 +117,7 @@ export const scenarioEventSchema = z
   .discriminatedUnion("type", [
     retireEventSchema,
     buyHomeEventSchema,
+    sellHomeEventSchema,
     haveAKidEventSchema,
     customTransferEventSchema,
   ])

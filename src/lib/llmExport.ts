@@ -309,6 +309,11 @@ export function buildLlmExport(scenario: Scenario): string {
           );
           break;
         }
+        case "sell_home":
+          lines.push(
+            `  - Sells ${accountName(ev.realEstateAccountId)}, netting ${formatMoney(ev.netProceeds)} into ${accountName(ev.proceedsAccountId)} after any agent commission, closing costs, and mortgage payoff. That home's asset and mortgage are both fully retired (zeroed) this date -- not just stopped, unlike a buy_home event's "replace existing housing expenses".`
+          );
+          break;
         case "have_a_kid":
           lines.push(
             `  - Childcare ${formatMoney(ev.childcareMonthlyExpense)}/mo until ${ev.childcareEndDate ?? "end of plan"}${ev.additionalOneTimeCost ? `, plus a one-time ${formatMoney(ev.additionalOneTimeCost)}` : ""}, paid from ${accountName(ev.paymentAccountId)}.`

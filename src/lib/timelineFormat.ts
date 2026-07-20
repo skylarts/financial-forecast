@@ -22,6 +22,7 @@ export const INCOME_CATEGORY_BADGES: Record<IncomeCategory, string> = {
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   retire: "Retire",
   buy_home: "Buy a home",
+  sell_home: "Sell a home",
   have_a_kid: "Have a kid",
   custom_transfer: "Transfer",
 };

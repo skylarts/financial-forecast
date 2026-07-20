@@ -384,8 +384,8 @@ export function NetWorthChart({
   }, []);
 
   const markers = useMemo(
-    () => buildChartMarkers({ events, incomeSources, expenses, people }),
-    [events, incomeSources, expenses, people]
+    () => buildChartMarkers({ events, incomeSources, expenses, people, accounts }),
+    [events, incomeSources, expenses, people, accounts]
   );
 
   const compareMarkers = useMemo(() => {

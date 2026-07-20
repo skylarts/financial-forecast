@@ -6,6 +6,7 @@ import type { Account, EventType, Person, RecurrenceFrequency, ScenarioEvent, Te
 import {
   retireEventSchema,
   buyHomeEventSchema,
+  sellHomeEventSchema,
   haveAKidEventSchema,
   customTransferEventSchema,
 } from "@/domain";
@@ -26,6 +27,7 @@ import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 const EVENT_TEMPLATES: { type: EventType; label: string; hint: string }[] = [
   { type: "retire", label: "Retire", hint: "Stop a person's salary income at a given date" },
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
+  { type: "sell_home", label: "Sell a home", hint: "Sell a home you own -- retires its mortgage and credits net proceeds" },
   { type: "have_a_kid", label: "Have a kid", hint: "Childcare costs + optional one-time cost" },
   { type: "custom_transfer", label: "Custom transfer", hint: "Move money between two of your accounts" },
 ];
@@ -62,6 +64,9 @@ interface FormValues {
   homeInsuranceRatePct: string;
   maintenanceRatePct: string;
   replaceHousingExpenses: boolean;
+  sellRealEstateAccountId: string;
+  sellNetProceeds: string;
+  sellProceedsAccountId: string;
   childcareMonthlyExpense: string;
   childcareYears: string;
   additionalOneTimeCost: string;
@@ -98,6 +103,9 @@ const DEFAULTS: FormValues = {
   homeInsuranceRatePct: "0.005",
   maintenanceRatePct: "0.01",
   replaceHousingExpenses: false,
+  sellRealEstateAccountId: "",
+  sellNetProceeds: "",
+  sellProceedsAccountId: "",
   childcareMonthlyExpense: "",
   childcareYears: "",
   additionalOneTimeCost: "",
@@ -145,6 +153,13 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         homeInsuranceRatePct: event.homeInsuranceRatePct?.toString() ?? "",
         maintenanceRatePct: event.maintenanceRatePct?.toString() ?? "",
         replaceHousingExpenses: event.replaceHousingExpenses ?? false,
+      };
+    case "sell_home":
+      return {
+        ...base,
+        sellRealEstateAccountId: event.realEstateAccountId,
+        sellNetProceeds: event.netProceeds.toString(),
+        sellProceedsAccountId: event.proceedsAccountId ?? "",
       };
     case "have_a_kid":
       return {
@@ -204,6 +219,9 @@ export function EventDrawer({
 
   const accountOptions = accounts.map((a) => ({ value: a.id, label: a.name }));
   const personOptions = people.map((p) => ({ value: p.id, label: p.name }));
+  // A home you already own (Accounts tab / "add a home you already own"),
+  // not one synthesized by an earlier buy_home event -- see resolveEvents.ts.
+  const realEstateOptions = accounts.filter((a) => a.class === "real_estate").map((a) => ({ value: a.id, label: a.name }));
   const financed = watch("financed");
   const hasRetirementExpense = watch("hasRetirementExpense");
 
@@ -280,6 +298,16 @@ export function EventDrawer({
           replaceHousingExpenses: v.replaceHousingExpenses,
         };
         schema = buyHomeEventSchema.omit({ id: true });
+        break;
+      case "sell_home":
+        candidate = {
+          ...base,
+          type: "sell_home",
+          realEstateAccountId: v.sellRealEstateAccountId,
+          netProceeds: Number(v.sellNetProceeds),
+          proceedsAccountId: v.sellProceedsAccountId || null,
+        };
+        schema = sellHomeEventSchema.omit({ id: true });
         break;
       case "have_a_kid":
         candidate = {
@@ -501,6 +529,32 @@ export function EventDrawer({
                   <p className="mt-2 text-[11px] text-dim">Today's dollars. Tax, insurance &amp; maintenance grow with the home's value.</p>
                 </div>
               )}
+            </>
+          )}
+
+          {selectedType === "sell_home" && (
+            <>
+              {realEstateOptions.length === 0 ? (
+                <p className="text-sm text-dim">
+                  No homes to sell yet -- add one first via &ldquo;Add a Home You Already Own&rdquo; on the Accounts tab.
+                </p>
+              ) : (
+                <Field label="Which Home">
+                  <SelectInput reg={register("sellRealEstateAccountId", { required: true })} options={realEstateOptions} />
+                </Field>
+              )}
+              <Field
+                label="Net Proceeds from Sale"
+                hint="What actually lands in your account: sale price, minus your agent's commission and closing costs, minus whatever's left on the mortgage. E.g. a $500k sale, 6% selling costs ($30k), and a $250k mortgage payoff nets $220k. Can be negative if you'd owe more than the home is worth. Today's dollars -- inflated forward to the sale date; this home's mortgage (if any) is fully retired the same day."
+              >
+                <TextInput reg={register("sellNetProceeds", { required: true })} type="number" step="0.01" />
+              </Field>
+              <Field label="Proceeds Go To">
+                <SelectInput
+                  reg={register("sellProceedsAccountId")}
+                  options={[{ value: "", label: "Extra Savings (Default)" }, ...accountOptions]}
+                />
+              </Field>
             </>
           )}
 
