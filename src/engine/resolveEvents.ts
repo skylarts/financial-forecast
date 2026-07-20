@@ -384,6 +384,36 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           sourceId: `${event.id}:onetime`,
         });
       }
+    } else if (event.type === "retire" && event.retirementExpense) {
+      const exp = event.retirementExpense;
+      const windows = exp.adjustments ?? [];
+      const occurrences = expandOccurrences(event.startDate, exp.endDate ?? null, "annual", horizonEnd);
+      for (const occ of occurrences) {
+        // Entered in today's dollars; inflates from plan start to the
+        // retirement date (this expense's own "start"), then grows at its
+        // own rate from there -- same two-stage pattern as a regular Expense.
+        const base = todaysDollarsAmount(
+          exp.amount,
+          settings.startDate,
+          event.startDate,
+          occ,
+          settings.inflationRatePct,
+          exp.growthRatePct
+        );
+        const amount = base * activeMultiplier(windows, occ);
+        if (amount === 0) continue;
+        const accountId = exp.paymentAccountId ?? primarySpendingAccountId;
+        if (!accountId) continue;
+        pushPosting({
+          date: occ,
+          yearMonth: occ.slice(0, 7),
+          accountId,
+          amount: -Math.abs(amount),
+          category: "expense",
+          label: `Retirement expense: ${event.name}`,
+          sourceId: `${event.id}:retirement_expense`,
+        });
+      }
     } else if (event.type === "custom_transfer") {
       const occurrences = expandOccurrences(event.startDate, event.endDate ?? null, event.frequency, horizonEnd, event.intervalYears);
       for (const occ of occurrences) {

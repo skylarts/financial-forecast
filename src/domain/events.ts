@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { idSchema, isoDateSchema, recurrenceFrequencySchema } from "./common";
+import { temporaryAdjustmentSchema } from "./adjustment";
 
 const baseEventFields = {
   id: idSchema,
@@ -20,6 +21,24 @@ export const retireEventSchema = z.object({
   personId: idSchema,
   /** Overrides Person.retirementAge if provided. */
   retirementAge: z.number().int().positive().optional(),
+  /** Optional recurring annual expense that starts the day retirement begins
+   *  (extra travel, hobbies, etc.) -- same today's-dollars + growth-rate +
+   *  temporary-adjustment shape as a regular Expense, just anchored to this
+   *  event's startDate instead of its own. */
+  retirementExpense: z
+    .object({
+      amount: z.number().nonnegative(),
+      /** Nominal annual growth rate, already includes inflation. 0 = flat in nominal terms. */
+      growthRatePct: z.number().default(0),
+      /** null = pays automatically from Extra Savings. */
+      paymentAccountId: idSchema.nullable(),
+      /** null/omitted = runs through the end of the plan. */
+      endDate: isoDateSchema.nullable().optional(),
+      /** Temporary scaling windows (e.g. a few extra years of travel budget). */
+      adjustments: z.array(temporaryAdjustmentSchema).optional(),
+    })
+    .nullable()
+    .optional(),
 });
 export type RetireEvent = z.infer<typeof retireEventSchema>;
 
