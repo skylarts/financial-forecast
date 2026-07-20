@@ -400,6 +400,104 @@ describe("forecastScenario -- buy_home", () => {
     expect(y2029.accountBalances[mortgageAccount.id]).toBeCloseTo(0, 6); // loan paid off
     expect(y2029.cashFlow.expenseByItem.some((i) => i.id === mortgageAccount.id)).toBe(false); // no phantom payments
   });
+
+  it("extra monthly principal pays the mortgage off ahead of schedule", () => {
+    const makeBuy = (extraPrincipalMonthly?: number) => {
+      const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 500_000, growthRatePct: 0 });
+      return makeScenario({
+        accounts: [checking],
+        events: [
+          {
+            id: nanoid(),
+            type: "buy_home",
+            name: "Buy a home",
+            startDate: "2026-01-01",
+            purchasePrice: 200_000,
+            downPaymentAmount: 40_000,
+            downPaymentFromAccountId: checking.id,
+            propertyGrowthRatePct: 0,
+            mortgage: { annualInterestRatePct: 0.06, termMonths: 360, extraPrincipalMonthly },
+          },
+        ],
+        startDate: "2026-01-01",
+        horizonEndDate: "2056-12-31", // room for all 360 scheduled payments (first is Feb 2026)
+      });
+    };
+
+    const basePayments = forecastScenario(makeBuy()).ledger.filter((e) => e.kind === "mortgage_payment");
+    const extraPayments = forecastScenario(makeBuy(1_000)).ledger.filter((e) => e.kind === "mortgage_payment");
+
+    // A 30-year loan runs the full 360 months without extra principal; $1k/mo
+    // extra retires it well before the horizon, so there are strictly fewer.
+    expect(basePayments).toHaveLength(360);
+    expect(extraPayments.length).toBeLessThan(360);
+    // The final payment never overshoots the remaining balance.
+    expect(extraPayments[extraPayments.length - 1].amount).toBeGreaterThan(0);
+  });
+
+  it("charges property tax, home insurance, and maintenance as a share of the home's value", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
+    const eventId = nanoid();
+    const scenario = makeScenario({
+      accounts: [checking],
+      events: [
+        {
+          id: eventId,
+          type: "buy_home",
+          name: "Buy a home",
+          startDate: "2026-01-01",
+          purchasePrice: 500_000,
+          downPaymentAmount: 500_000, // cash purchase (down payment == price)
+          downPaymentFromAccountId: checking.id,
+          propertyGrowthRatePct: 0, // flat value keeps the yearly cost exact
+          mortgage: null,
+          propertyTaxRatePct: 0.01,
+          homeInsuranceRatePct: 0.005,
+          maintenanceRatePct: 0.01,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const y2027 = result.years.find((y) => y.year === 2027)!; // full year, home value flat at 500k
+    const tax = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:property_tax`);
+    const insurance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:home_insurance`);
+    const maintenance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:maintenance`);
+    expect(tax?.amount).toBeCloseTo(5_000, 0); // 1% of $500k
+    expect(insurance?.amount).toBeCloseTo(2_500, 0); // 0.5% of $500k
+    expect(maintenance?.amount).toBeCloseTo(5_000, 0); // 1% of $500k
+  });
+
+  it("replaceHousingExpenses stops any category=housing expense the day before the purchase closes", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
+    const rent = makeExpense({ category: "housing", paymentAccountId: checking.id, amount: 2_000, growthRatePct: 0 });
+    const groceries = makeExpense({ category: "food", paymentAccountId: checking.id, amount: 500, growthRatePct: 0 });
+    const scenario = makeScenario({
+      accounts: [checking],
+      expenses: [rent, groceries],
+      events: [
+        {
+          id: nanoid(),
+          type: "buy_home",
+          name: "Buy a home",
+          startDate: "2026-07-01",
+          purchasePrice: 400_000,
+          downPaymentAmount: 400_000,
+          downPaymentFromAccountId: checking.id,
+          propertyGrowthRatePct: 0,
+          mortgage: null,
+          replaceHousingExpenses: true,
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const y2027 = result.years.find((y) => y.year === 2027)!; // full year after the purchase
+    expect(y2027.cashFlow.expenseByItem.some((i) => i.id === rent.id)).toBe(false); // rent stopped
+    expect(y2027.cashFlow.expenseByItem.some((i) => i.id === groceries.id)).toBe(true); // untouched, wrong category
+  });
 });
 
 describe("forecastScenario -- exposes the full resolved account list", () => {

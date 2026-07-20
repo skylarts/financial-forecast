@@ -287,11 +287,20 @@ export function buildLlmExport(scenario: Scenario): string {
             );
           }
           break;
-        case "buy_home":
+        case "buy_home": {
+          const financing = ev.mortgage
+            ? `Down payment ${formatMoney(ev.downPaymentAmount)} from ${accountName(ev.downPaymentFromAccountId)}. Mortgage: ${fmtPct(ev.mortgage.annualInterestRatePct)} over ${ev.mortgage.termMonths} months${ev.mortgage.extraPrincipalMonthly ? `, plus ${formatMoney(ev.mortgage.extraPrincipalMonthly)}/mo extra principal` : ""}.`
+            : `Paid in cash from ${accountName(ev.downPaymentFromAccountId)} — no mortgage created.`;
+          const ownership = [
+            ev.propertyTaxRatePct ? `property tax ${fmtPct(ev.propertyTaxRatePct)}/yr of value` : null,
+            ev.homeInsuranceRatePct ? `insurance ${fmtPct(ev.homeInsuranceRatePct)}/yr of value` : null,
+            ev.maintenanceRatePct ? `maintenance ${fmtPct(ev.maintenanceRatePct)}/yr of value` : null,
+          ].filter(Boolean);
           lines.push(
-            `  - Purchase price ${formatMoney(ev.purchasePrice)}, down payment ${formatMoney(ev.downPaymentAmount)} from ${accountName(ev.downPaymentFromAccountId)}, property grows ${fmtPct(ev.propertyGrowthRatePct)}/yr. ${ev.mortgage ? `Mortgage: ${fmtPct(ev.mortgage.annualInterestRatePct)} over ${ev.mortgage.termMonths} months.` : "Paid in cash — no mortgage created."}`
+            `  - Purchase price ${formatMoney(ev.purchasePrice)}, property grows ${fmtPct(ev.propertyGrowthRatePct)}/yr. ${financing}${ownership.length ? ` Ongoing: ${ownership.join(", ")}.` : ""}${ev.replaceHousingExpenses ? " Replaces any existing 'Housing' category expense as of this purchase date." : ""}`
           );
           break;
+        }
         case "have_a_kid":
           lines.push(
             `  - Childcare ${formatMoney(ev.childcareMonthlyExpense)}/mo until ${ev.childcareEndDate ?? "end of plan"}${ev.additionalOneTimeCost ? `, plus a one-time ${formatMoney(ev.additionalOneTimeCost)}` : ""}, paid from ${accountName(ev.paymentAccountId)}.`

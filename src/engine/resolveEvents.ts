@@ -89,6 +89,11 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   //     temporary adjustment windows entered directly on the source. ---
   const retirementByPerson = new Map<Id, ISODate>();
   const incomeEndOverrides = new Map<Id, ISODate>();
+  // A buy_home event with replaceHousingExpenses trims every category="housing"
+  // Expense (the old rent/mortgage it's replacing) to end the day before this
+  // purchase closes -- same "earliest wins" pattern as a retire event trimming
+  // salary income above, for the case of multiple home purchases in one plan.
+  const housingExpenseEndOverrides = new Map<Id, ISODate>();
   for (const event of events) {
     if (event.type === "retire") {
       const existingRetire = retirementByPerson.get(event.personId);
@@ -102,6 +107,15 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           if (!existing || compareDates(trimmedEnd, existing) < 0) {
             incomeEndOverrides.set(src.id, trimmedEnd);
           }
+        }
+      }
+    } else if (event.type === "buy_home" && event.replaceHousingExpenses) {
+      const trimmedEnd = addDays(event.startDate, -1);
+      for (const exp of scenario.expenses) {
+        if (exp.category !== "housing") continue;
+        const existing = housingExpenseEndOverrides.get(exp.id);
+        if (!existing || compareDates(trimmedEnd, existing) < 0) {
+          housingExpenseEndOverrides.set(exp.id, trimmedEnd);
         }
       }
     }
@@ -152,8 +166,9 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // --- Expenses: same pattern as income ---
   for (const exp of scenario.expenses) {
     if (exp.isExcluded) continue;
+    const effectiveEnd = housingExpenseEndOverrides.get(exp.id) ?? exp.endDate;
     const windows = exp.adjustments ?? [];
-    const occurrences = expandOccurrences(exp.startDate, exp.endDate, exp.frequency, horizonEnd, exp.intervalYears);
+    const occurrences = expandOccurrences(exp.startDate, effectiveEnd, exp.frequency, horizonEnd, exp.intervalYears);
     for (const occ of occurrences) {
       // Entered in today's dollars; inflates from plan start to this expense's
       // own start, then grows at its own configured rate from there.
@@ -277,6 +292,10 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         settings.inflationRatePct
       );
       const purchasePrice = event.purchasePrice * inflationFactor;
+      // In a cash purchase the UI stores downPaymentAmount === purchasePrice, so
+      // this single upfront posting funds the whole home; when financed it's the
+      // real down payment and the mortgage below covers the rest. Either way it's
+      // an asset-for-asset swap (cash -> home equity), not consumption.
       const downPaymentAmount = event.downPaymentAmount * inflationFactor;
 
       pushPosting({
@@ -284,8 +303,8 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         yearMonth: event.startDate.slice(0, 7),
         accountId: event.downPaymentFromAccountId,
         amount: -downPaymentAmount,
-        category: "transfer", // asset-for-asset swap (cash -> home equity), not consumption
-        label: `Down payment: ${event.name}`,
+        category: "transfer",
+        label: event.mortgage ? `Down payment: ${event.name}` : `Home purchase: ${event.name}`,
         sourceId: `${event.id}:downpayment`,
       });
 
@@ -315,6 +334,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             originationDate: event.startDate,
             annualInterestRatePct: event.mortgage.annualInterestRatePct,
             termMonths: event.mortgage.termMonths,
+            extraPrincipalMonthly: event.mortgage.extraPrincipalMonthly,
             linkedAssetId: realEstateId,
           },
           effectiveStartDate: event.startDate,
@@ -326,6 +346,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             originationDate: event.startDate,
             annualInterestRatePct: event.mortgage.annualInterestRatePct,
             termMonths: event.mortgage.termMonths,
+            extraPrincipalMonthly: event.mortgage.extraPrincipalMonthly,
           },
           payingAccountId: primarySpendingAccountId,
         });
@@ -346,6 +367,36 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         linkedLiabilityId,
         effectiveStartDate: event.startDate,
       });
+
+      // Property tax, home insurance, and maintenance are entered as an annual
+      // fraction of the home's value. The home starts at purchasePrice (nominal
+      // at the purchase date) and grows at propertyGrowthRatePct, so these
+      // ongoing costs track the same growing value -- recomputed each month and
+      // paid from the primary spending account, running through the end of the
+      // plan (there's no "sell the home" event yet).
+      const ongoingRates: { rate: number; label: string; key: string }[] = [];
+      if (event.propertyTaxRatePct) ongoingRates.push({ rate: event.propertyTaxRatePct, label: "Property tax", key: "property_tax" });
+      if (event.homeInsuranceRatePct) ongoingRates.push({ rate: event.homeInsuranceRatePct, label: "Home insurance", key: "home_insurance" });
+      if (event.maintenanceRatePct) ongoingRates.push({ rate: event.maintenanceRatePct, label: "Maintenance", key: "maintenance" });
+      if (ongoingRates.length) {
+        const occurrences = expandOccurrences(event.startDate, null, "monthly", horizonEnd);
+        for (const occ of occurrences) {
+          const homeValue = growthAdjustedAmount(purchasePrice, elapsedYears(event.startDate, occ), event.propertyGrowthRatePct);
+          for (const { rate, label, key } of ongoingRates) {
+            const amount = (homeValue * rate) / 12;
+            if (amount === 0) continue;
+            pushPosting({
+              date: occ,
+              yearMonth: occ.slice(0, 7),
+              accountId: primarySpendingAccountId ?? event.downPaymentFromAccountId,
+              amount: -amount,
+              category: "expense",
+              label: `${label}: ${event.name}`,
+              sourceId: `${event.id}:${key}`,
+            });
+          }
+        }
+      }
     } else if (event.type === "have_a_kid") {
       const end = event.childcareEndDate ?? horizonEnd;
       const occurrences = expandOccurrences(event.startDate, end, "monthly", horizonEnd);
