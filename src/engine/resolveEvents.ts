@@ -277,6 +277,10 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         settings.inflationRatePct
       );
       const purchasePrice = event.purchasePrice * inflationFactor;
+      // In a cash purchase the UI stores downPaymentAmount === purchasePrice, so
+      // this single upfront posting funds the whole home; when financed it's the
+      // real down payment and the mortgage below covers the rest. Either way it's
+      // an asset-for-asset swap (cash -> home equity), not consumption.
       const downPaymentAmount = event.downPaymentAmount * inflationFactor;
 
       pushPosting({
@@ -284,8 +288,8 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         yearMonth: event.startDate.slice(0, 7),
         accountId: event.downPaymentFromAccountId,
         amount: -downPaymentAmount,
-        category: "transfer", // asset-for-asset swap (cash -> home equity), not consumption
-        label: `Down payment: ${event.name}`,
+        category: "transfer",
+        label: event.mortgage ? `Down payment: ${event.name}` : `Home purchase: ${event.name}`,
         sourceId: `${event.id}:downpayment`,
       });
 
@@ -315,6 +319,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             originationDate: event.startDate,
             annualInterestRatePct: event.mortgage.annualInterestRatePct,
             termMonths: event.mortgage.termMonths,
+            extraPrincipalMonthly: event.mortgage.extraPrincipalMonthly,
             linkedAssetId: realEstateId,
           },
           effectiveStartDate: event.startDate,
@@ -326,6 +331,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             originationDate: event.startDate,
             annualInterestRatePct: event.mortgage.annualInterestRatePct,
             termMonths: event.mortgage.termMonths,
+            extraPrincipalMonthly: event.mortgage.extraPrincipalMonthly,
           },
           payingAccountId: primarySpendingAccountId,
         });
@@ -346,6 +352,35 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         linkedLiabilityId,
         effectiveStartDate: event.startDate,
       });
+
+      // Property tax + home insurance are entered as an annual fraction of the
+      // home's value. The home starts at purchasePrice (nominal at the purchase
+      // date) and grows at propertyGrowthRatePct, so these ongoing costs track
+      // the same growing value -- recomputed each month and paid from the
+      // primary spending account, running through the end of the plan (there's
+      // no "sell the home" event yet).
+      const ongoingRates: { rate: number; label: string; key: string }[] = [];
+      if (event.propertyTaxRatePct) ongoingRates.push({ rate: event.propertyTaxRatePct, label: "Property tax", key: "property_tax" });
+      if (event.homeInsuranceRatePct) ongoingRates.push({ rate: event.homeInsuranceRatePct, label: "Home insurance", key: "home_insurance" });
+      if (ongoingRates.length) {
+        const occurrences = expandOccurrences(event.startDate, null, "monthly", horizonEnd);
+        for (const occ of occurrences) {
+          const homeValue = growthAdjustedAmount(purchasePrice, elapsedYears(event.startDate, occ), event.propertyGrowthRatePct);
+          for (const { rate, label, key } of ongoingRates) {
+            const amount = (homeValue * rate) / 12;
+            if (amount === 0) continue;
+            pushPosting({
+              date: occ,
+              yearMonth: occ.slice(0, 7),
+              accountId: primarySpendingAccountId ?? event.downPaymentFromAccountId,
+              amount: -amount,
+              category: "expense",
+              label: `${label}: ${event.name}`,
+              sourceId: `${event.id}:${key}`,
+            });
+          }
+        }
+      }
     } else if (event.type === "have_a_kid") {
       const end = event.childcareEndDate ?? horizonEnd;
       const occurrences = expandOccurrences(event.startDate, end, "monthly", horizonEnd);

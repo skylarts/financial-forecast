@@ -47,6 +47,7 @@ export const buyHomeEventSchema = z.object({
   type: z.literal("buy_home"),
   purchasePrice: z.number().positive(),
   downPaymentAmount: z.number().nonnegative(),
+  /** Financed: funds the down payment. Cash: funds the whole purchase price. */
   downPaymentFromAccountId: idSchema,
   propertyGrowthRatePct: z.number(),
   /** null = paid in cash, no liability created. */
@@ -54,8 +55,14 @@ export const buyHomeEventSchema = z.object({
     .object({
       annualInterestRatePct: z.number().min(0).max(1),
       termMonths: z.number().int().positive(),
+      /** Extra principal paid each month on top of the scheduled payment. */
+      extraPrincipalMonthly: z.number().nonnegative().optional(),
     })
     .nullable(),
+  /** Annual property tax as a fraction of the home's (growing) value, e.g. 0.01 = 1%/yr. */
+  propertyTaxRatePct: z.number().nonnegative().optional(),
+  /** Annual home insurance as a fraction of the home's (growing) value, e.g. 0.005 = 0.5%/yr. */
+  homeInsuranceRatePct: z.number().nonnegative().optional(),
 });
 export type BuyHomeEvent = z.infer<typeof buyHomeEventSchema>;
 
