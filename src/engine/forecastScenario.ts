@@ -532,16 +532,31 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const payment = mortgagePayments.get(account.id);
       if (!mortgage || !payment) continue;
       const step = amortizeMonth(currentBalance, mortgage.loanTerms.annualInterestRatePct, payment);
-      balances.set(account.id, step.newBalance);
-      acc.rollforward.get(account.id)!.withdrawals += step.principalPortion;
+
+      // Extra principal on top of the scheduled payment -- capped at whatever
+      // balance is left after the normal step, so the final payment never
+      // overshoots. Reducing the balance faster while the payment stays fixed
+      // is exactly what pays the loan off early (the currentBalance<=0 guard
+      // above simply stops charging once it's gone).
+      let principalPortion = step.principalPortion;
+      let newBalance = step.newBalance;
+      const extraWanted = mortgage.loanTerms.extraPrincipalMonthly ?? 0;
+      if (extraWanted > 0 && newBalance > 0) {
+        const extra = Math.min(extraWanted, newBalance);
+        principalPortion += extra;
+        newBalance -= extra;
+      }
+      balances.set(account.id, newBalance);
+      acc.rollforward.get(account.id)!.withdrawals += principalPortion;
 
       const payerId = mortgage.payingAccountId;
       if (payerId) {
-        // Interest + principal actually owed this month, not the flat scheduled
-        // payment -- these match every month except possibly the final one,
-        // where the scheduled payment would otherwise overpay/overcharge a
-        // loan that's paying off with less than a full payment remaining.
-        const actualPayment = step.interestPortion + step.principalPortion;
+        // Interest + principal actually owed this month (incl. any extra
+        // principal), not the flat scheduled payment -- these match every month
+        // except possibly the final one, where the scheduled payment would
+        // otherwise overpay/overcharge a loan that's paying off with less than
+        // a full payment remaining.
+        const actualPayment = step.interestPortion + principalPortion;
         balances.set(payerId, (balances.get(payerId) ?? 0) - actualPayment);
         const payerBucket = acc.rollforward.get(payerId);
         if (payerBucket) payerBucket.withdrawals += actualPayment;

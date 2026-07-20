@@ -33,6 +33,9 @@ export const loanTermsSchema = z.object({
   termMonths: z.number().int().positive(),
   /** Computed via standard amortization if omitted. */
   monthlyPayment: z.number().nonnegative().optional(),
+  /** Extra principal paid on top of the scheduled payment each month --
+   *  shortens the term (the loan pays off early). */
+  extraPrincipalMonthly: z.number().nonnegative().optional(),
   /** e.g. a mortgage's linked real_estate account. */
   linkedAssetId: idSchema.optional(),
 });
