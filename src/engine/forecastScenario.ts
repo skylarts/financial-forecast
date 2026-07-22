@@ -830,19 +830,26 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const cumulativeInflation = Math.pow(1 + settings.inflationRatePct, currentYear - yearOf(settings.startDate));
       const netWorthReal = netWorthNominal / cumulativeInflation;
 
-      // "Cash on hand" is the total balance across every class="cash" account
-      // (Extra Savings, checking, an emergency fund, etc.) -- broader than
-      // the money-flow hub used elsewhere for withdrawal/transfer
-      // categorization, since a surplus swept from the hub into checking or
-      // an emergency fund is still cash, not withdrawn or invested. Because
-      // it spans multiple accounts rather than measuring one hub's balance
-      // delta, "Net change in cash" below is no longer guaranteed to
-      // reconcile exactly to the itemized rows above it -- any gap is real
-      // cash movement between hub and non-hub cash accounts that isn't
-      // separately itemized elsewhere on this statement.
-      const hubCashStart = [...cashAccountIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
+      // "Ending cash on hand" (display only, e.g. the row of that name on the
+      // Cash Flow tab) is the total balance across every class="cash" account
+      // (Extra Savings, checking, an emergency fund, etc.) -- a surplus swept
+      // from the hub into checking or an emergency fund is still cash, not
+      // withdrawn or invested.
       const endingCashBalance = [...cashAccountIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
-      const hubCashInterest = [...cashAccountIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
+
+      // "Net change in cash" and "Interest earned on cash" -- the reconciling
+      // figures that must sum exactly from the itemized rows above them --
+      // stay scoped to the hub specifically, not every cash account. Every
+      // bucket in this statement (surplusRouted, withdrawalsToCashNet,
+      // hubTransferNet, etc.) tracks flows into/out of the hub, so measuring
+      // the hub's own balance delta directly guarantees an exact reconcile
+      // with no possibility of an uncaptured mechanism -- e.g. a transfer
+      // between two non-hub cash accounts, which the broader figure above
+      // can't distinguish from money actually leaving cash -- silently
+      // creating a gap.
+      const hubCashStart = [...hubIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
+      const hubEndingBalance = [...hubIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
+      const hubCashInterest = [...hubIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
 
       // Sorted line-item arrays; labels come from itemLabels (posting/mortgage
       // ids) or the account name (for account-keyed maps).
@@ -947,7 +954,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const otherAccountActivity = acc.hubTransferNet - acc.directIncomeToOtherAccounts;
       // Ground truth: the hub's actual measured balance change this year.
       // Always exactly right, regardless of which mechanism moved the money.
-      const netCashFlow = endingCashBalance - hubCashStart;
+      const netCashFlow = hubEndingBalance - hubCashStart;
 
       const cashFlow: CashFlowYearRow = {
         year: currentYear,

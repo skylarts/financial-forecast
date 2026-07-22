@@ -103,7 +103,7 @@ export interface CashFlowYearRow {
    * straight into a brokerage). Zero in the common case.
    */
   otherAccountActivity: number;
-  /** The spending hub account balance (not every class="cash" account -- a savings/emergency-fund account is a withdrawal source, not operating cash). */
+  /** Total balance across every class="cash" account (Extra Savings, checking, an emergency fund, etc.), not just the spending hub -- a broader, display-only figure than netCashFlow/cashInterest above, which stay scoped to the hub for an exact reconcile. */
   endingCashBalance: number;
   /** Cash outflow from after-tax contributions (money saved into accounts). */
   afterTaxContributionTotal: number;
