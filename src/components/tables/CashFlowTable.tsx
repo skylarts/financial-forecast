@@ -146,6 +146,16 @@ export function CashFlowTable({
     );
   }, [years]);
 
+  // Estimated withholding taken at the source from taxable/tax-deferred
+  // withdrawals -- shown as an informational drill-down under Federal Tax,
+  // alongside the benefit withholding and true-up (it's already netted out
+  // of the gross withdrawal amounts shown in the Withdrawals section above).
+  const withholdingItems = useMemo(() => {
+    const items: { id: string; label: string }[] = [];
+    for (const g of withdrawalGroups) for (const a of g.accounts) items.push({ id: a.id, label: a.label });
+    return items.filter((it) => years.some((_y, yi) => (wdTaxMaps[yi].get(it.id) ?? 0) > 0.5));
+  }, [withdrawalGroups, years, wdTaxMaps]);
+
   const hasWithdrawals = withdrawalGroups.length > 0;
   const hasSaved = years.some((y) => y.cashFlow.afterTaxContributionTotal + y.cashFlow.surplusRouted > 0.005);
   const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
@@ -153,6 +163,7 @@ export function CashFlowTable({
   const hasSettlement = years.some((y) => Math.abs(y.cashFlow.taxSettlement) > 0.5);
   const hasOtherActivity = years.some((y) => Math.abs(y.cashFlow.otherAccountActivity) > 0.5);
   const hasFederalTax = years.some((y) => y.cashFlow.federalTaxTotal > 0.5);
+  const hasWithdrawalWithholding = withholdingItems.length > 0;
 
   if (years.length === 0) {
     return (
@@ -338,49 +349,20 @@ export function CashFlowTable({
                       </tr>
                       {isOpen(`wd:${g.key}`) &&
                       g.accounts.map((a) => (
-                        <Fragment key={a.id}>
-                          <tr className="text-dim hover:bg-accent/15">
-                            <td className="py-2 pl-12">{a.label}</td>
-                            {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
-                          </tr>
-                          {years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5) && (
-                            <tr className="text-negative/80 hover:bg-accent/15">
-                              <td className="py-1 pl-16 text-xs italic">estimated withholding</td>
-                              {years.map((y, yi) => {
-                                const v = d(wdTaxMaps[yi].get(a.id) ?? 0, yi);
-                                return (
-                                  <td key={y.year} className="py-1 pr-3 text-right text-xs tabular-nums">
-                                    {Math.abs(v) < 0.5 ? <span className="text-dim">—</span> : formatMoney(v)}
-                                  </td>
-                                );
-                              })}
-                              <td className={`${totalCellClass} text-xs`}>
-                                {formatMoney(totalOf((yi) => wdTaxMaps[yi].get(a.id) ?? 0))}
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
+                        <tr key={a.id} className="text-dim hover:bg-accent/15">
+                          <td className="py-2 pl-12">{a.label}</td>
+                          {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
+                        </tr>
                       ))}
                     </Fragment>
                   ))
                 : emptyRow("No withdrawals in this range."))}
 
-            {/* Cash-side tax rows: withholding taken from benefit deposits, and
-                the December true-up that settles withholding onto the exact
-                bracket bill. Together with the net Withdrawals line above,
-                these make the visible rows sum exactly to Net change in cash. */}
-            {hasBenefitWithholding &&
-              reconcileRow(
-                "Tax withheld on benefits",
-                (yi) => -years[yi].cashFlow.incomeTaxWithheldFromCash,
-                "Estimated tax withheld from Social Security / pension deposits before they reach your cash (both are entered gross)."
-              )}
-            {hasSettlement &&
-              reconcileRow(
-                "Tax true-up (year-end settlement)",
-                (yi) => years[yi].cashFlow.taxSettlement,
-                "Each December the estimated withholding is settled against the exact bracket-computed bill -- positive is a refund back into cash, negative is extra tax owed. After this, the year's actual cash tax equals the Federal tax line below exactly."
-              )}
+            {/* Cash-side tax rows -- withholding on benefit deposits and the
+                December true-up -- are shown under Federal Tax below, not
+                here, so all tax estimates/actuals/true-up live in one place.
+                They still count toward Net change in cash below; that row is
+                measured from the actual simulated balance, not summed. */}
 
             {/* Saved to accounts */}
             {hasSaved &&
@@ -439,12 +421,14 @@ export function CashFlowTable({
               hint: "Your total balance across all cash accounts, not just Extra Savings -- a broader figure than the reconciliation above. Not summed in the Total column since it's a balance, not a flow.",
             })}
 
-            {/* Federal tax -- informational: the exact bracket-computed bill for
-                the year. Thanks to the true-up row above, this IS the cash tax
-                the household actually paid for the year; it's shown separately
-                (not part of the reconciliation sum) because most of it was
-                withheld at the source accounts, not from cash. */}
-            {hasFederalTax && (
+            {/* Federal tax -- informational: everything from withholding
+                estimates through the exact bracket-computed bill to the
+                year-end true-up lives here together. Thanks to the true-up
+                row, "Federal tax (actual bill)" IS the cash tax the household
+                actually paid for the year; the section as a whole is shown
+                separately from the reconciliation above because most of it
+                was withheld at the source accounts, not from cash. */}
+            {(hasFederalTax || hasBenefitWithholding || hasWithdrawalWithholding || hasSettlement) && (
               <>
                 <tr className="border-t-2 border-border bg-background/40">
                   <td className="py-2.5 pl-2 font-bold" colSpan={col}>
@@ -454,6 +438,25 @@ export function CashFlowTable({
                     </span>
                   </td>
                 </tr>
+                {hasBenefitWithholding &&
+                  reconcileRow(
+                    "Tax withheld on benefits",
+                    (yi) => -years[yi].cashFlow.incomeTaxWithheldFromCash,
+                    "Estimated tax withheld from Social Security / pension deposits before they reach your cash (both are entered gross)."
+                  )}
+                {hasWithdrawalWithholding &&
+                  sectionHeader(
+                    "wdWithholding",
+                    "Estimated withholding on withdrawals",
+                    (yi) => -withholdingItems.reduce((s, it) => s + (wdTaxMaps[yi].get(it.id) ?? 0), 0),
+                    "Estimated tax withheld at the source from taxable / tax-deferred withdrawals -- already netted out of the gross withdrawal amounts shown under Withdrawals above. Expand to see it by account."
+                  )}
+                {hasWithdrawalWithholding &&
+                  isOpen("wdWithholding") &&
+                  itemRows(
+                    withholdingItems,
+                    years.map((_y, yi) => new Map(withholdingItems.map((it) => [it.id, -(wdTaxMaps[yi].get(it.id) ?? 0)])))
+                  )}
                 <tr className="border-t border-border">
                   <td className="py-2.5 pl-2 font-bold">
                     <span className="inline-flex items-center gap-1">
@@ -475,6 +478,12 @@ export function CashFlowTable({
                   (federalTaxComponentItems.length
                     ? itemRows(federalTaxComponentItems, federalTaxComponentMaps)
                     : emptyRow("No federal tax in this range."))}
+                {hasSettlement &&
+                  reconcileRow(
+                    "Tax true-up (year-end settlement)",
+                    (yi) => years[yi].cashFlow.taxSettlement,
+                    "Each December the estimated withholding is settled against the exact bracket-computed bill -- positive is a refund back into cash, negative is extra tax owed. After this, the year's actual cash tax withheld/settled equals the Federal tax (actual bill) line above exactly."
+                  )}
               </>
             )}
           </tbody>
