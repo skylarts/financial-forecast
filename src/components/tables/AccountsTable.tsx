@@ -210,13 +210,19 @@ export function AccountsTable({
    *  with its linked buy_home event (if this home was bought rather than
    *  entered as already-owned) so it opens in the right mode. A mortgage
    *  account routes to the same place via its linked real_estate asset --
-   *  a mortgage's own terms are edited as part of its home, not standalone. */
-  const openHomeDrawer = (account: Account) => {
+   *  a mortgage's own terms are edited as part of its home, not standalone.
+   *  Returns false (rather than silently doing nothing) if the mortgage
+   *  isn't the one its home currently points to -- an orphan left behind by
+   *  a stale link, which the caller should open in the plain AccountDrawer
+   *  instead so it's still reachable and deletable. */
+  const openHomeDrawer = (account: Account): boolean => {
     const homeAccount =
       account.class === "real_estate"
         ? account
         : accounts.find((a) => a.class === "real_estate" && a.linkedLiabilityId === account.id);
-    if (homeAccount) setHomeDrawer({ open: true, account: homeAccount });
+    if (!homeAccount) return false;
+    setHomeDrawer({ open: true, account: homeAccount });
+    return true;
   };
   const homeDrawerEvent: BuyHomeEvent | undefined = homeDrawer.account
     ? (events.find((e) => e.type === "buy_home" && e.realEstateAccountId === homeDrawer.account!.id) as
@@ -284,12 +290,9 @@ export function AccountsTable({
               groups={ASSET_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
-                if (a.class === "real_estate") {
-                  openHomeDrawer(a);
-                } else {
-                  setDrawerAccount(a);
-                  setDrawerOpen(true);
-                }
+                if (a.class === "real_estate" && openHomeDrawer(a)) return;
+                setDrawerAccount(a);
+                setDrawerOpen(true);
               }}
               mode={dollarMode}
             />
@@ -300,12 +303,9 @@ export function AccountsTable({
               groups={LIABILITY_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
-                if (a.class === "mortgage") {
-                  openHomeDrawer(a);
-                } else {
-                  setDrawerAccount(a);
-                  setDrawerOpen(true);
-                }
+                if (a.class === "mortgage" && openHomeDrawer(a)) return;
+                setDrawerAccount(a);
+                setDrawerOpen(true);
               }}
               mode={dollarMode}
             />
