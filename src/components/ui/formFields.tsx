@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
+import { reformatMoneyStr } from "@/lib/inputFormat";
 
 export const inputClass =
   "w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground";
@@ -37,6 +38,49 @@ export function InfoTooltip({ text }: { text: string }) {
 
 export function TextInput({ reg, ...props }: { reg: UseFormRegisterReturn } & React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...reg} {...props} className={inputClass} />;
+}
+
+/**
+ * A rate input in PERCENT units: the user types "5.625" to mean 5.625%/yr
+ * (stored as the fraction 0.05625 -- callers convert at the form boundary
+ * with fractionToPercentStr / percentStrToFraction). For growth rates, blank
+ * means "match the plan's inflation rate", which callers surface via the
+ * placeholder. Registered fields hold the percent STRING, not a number.
+ */
+export function PercentInput({
+  reg,
+  ...props
+}: { reg?: UseFormRegisterReturn } & React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <span className="relative block w-full">
+      <input {...(reg ?? {})} type="text" inputMode="decimal" {...props} className={`${inputClass} pr-6`} />
+      <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-dim">%</span>
+    </span>
+  );
+}
+
+/**
+ * A currency input: shows a "$" prefix, keeps thousands separators
+ * ("250,000"), and re-formats on blur. The field value is a lenient money
+ * STRING -- callers parse at the form boundary with moneyStrToNumber.
+ */
+export function MoneyInput({
+  reg,
+  ...props
+}: { reg?: UseFormRegisterReturn } & React.InputHTMLAttributes<HTMLInputElement>) {
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    e.target.value = reformatMoneyStr(e.target.value);
+    // Let react-hook-form (or the caller) see the reformatted value too.
+    reg?.onChange({ target: e.target, type: "change" });
+    reg?.onBlur(e);
+    props.onBlur?.(e);
+  };
+  return (
+    <span className="relative block w-full">
+      <span className="pointer-events-none absolute inset-y-0 left-2 flex items-center text-xs text-dim">$</span>
+      <input {...(reg ?? {})} type="text" inputMode="decimal" {...props} onBlur={handleBlur} className={`${inputClass} pl-5`} />
+    </span>
+  );
 }
 
 export function SelectInput({

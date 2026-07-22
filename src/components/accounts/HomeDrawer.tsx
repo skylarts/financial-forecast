@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { Account, BuyHomeEvent } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { addExistingHome, updateExistingHome, removeExistingHome, EXISTING_HOME_DEFAULTS } from "@/lib/addExistingHome";
 import { buyNewHome, updateBoughtHome, removeBoughtHome, BUY_HOME_DEFAULTS } from "@/lib/buyHome";
@@ -77,39 +78,39 @@ function toFormValues(mode: Mode, account?: Account, event?: BuyHomeEvent, mortg
     return {
       name: event.name,
       startDate: event.startDate,
-      value: event.purchasePrice.toString(),
-      growthRatePct: (account.propertyGrowthRatePct ?? account.growthRatePct ?? 0).toString(),
-      propertyTaxRatePct: account.propertyTaxRatePct?.toString() ?? "",
-      homeInsuranceRatePct: account.homeInsuranceRatePct?.toString() ?? "",
-      maintenanceRatePct: account.maintenanceRatePct?.toString() ?? "",
+      value: moneyToStr(event.purchasePrice),
+      growthRatePct: fractionToPercentStr(account.propertyGrowthRatePct ?? account.growthRatePct),
+      propertyTaxRatePct: fractionToPercentStr(account.propertyTaxRatePct),
+      homeInsuranceRatePct: fractionToPercentStr(account.homeInsuranceRatePct),
+      maintenanceRatePct: fractionToPercentStr(account.maintenanceRatePct),
       hasMortgage: !!mortgage,
       mortgageBalance: "",
       financed: !!mortgage,
-      downPaymentAmount: event.downPaymentAmount.toString(),
+      downPaymentAmount: moneyToStr(event.downPaymentAmount),
       downPaymentFromAccountId: event.downPaymentFromAccountId,
       replaceHousingExpenses: event.replaceHousingExpenses ?? false,
-      mortgageRate: mortgage?.loanTerms?.annualInterestRatePct.toString() ?? BUY_HOME_DEFAULTS.mortgageRate,
+      mortgageRate: mortgage?.loanTerms ? fractionToPercentStr(mortgage.loanTerms.annualInterestRatePct) : BUY_HOME_DEFAULTS.mortgageRate,
       mortgageTermYears: mortgage ? Math.round(mortgage.loanTerms!.termMonths / 12).toString() : BUY_HOME_DEFAULTS.mortgageTermYears,
-      mortgageExtraPrincipal: mortgage?.loanTerms?.extraPrincipalMonthly?.toString() ?? "",
+      mortgageExtraPrincipal: mortgage?.loanTerms?.extraPrincipalMonthly != null ? moneyToStr(mortgage.loanTerms.extraPrincipalMonthly) : "",
     };
   }
   return {
     name: account.name,
     startDate: "",
-    value: account.startingBalance.toString(),
-    growthRatePct: (account.propertyGrowthRatePct ?? account.growthRatePct ?? 0).toString(),
-    propertyTaxRatePct: account.propertyTaxRatePct?.toString() ?? "",
-    homeInsuranceRatePct: account.homeInsuranceRatePct?.toString() ?? "",
-    maintenanceRatePct: account.maintenanceRatePct?.toString() ?? "",
+    value: moneyToStr(account.startingBalance),
+    growthRatePct: fractionToPercentStr(account.propertyGrowthRatePct ?? account.growthRatePct),
+    propertyTaxRatePct: fractionToPercentStr(account.propertyTaxRatePct),
+    homeInsuranceRatePct: fractionToPercentStr(account.homeInsuranceRatePct),
+    maintenanceRatePct: fractionToPercentStr(account.maintenanceRatePct),
     hasMortgage: !!mortgage,
-    mortgageBalance: mortgage?.startingBalance.toString() ?? "",
+    mortgageBalance: mortgage ? moneyToStr(mortgage.startingBalance) : "",
     financed: false,
     downPaymentAmount: "",
     downPaymentFromAccountId: "",
     replaceHousingExpenses: false,
-    mortgageRate: mortgage?.loanTerms?.annualInterestRatePct.toString() ?? EXISTING_HOME_DEFAULTS.mortgageRate,
+    mortgageRate: mortgage?.loanTerms ? fractionToPercentStr(mortgage.loanTerms.annualInterestRatePct) : EXISTING_HOME_DEFAULTS.mortgageRate,
     mortgageTermYears: mortgage ? Math.round(mortgage.loanTerms!.termMonths / 12).toString() : EXISTING_HOME_DEFAULTS.mortgageYearsLeft,
-    mortgageExtraPrincipal: mortgage?.loanTerms?.extraPrincipalMonthly?.toString() ?? "",
+    mortgageExtraPrincipal: mortgage?.loanTerms?.extraPrincipalMonthly != null ? moneyToStr(mortgage.loanTerms.extraPrincipalMonthly) : "",
   };
 }
 
@@ -168,16 +169,16 @@ export function HomeDrawer({
 
   // Live monthly-cost breakdown -- purely a display aid; the engine (or, for
   // a plain existing home, nothing at all) recomputes independently on save.
-  const value = Number(watch("value")) || 0;
-  const down = mode === "buy" && financed ? Number(watch("downPaymentAmount")) || 0 : 0;
-  const principal = mode === "existing" ? Number(watch("mortgageBalance")) || 0 : Math.max(0, value - down);
-  const rate = Number(watch("mortgageRate")) || 0;
+  const value = moneyStrToNumber(watch("value")) ?? 0;
+  const down = mode === "buy" && financed ? moneyStrToNumber(watch("downPaymentAmount")) ?? 0 : 0;
+  const principal = mode === "existing" ? moneyStrToNumber(watch("mortgageBalance")) ?? 0 : Math.max(0, value - down);
+  const rate = percentStrToFraction(watch("mortgageRate")) ?? 0;
   const termMonths = (Number(watch("mortgageTermYears")) || 0) * 12;
-  const extra = isFinanced ? Number(watch("mortgageExtraPrincipal")) || 0 : 0;
+  const extra = isFinanced ? moneyStrToNumber(watch("mortgageExtraPrincipal")) ?? 0 : 0;
   const pAndI = isFinanced && principal > 0 && termMonths > 0 ? computeMonthlyPayment(principal, rate, termMonths) : 0;
-  const taxMonthly = (value * (Number(watch("propertyTaxRatePct")) || 0)) / 12;
-  const insuranceMonthly = (value * (Number(watch("homeInsuranceRatePct")) || 0)) / 12;
-  const maintenanceMonthly = (value * (Number(watch("maintenanceRatePct")) || 0)) / 12;
+  const taxMonthly = (value * (percentStrToFraction(watch("propertyTaxRatePct")) ?? 0)) / 12;
+  const insuranceMonthly = (value * (percentStrToFraction(watch("homeInsuranceRatePct")) ?? 0)) / 12;
+  const maintenanceMonthly = (value * (percentStrToFraction(watch("maintenanceRatePct")) ?? 0)) / 12;
   const monthlyTotal = pAndI + extra + taxMonthly + insuranceMonthly + maintenanceMonthly;
   const money0 = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
@@ -187,6 +188,7 @@ export function HomeDrawer({
     let result: { ok: true } | { ok: false; error: string };
     if (mode === "existing") {
       const input = {
+        name: v.name,
         homeValue: v.value,
         homeGrowthRatePct: v.growthRatePct,
         propertyTaxRatePct: v.propertyTaxRatePct,
@@ -271,7 +273,7 @@ export function HomeDrawer({
         )}
 
         <Field label={mode === "existing" ? "Current Estimated Value" : "Purchase Price"} hint={mode === "buy" ? "Today's dollars -- inflated forward to the closing date." : undefined}>
-          <TextInput reg={register("value", { required: true })} type="number" step="0.01" />
+          <MoneyInput reg={register("value", { required: true })} placeholder="e.g. 550,000" />
         </Field>
 
         {mode === "buy" && (
@@ -295,7 +297,7 @@ export function HomeDrawer({
 
         {mode === "buy" && financed && (
           <Field label="Down Payment" hint="Today's dollars -- inflated the same as the purchase price, so it stays the same share.">
-            <TextInput reg={register("downPaymentAmount", { required: true })} type="number" step="0.01" />
+            <MoneyInput reg={register("downPaymentAmount", { required: true })} placeholder="e.g. 110,000" />
           </Field>
         )}
 
@@ -305,14 +307,14 @@ export function HomeDrawer({
 
         {mode === "existing" && hasMortgage && (
           <Field label="Remaining Balance">
-            <TextInput reg={register("mortgageBalance", { required: true })} type="number" step="0.01" />
+            <MoneyInput reg={register("mortgageBalance", { required: true })} placeholder="e.g. 320,000" />
           </Field>
         )}
 
         {isFinanced && (
           <div className="flex flex-wrap items-end gap-2">
-            <Field label="Interest Rate (e.g. 0.065 for 6.5%)">
-              <TextInput reg={register("mortgageRate")} type="number" step="0.001" />
+            <Field label="Interest Rate (per year)">
+              <PercentInput reg={register("mortgageRate")} placeholder="e.g. 6.5" />
             </Field>
             <Field label={mode === "existing" ? "Years Remaining" : "Term (years)"}>
               <TextInput reg={register("mortgageTermYears")} type="number" step="1" min="1" />
@@ -321,7 +323,7 @@ export function HomeDrawer({
         )}
         {isFinanced && (
           <Field label="Extra Principal / month (optional)" hint="Paid on top of the scheduled payment -- pays the loan off early.">
-            <TextInput reg={register("mortgageExtraPrincipal")} type="number" step="0.01" placeholder="e.g. 200" />
+            <MoneyInput reg={register("mortgageExtraPrincipal")} placeholder="e.g. 200" />
           </Field>
         )}
 
@@ -331,17 +333,17 @@ export function HomeDrawer({
           </Field>
         )}
 
-        <Field label="Annual Appreciation Rate (e.g. 0.03 for 3%)">
-          <TextInput reg={register("growthRatePct")} type="number" step="0.001" />
+        <Field label="Annual Appreciation Rate" hint="Percent per year, e.g. 3 for 3%. Blank = matches your inflation assumption.">
+          <PercentInput reg={register("growthRatePct")} placeholder="blank = inflation" />
         </Field>
-        <Field label="Property Tax Rate (per year, optional)" hint="Share of the home's value per year, e.g. 0.01 = 1%. Grows with the home.">
-          <TextInput reg={register("propertyTaxRatePct")} type="number" step="0.001" placeholder="e.g. 0.01" />
+        <Field label="Property Tax Rate (per year, optional)" hint="Share of the home's value per year, e.g. 1 for 1%. Grows with the home.">
+          <PercentInput reg={register("propertyTaxRatePct")} placeholder="e.g. 1" />
         </Field>
-        <Field label="Home Insurance Rate (per year, optional)" hint="Share of the home's value per year, e.g. 0.005 = 0.5%. Grows with the home.">
-          <TextInput reg={register("homeInsuranceRatePct")} type="number" step="0.001" placeholder="e.g. 0.005" />
+        <Field label="Home Insurance Rate (per year, optional)" hint="Share of the home's value per year, e.g. 0.5 for 0.5%. Grows with the home.">
+          <PercentInput reg={register("homeInsuranceRatePct")} placeholder="e.g. 0.5" />
         </Field>
         <Field label="Maintenance Rate (per year, optional)" hint="Share of the home's value per year -- the classic '1% rule' upkeep estimate. Grows with the home.">
-          <TextInput reg={register("maintenanceRatePct")} type="number" step="0.001" placeholder="e.g. 0.01" />
+          <PercentInput reg={register("maintenanceRatePct")} placeholder="e.g. 1" />
         </Field>
 
         {mode === "buy" && (

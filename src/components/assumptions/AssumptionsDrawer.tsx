@@ -3,9 +3,16 @@
 import { useState } from "react";
 import type { Person, Scenario } from "@/domain";
 import { personSchema, forecastSettingsSchema } from "@/domain";
+import { addMonths } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
-import { ErrorBanner, InfoTooltip } from "@/components/ui/formFields";
+import { ErrorBanner, InfoTooltip, PercentInput } from "@/components/ui/formFields";
+import { fractionToPercentStr, percentStrToFraction } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
+
+/** The horizon year implied by the household's longest planning-end age. */
+function horizonYearFromPeople(people: Person[]): number {
+  return Math.max(...people.map((p) => Number(p.birthDate.slice(0, 4)) + p.planningEndAge));
+}
 
 function PersonRow({ person }: { person: Person }) {
   const updatePerson = usePlanStore((s) => s.updatePerson);
@@ -14,7 +21,33 @@ function PersonRow({ person }: { person: Person }) {
 
   const save = () => {
     const result = personSchema.omit({ id: true }).safeParse(draft);
-    if (result.success) updatePerson(person.id, result.data);
+    if (!result.success) return;
+    const retirementAgeChanged = result.data.retirementAge !== person.retirementAge;
+    const planningEndChanged =
+      result.data.planningEndAge !== person.planningEndAge || result.data.birthDate !== person.birthDate;
+    updatePerson(person.id, result.data);
+
+    // These two ages are only meaningful through what they derive -- keep the
+    // derived things in sync so editing them here actually changes the plan:
+    const { activeScenario, updateSettings, updateEvent } = usePlanStore.getState();
+    const scenario = activeScenario();
+    if (retirementAgeChanged) {
+      // Move this person's Retire event(s) to their birthday at the new age.
+      for (const e of scenario.events) {
+        if (e.type !== "retire" || e.personId !== person.id) continue;
+        const updated = {
+          ...e,
+          retirementAge: result.data.retirementAge,
+          startDate: addMonths(result.data.birthDate, result.data.retirementAge * 12),
+        };
+        updateEvent(e.id, updated as Omit<typeof e, "id">);
+      }
+    }
+    if (planningEndChanged) {
+      // The horizon is derived from the longest planning-end age.
+      const horizonYear = horizonYearFromPeople(scenario.household.people);
+      updateSettings({ ...scenario.settings, horizonEndDate: `${horizonYear}-12-31` });
+    }
   };
 
   return (
@@ -35,7 +68,10 @@ function PersonRow({ person }: { person: Person }) {
       />
       <div />
       <label className="flex flex-col gap-1 text-xs text-dim">
-        Retirement age
+        <span className="inline-flex items-center gap-1">
+          Retirement age
+          <InfoTooltip text="Changing this moves this person's Retire event (which is what actually stops their salary and contributions) to their birthday at the new age." />
+        </span>
         <input
           className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
           type="number"
@@ -45,7 +81,10 @@ function PersonRow({ person }: { person: Person }) {
         />
       </label>
       <label className="flex flex-col gap-1 text-xs text-dim">
-        Planning end age
+        <span className="inline-flex items-center gap-1">
+          Planning end age
+          <InfoTooltip text="Changing this extends or shortens the forecast horizon (the longest planning-end age in the household wins)." />
+        </span>
         <input
           className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
           type="number"
@@ -79,6 +118,9 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
   const [newPersonName, setNewPersonName] = useState("");
 
   const [settingsDraft, setSettingsDraft] = useState(scenario.settings);
+  // Percent fields keep their raw typed string so decimals type naturally.
+  const [inflationStr, setInflationStr] = useState(() => fractionToPercentStr(scenario.settings.inflationRatePct));
+  const [flatTaxStr, setFlatTaxStr] = useState(() => fractionToPercentStr(scenario.settings.additionalFlatTaxRatePct));
 
   const saveSettings = (next: typeof settingsDraft) => {
     setSettingsDraft(next);
@@ -137,13 +179,18 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-dim">
-            Inflation rate (e.g. 0.03 for 3%)
-            <input
-              className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-              type="number"
-              step="0.001"
-              value={settingsDraft.inflationRatePct}
-              onChange={(e) => saveSettings({ ...settingsDraft, inflationRatePct: Number(e.target.value) })}
+            <span className="inline-flex items-center gap-1">
+              Inflation rate (per year)
+              <InfoTooltip text="Percent per year, e.g. 3 for 3%. Also the default growth rate for every input whose growth is left blank." />
+            </span>
+            <PercentInput
+              value={inflationStr}
+              placeholder="e.g. 3"
+              onChange={(e) => {
+                setInflationStr(e.target.value);
+                const fraction = percentStrToFraction(e.target.value);
+                if (fraction !== null) saveSettings({ ...settingsDraft, inflationRatePct: fraction });
+              }}
             />
           </label>
           <label className="flex items-center gap-2 text-sm text-foreground">
@@ -153,7 +200,10 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
               checked={settingsDraft.rmdEnabled}
               onChange={(e) => saveSettings({ ...settingsDraft, rmdEnabled: e.target.checked })}
             />
-            Enable RMDs at age 73+
+            <span className="inline-flex items-center gap-1">
+              Enable required minimum distributions (RMDs)
+              <InfoTooltip text="Forced annual withdrawals from tax-deferred accounts flagged 'Subject to RMDs' -- starting at age 73, or 75 for anyone born 1960 or later (SECURE 2.0)." />
+            </span>
           </label>
 
           <div className="rounded-md border border-border p-3">
@@ -176,22 +226,25 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
             </label>
             <label className="flex flex-col gap-1 text-xs text-dim">
               <span className="inline-flex items-center gap-1">
-                Additional flat tax rate (e.g. 0.05 for 5%)
-                <InfoTooltip text="State/local add-on to the computed federal tax. Leave at 0 if none." />
+                Additional flat tax rate
+                <InfoTooltip text="State/local add-on to the computed federal tax, in percent (e.g. 5 for 5%). Leave at 0 if none -- correct as-is for a no-income-tax state." />
               </span>
-              <input
-                className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
-                type="number"
-                step="0.01"
-                value={settingsDraft.additionalFlatTaxRatePct}
-                onChange={(e) =>
-                  saveSettings({ ...settingsDraft, additionalFlatTaxRatePct: Number(e.target.value) })
-                }
+              <PercentInput
+                value={flatTaxStr}
+                placeholder="e.g. 5"
+                onChange={(e) => {
+                  setFlatTaxStr(e.target.value);
+                  const fraction = percentStrToFraction(e.target.value);
+                  saveSettings({ ...settingsDraft, additionalFlatTaxRatePct: fraction ?? 0 });
+                }}
               />
             </label>
           </div>
           <label className="flex flex-col gap-1 text-xs text-dim">
-            Horizon end date
+            <span className="inline-flex items-center gap-1">
+              Horizon end date
+              <InfoTooltip text="Normally derived from the household's longest planning-end age -- editing a person's planning end age updates this automatically. Set it directly only to override that." />
+            </span>
             <input
               className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
               type="date"

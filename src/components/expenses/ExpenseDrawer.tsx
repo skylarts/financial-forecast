@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { expenseBaselineSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 
@@ -29,11 +30,13 @@ const FREQUENCIES: { value: RecurrenceFrequency; label: string }[] = [
 
 interface FormValues {
   name: string;
-  amount: number;
+  /** Money string ("6,500"). */
+  amount: string;
   frequency: RecurrenceFrequency;
   startDate: string;
   endDate: string;
-  growthRatePct: number;
+  /** Percent string ("3" = 3%/yr); blank = matches inflation. */
+  growthRatePct: string;
   intervalYears: string;
   paymentAccountId: string;
   category: ExpenseCategory;
@@ -43,11 +46,11 @@ interface FormValues {
 function toFormValues(expense?: ExpenseBaseline): FormValues {
   return {
     name: expense?.name ?? "",
-    amount: expense?.amount ?? 0,
+    amount: expense ? moneyToStr(expense.amount) : "",
     frequency: expense?.frequency ?? "monthly",
     startDate: expense?.startDate ?? "",
     endDate: expense?.endDate ?? "",
-    growthRatePct: expense?.growthRatePct ?? 0,
+    growthRatePct: fractionToPercentStr(expense?.growthRatePct),
     intervalYears: expense?.intervalYears?.toString() ?? "",
     paymentAccountId: expense?.paymentAccountId ?? "",
     category: expense?.category ?? "other",
@@ -74,19 +77,30 @@ export function ExpenseDrawer({
   const [advancedOpen, setAdvancedOpen] = useState(
     !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
   );
+  const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
+  const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
-  const { register, handleSubmit } = useForm<FormValues>({
+  const { register, handleSubmit, reset } = useForm<FormValues>({
     defaultValues: toFormValues(expense),
   });
+
+  // Re-sync the form whenever the drawer opens on a different expense --
+  // without this, a reused drawer instance shows the previous item's values.
+  useEffect(() => {
+    reset(toFormValues(expense));
+    setAdjustments(expense?.adjustments ?? []);
+    setError(null);
+    setAdvancedOpen(!!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true));
+  }, [expense, open, reset]);
 
   const onSubmit = (values: FormValues) => {
     const candidate = {
       name: values.name.trim(),
-      amount: Number(values.amount),
+      amount: moneyStrToNumber(values.amount) ?? 0,
       frequency: values.frequency,
       startDate: values.startDate,
       endDate: values.endDate || null,
-      growthRatePct: Number(values.growthRatePct) || 0,
+      growthRatePct: percentStrToFraction(values.growthRatePct),
       intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       paymentAccountId: values.paymentAccountId === "" ? null : values.paymentAccountId,
       category: values.category,
@@ -113,7 +127,7 @@ export function ExpenseDrawer({
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Rent" />
         </Field>
         <Field label="Amount" hint="Per occurrence, today's dollars.">
-          <TextInput reg={register("amount", { valueAsNumber: true, required: true })} type="number" step="0.01" />
+          <MoneyInput reg={register("amount", { required: true })} placeholder="e.g. 6,500" />
         </Field>
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
@@ -142,8 +156,11 @@ export function ExpenseDrawer({
         <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
           <TextInput reg={register("endDate")} type="date" />
         </Field>
-        <Field label="Annual Growth Rate (e.g. 0.03 to track inflation)" hint="Actual rate, not just inflation.">
-          <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
+        <Field
+          label="Annual Growth Rate"
+          hint={`Percent per year, e.g. 3 for 3%. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the expense flat in today's dollars -- the right default for most living expenses. 0 = flat in nominal terms (quietly shrinks in real terms over decades).`}
+        >
+          <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
         </Field>
 
         <button

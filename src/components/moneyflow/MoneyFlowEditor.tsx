@@ -4,7 +4,8 @@ import { useState } from "react";
 import { nanoid } from "nanoid";
 import type { Account, ForecastSettings, MoneyFlow } from "@/domain";
 import { forecastSettingsSchema } from "@/domain";
-import { ErrorBanner, InfoTooltip } from "@/components/ui/formFields";
+import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput } from "@/components/ui/formFields";
+import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 
 /**
@@ -25,7 +26,11 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
   const extraSavingsId = accounts.find((a) => a.isExtraSavings)?.id;
 
   const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "(deleted account)";
-  const availableAccounts = (excludeIds: Set<string>) => accounts.filter((a) => !excludeIds.has(a.id));
+  // Only asset accounts can hold routed surplus or fund a shortfall, and a
+  // house can't absorb deposits or be sold off piecemeal -- offering
+  // liabilities/real estate here used to silently corrupt the projection.
+  const availableAccounts = (excludeIds: Set<string>) =>
+    accounts.filter((a) => !excludeIds.has(a.id) && a.category === "asset" && a.class !== "real_estate");
 
   const save = (next: MoneyFlow) => {
     const result = forecastSettingsSchema.safeParse({ ...settings, moneyFlow: next });
@@ -157,15 +162,14 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
               </div>
               {stop.kind === "flat" ? (
                 <label className="flex items-center gap-1">
-                  Amount $
-                  <input
-                    className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                    type="number"
-                    step="0.01"
-                    placeholder="0"
-                    value={stop.amount ?? ""}
-                    onChange={(e) => updateSplitStop(stop.id, { amount: e.target.value === "" ? null : Number(e.target.value) })}
-                  />
+                  Amount
+                  <span className="w-28">
+                    <MoneyInput
+                      placeholder="0"
+                      defaultValue={stop.amount == null ? "" : moneyToStr(stop.amount)}
+                      onBlur={(e) => updateSplitStop(stop.id, { amount: moneyStrToNumber(e.target.value) })}
+                    />
+                  </span>
                 </label>
               ) : (
                 <label className="flex items-center gap-1">
@@ -185,27 +189,25 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 </label>
               )}
               <label className="flex items-center gap-1">
-                Cap $
+                Cap
                 <InfoTooltip text="How much this account absorbs before overflow spills to the next stop. Leave the last stop uncapped as a catch-all." />
-                <input
-                  className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="number"
-                  step="0.01"
-                  placeholder="no cap"
-                  value={stop.maxBalance ?? ""}
-                  onChange={(e) => updateSplitStop(stop.id, { maxBalance: e.target.value === "" ? null : Number(e.target.value) })}
-                />
+                <span className="w-28">
+                  <MoneyInput
+                    placeholder="no cap"
+                    defaultValue={stop.maxBalance == null ? "" : moneyToStr(stop.maxBalance)}
+                    onBlur={(e) => updateSplitStop(stop.id, { maxBalance: moneyStrToNumber(e.target.value) })}
+                  />
+                </span>
               </label>
               <label className="flex items-center gap-1">
                 Cap grows
-                <input
-                  className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="number"
-                  step="0.001"
-                  placeholder="inflation"
-                  value={stop.maxBalanceGrowthRatePct ?? ""}
-                  onChange={(e) => updateSplitStop(stop.id, { maxBalanceGrowthRatePct: e.target.value === "" ? null : Number(e.target.value) })}
-                />
+                <span className="w-24">
+                  <PercentInput
+                    placeholder="inflation"
+                    defaultValue={fractionToPercentStr(stop.maxBalanceGrowthRatePct)}
+                    onBlur={(e) => updateSplitStop(stop.id, { maxBalanceGrowthRatePct: percentStrToFraction(e.target.value) })}
+                  />
+                </span>
                 /yr
               </label>
               <label className="flex items-center gap-1">
@@ -284,27 +286,25 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 />
               </label>
               <label className="flex items-center gap-1">
-                Keep at least $
+                Keep at least
                 <InfoTooltip text="Today's dollars, grown by the rate below (or inflation, if left blank). Stops this source draining below that floor -- once hit, the remaining shortfall spills to the next active source." />
-                <input
-                  className="w-24 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="number"
-                  step="0.01"
-                  placeholder="0"
-                  value={stop.minBalance ?? ""}
-                  onChange={(e) => updateDrainStop(stop.id, { minBalance: e.target.value === "" ? null : Number(e.target.value) })}
-                />
+                <span className="w-28">
+                  <MoneyInput
+                    placeholder="0"
+                    defaultValue={stop.minBalance == null ? "" : moneyToStr(stop.minBalance)}
+                    onBlur={(e) => updateDrainStop(stop.id, { minBalance: moneyStrToNumber(e.target.value) })}
+                  />
+                </span>
               </label>
               <label className="flex items-center gap-1">
                 Floor grows
-                <input
-                  className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="number"
-                  step="0.001"
-                  placeholder="inflation"
-                  value={stop.minBalanceGrowthRatePct ?? ""}
-                  onChange={(e) => updateDrainStop(stop.id, { minBalanceGrowthRatePct: e.target.value === "" ? null : Number(e.target.value) })}
-                />
+                <span className="w-24">
+                  <PercentInput
+                    placeholder="inflation"
+                    defaultValue={fractionToPercentStr(stop.minBalanceGrowthRatePct)}
+                    onBlur={(e) => updateDrainStop(stop.id, { minBalanceGrowthRatePct: percentStrToFraction(e.target.value) })}
+                  />
+                </span>
                 /yr
               </label>
               {moneyFlow.drainSplitMode === "fixed_split" && (
@@ -313,12 +313,15 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   <input
                     className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
                     type="number"
-                    step="0.05"
+                    step="5"
                     min="0"
-                    max="1"
-                    value={stop.splitPct ?? 0}
-                    onChange={(e) => updateDrainStop(stop.id, { splitPct: Number(e.target.value) })}
+                    max="100"
+                    value={stop.splitPct == null ? "" : Math.round(stop.splitPct * 100)}
+                    onChange={(e) =>
+                      updateDrainStop(stop.id, { splitPct: e.target.value === "" ? null : Number(e.target.value) / 100 })
+                    }
                   />
+                  %
                 </label>
               )}
             </div>

@@ -2,7 +2,10 @@ import { accountObjectSchema, buyHomeEventSchema, categoryForClass } from "@/dom
 import { usePlanStore } from "@/store/usePlanStore";
 import { elapsedYears } from "@/engine/dateMath";
 import { growthAdjustedAmount } from "@/engine/growth";
+import { moneyStrToNumber, percentStrToFraction } from "@/lib/inputFormat";
 
+/** All rate fields are PERCENT-unit strings ("6" = 6%/yr, "0.5" = 0.5%/yr);
+ *  all money fields are lenient money strings ("550,000"). */
 export interface BuyHomeInput {
   name: string;
   startDate: string;
@@ -27,13 +30,13 @@ export const BUY_HOME_DEFAULTS: BuyHomeInput = {
   financed: true,
   downPaymentAmount: "",
   downPaymentFromAccountId: "",
-  mortgageRate: "0.06",
+  mortgageRate: "6",
   mortgageTermYears: "30",
   mortgageExtraPrincipal: "",
-  propertyGrowthRatePct: "0.03",
-  propertyTaxRatePct: "0.01",
-  homeInsuranceRatePct: "0.005",
-  maintenanceRatePct: "0.01",
+  propertyGrowthRatePct: "3",
+  propertyTaxRatePct: "1",
+  homeInsuranceRatePct: "0.5",
+  maintenanceRatePct: "1",
   replaceHousingExpenses: false,
 };
 
@@ -55,7 +58,7 @@ function nominalAt(amountToday: number, planStartDate: string, closingDate: stri
 function validate(input: BuyHomeInput): string | null {
   if (!input.name.trim()) return "Give this purchase a name.";
   if (!input.startDate) return "Enter a purchase (closing) date.";
-  if (!(Number(input.purchasePrice) > 0)) return "Enter the purchase price.";
+  if (!((moneyStrToNumber(input.purchasePrice) ?? 0) > 0)) return "Enter the purchase price.";
   if (!input.downPaymentFromAccountId) return "Choose which account pays for this.";
   return null;
 }
@@ -70,11 +73,13 @@ export function buyNewHome(input: BuyHomeInput, settings: { startDate: string; i
   if (error) return { ok: false, error };
 
   const name = input.name.trim();
-  const purchasePrice = Number(input.purchasePrice);
-  const downPaymentAmount = input.financed ? Number(input.downPaymentAmount) || 0 : purchasePrice;
+  const purchasePrice = moneyStrToNumber(input.purchasePrice) ?? 0;
+  const downPaymentAmount = input.financed ? moneyStrToNumber(input.downPaymentAmount) ?? 0 : purchasePrice;
   const nominalPrice = nominalAt(purchasePrice, settings.startDate, input.startDate, settings.inflationRatePct);
   const nominalDown = nominalAt(downPaymentAmount, settings.startDate, input.startDate, settings.inflationRatePct);
-  const propertyGrowthRatePct = Number(input.propertyGrowthRatePct) || 0;
+  // Blank appreciation = matches the plan's inflation rate (null), the
+  // app-wide convention for every growth-rate input.
+  const propertyGrowthRatePct = percentStrToFraction(input.propertyGrowthRatePct);
 
   const { addAccount, addEvent } = usePlanStore.getState();
 
@@ -85,13 +90,13 @@ export function buyNewHome(input: BuyHomeInput, settings: { startDate: string; i
     ownerId: null,
     startingBalance: nominalPrice,
     growthRatePct: propertyGrowthRatePct,
-    propertyGrowthRatePct,
+    propertyGrowthRatePct: propertyGrowthRatePct ?? undefined,
     taxTreatment: "n/a" as const,
     subjectToRMD: false,
     startDate: input.startDate,
-    propertyTaxRatePct: input.propertyTaxRatePct.trim() !== "" ? Number(input.propertyTaxRatePct) : undefined,
-    homeInsuranceRatePct: input.homeInsuranceRatePct.trim() !== "" ? Number(input.homeInsuranceRatePct) : undefined,
-    maintenanceRatePct: input.maintenanceRatePct.trim() !== "" ? Number(input.maintenanceRatePct) : undefined,
+    propertyTaxRatePct: percentStrToFraction(input.propertyTaxRatePct) ?? undefined,
+    homeInsuranceRatePct: percentStrToFraction(input.homeInsuranceRatePct) ?? undefined,
+    maintenanceRatePct: percentStrToFraction(input.maintenanceRatePct) ?? undefined,
   };
   const reResult = accountObjectSchema.omit({ id: true }).safeParse(realEstateCandidate);
   if (!reResult.success) return { ok: false, error: reResult.error.issues[0]?.message ?? "That doesn't look right." };
@@ -101,7 +106,7 @@ export function buyNewHome(input: BuyHomeInput, settings: { startDate: string; i
   if (!realEstateAccount) return { ok: false, error: "Something went wrong adding the home." };
 
   if (input.financed) {
-    const rate = Number(input.mortgageRate) || 0;
+    const rate = percentStrToFraction(input.mortgageRate) ?? 0;
     const termMonths = Math.max(1, Math.round(Number(input.mortgageTermYears) || 0) * 12);
     const principal = Math.max(0, nominalPrice - nominalDown);
     const mortgageCandidate = {
@@ -119,8 +124,7 @@ export function buyNewHome(input: BuyHomeInput, settings: { startDate: string; i
         originationDate: input.startDate,
         annualInterestRatePct: rate,
         termMonths,
-        extraPrincipalMonthly:
-          input.mortgageExtraPrincipal.trim() !== "" ? Number(input.mortgageExtraPrincipal) : undefined,
+        extraPrincipalMonthly: moneyStrToNumber(input.mortgageExtraPrincipal) ?? undefined,
         linkedAssetId: realEstateAccount.id,
       },
     };
@@ -170,17 +174,17 @@ export function updateBoughtHome(
   if (!realEstateAccount) return { ok: false, error: "This purchase's home account is missing." };
 
   const name = input.name.trim();
-  const purchasePrice = Number(input.purchasePrice);
-  const downPaymentAmount = input.financed ? Number(input.downPaymentAmount) || 0 : purchasePrice;
+  const purchasePrice = moneyStrToNumber(input.purchasePrice) ?? 0;
+  const downPaymentAmount = input.financed ? moneyStrToNumber(input.downPaymentAmount) ?? 0 : purchasePrice;
   const nominalPrice = nominalAt(purchasePrice, settings.startDate, input.startDate, settings.inflationRatePct);
   const nominalDown = nominalAt(downPaymentAmount, settings.startDate, input.startDate, settings.inflationRatePct);
-  const propertyGrowthRatePct = Number(input.propertyGrowthRatePct) || 0;
+  const propertyGrowthRatePct = percentStrToFraction(input.propertyGrowthRatePct);
 
   let linkedLiabilityId = realEstateAccount.linkedLiabilityId;
   const existingMortgage = linkedLiabilityId ? scenario.accounts.find((a) => a.id === linkedLiabilityId) : undefined;
 
   if (input.financed) {
-    const rate = Number(input.mortgageRate) || 0;
+    const rate = percentStrToFraction(input.mortgageRate) ?? 0;
     const termMonths = Math.max(1, Math.round(Number(input.mortgageTermYears) || 0) * 12);
     const principal = Math.max(0, nominalPrice - nominalDown);
     const mortgageCandidate = {
@@ -198,8 +202,7 @@ export function updateBoughtHome(
         originationDate: input.startDate,
         annualInterestRatePct: rate,
         termMonths,
-        extraPrincipalMonthly:
-          input.mortgageExtraPrincipal.trim() !== "" ? Number(input.mortgageExtraPrincipal) : undefined,
+        extraPrincipalMonthly: moneyStrToNumber(input.mortgageExtraPrincipal) ?? undefined,
         linkedAssetId: realEstateAccount.id,
       },
     };
@@ -226,15 +229,15 @@ export function updateBoughtHome(
     ownerId: realEstateAccount.ownerId,
     startingBalance: nominalPrice,
     growthRatePct: propertyGrowthRatePct,
-    propertyGrowthRatePct,
+    propertyGrowthRatePct: propertyGrowthRatePct ?? undefined,
     taxTreatment: realEstateAccount.taxTreatment,
     subjectToRMD: false,
     startDate: input.startDate,
     isExcluded: realEstateAccount.isExcluded,
     linkedLiabilityId,
-    propertyTaxRatePct: input.propertyTaxRatePct.trim() !== "" ? Number(input.propertyTaxRatePct) : undefined,
-    homeInsuranceRatePct: input.homeInsuranceRatePct.trim() !== "" ? Number(input.homeInsuranceRatePct) : undefined,
-    maintenanceRatePct: input.maintenanceRatePct.trim() !== "" ? Number(input.maintenanceRatePct) : undefined,
+    propertyTaxRatePct: percentStrToFraction(input.propertyTaxRatePct) ?? undefined,
+    homeInsuranceRatePct: percentStrToFraction(input.homeInsuranceRatePct) ?? undefined,
+    maintenanceRatePct: percentStrToFraction(input.maintenanceRatePct) ?? undefined,
   };
   const reResult = accountObjectSchema.omit({ id: true }).safeParse(realEstateCandidate);
   if (!reResult.success) return { ok: false, error: reResult.error.issues[0]?.message ?? "That doesn't look right." };

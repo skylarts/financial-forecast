@@ -210,13 +210,19 @@ export function AccountsTable({
    *  with its linked buy_home event (if this home was bought rather than
    *  entered as already-owned) so it opens in the right mode. A mortgage
    *  account routes to the same place via its linked real_estate asset --
-   *  a mortgage's own terms are edited as part of its home, not standalone. */
+   *  a mortgage's own terms are edited as part of its home, not standalone.
+   *  An UNLINKED mortgage (its home is gone) falls back to the plain Account
+   *  drawer so it can still be fixed or deleted instead of dead-ending. */
   const openHomeDrawer = (account: Account) => {
     const homeAccount =
       account.class === "real_estate"
         ? account
         : accounts.find((a) => a.class === "real_estate" && a.linkedLiabilityId === account.id);
     if (homeAccount) setHomeDrawer({ open: true, account: homeAccount });
+    else {
+      setDrawerAccount(account);
+      setDrawerOpen(true);
+    }
   };
   const homeDrawerEvent: BuyHomeEvent | undefined = homeDrawer.account
     ? (events.find((e) => e.type === "buy_home" && e.realEstateAccountId === homeDrawer.account!.id) as

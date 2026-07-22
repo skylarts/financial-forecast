@@ -11,7 +11,8 @@ import {
 } from "@/domain";
 import { addMonths, elapsedYears } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
@@ -47,21 +48,32 @@ interface FormValues {
   personId: string;
   retirementAge: string;
   hasRetirementExpense: boolean;
+  /** Money string. */
   retirementExpenseAmount: string;
+  /** Percent string; blank = matches inflation. */
   retirementExpenseGrowthRatePct: string;
   retirementExpensePaymentAccountId: string;
   retirementExpenseEndDate: string;
   sellRealEstateAccountId: string;
+  /** "computed" (engine derives from simulated equity) or "fixed" (enter net proceeds directly). */
+  sellMode: string;
+  /** Percent string, e.g. "6" for 6% selling costs. Computed mode only. */
+  sellingCostsPct: string;
+  /** Money string. Fixed mode only. */
   sellNetProceeds: string;
   sellProceedsAccountId: string;
+  /** Money string. */
   childcareMonthlyExpense: string;
   childcareYears: string;
+  /** Money string. */
   additionalOneTimeCost: string;
   kidPaymentAccountId: string;
+  /** Money string. */
   transferAmount: string;
   fromAccountId: string;
   toAccountId: string;
   transferFrequency: RecurrenceFrequency;
+  /** Percent string; blank = matches inflation. */
   transferGrowthRatePct: string;
   transferIntervalYears: string;
 }
@@ -75,14 +87,17 @@ const DEFAULTS: FormValues = {
   retirementAge: "",
   hasRetirementExpense: false,
   retirementExpenseAmount: "",
-  retirementExpenseGrowthRatePct: "0",
+  retirementExpenseGrowthRatePct: "",
   retirementExpensePaymentAccountId: "",
   retirementExpenseEndDate: "",
   sellRealEstateAccountId: "",
+  sellMode: "computed",
+  sellingCostsPct: "6",
   sellNetProceeds: "",
   sellProceedsAccountId: "",
   childcareMonthlyExpense: "",
-  childcareYears: "",
+  // A finite default -- childcare rarely runs to the end of a 60-year plan.
+  childcareYears: "18",
   additionalOneTimeCost: "",
   kidPaymentAccountId: "",
   transferAmount: "",
@@ -108,8 +123,8 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         personId: event.personId,
         retirementAge: event.retirementAge?.toString() ?? "",
         hasRetirementExpense: !!event.retirementExpense,
-        retirementExpenseAmount: event.retirementExpense?.amount.toString() ?? "",
-        retirementExpenseGrowthRatePct: event.retirementExpense?.growthRatePct?.toString() ?? "",
+        retirementExpenseAmount: event.retirementExpense ? moneyToStr(event.retirementExpense.amount) : "",
+        retirementExpenseGrowthRatePct: fractionToPercentStr(event.retirementExpense?.growthRatePct),
         retirementExpensePaymentAccountId: event.retirementExpense?.paymentAccountId ?? "",
         retirementExpenseEndDate: event.retirementExpense?.endDate ?? "",
       };
@@ -121,37 +136,37 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
       return {
         ...base,
         sellRealEstateAccountId: event.realEstateAccountId,
-        sellNetProceeds: event.netProceeds.toString(),
-        sellProceedsAccountId: event.proceedsAccountId ?? "",
-      };
-    case "sell_home":
-      return {
-        ...base,
-        sellRealEstateAccountId: event.realEstateAccountId,
-        sellNetProceeds: event.netProceeds.toString(),
+        sellMode: event.sellingCostsPct != null ? "computed" : "fixed",
+        sellingCostsPct: event.sellingCostsPct != null ? fractionToPercentStr(event.sellingCostsPct) : "6",
+        sellNetProceeds: moneyToStr(event.netProceeds),
         sellProceedsAccountId: event.proceedsAccountId ?? "",
       };
     case "have_a_kid":
       return {
         ...base,
-        childcareMonthlyExpense: event.childcareMonthlyExpense.toString(),
+        childcareMonthlyExpense: moneyToStr(event.childcareMonthlyExpense),
         childcareYears: event.childcareEndDate
           ? Math.round(elapsedYears(event.startDate, event.childcareEndDate)).toString()
           : "",
-        additionalOneTimeCost: event.additionalOneTimeCost?.toString() ?? "",
+        additionalOneTimeCost: event.additionalOneTimeCost != null ? moneyToStr(event.additionalOneTimeCost) : "",
         kidPaymentAccountId: event.paymentAccountId,
       };
     case "custom_transfer":
       return {
         ...base,
-        transferAmount: event.amount.toString(),
+        transferAmount: moneyToStr(event.amount),
         fromAccountId: event.fromAccountId,
         toAccountId: event.toAccountId,
         transferFrequency: event.frequency,
-        transferGrowthRatePct: event.growthRatePct?.toString() ?? "",
+        transferGrowthRatePct: fractionToPercentStr(event.growthRatePct),
         transferIntervalYears: event.intervalYears?.toString() ?? "",
       };
   }
+}
+
+/** The date `person` turns `age`, using their birthday's month/day. */
+function birthdayAtAge(person: Person, age: number): string {
+  return addMonths(person.birthDate, Math.round(age * 12));
 }
 
 export function EventDrawer({
@@ -170,13 +185,15 @@ export function EventDrawer({
   const addEvent = usePlanStore((s) => s.addEvent);
   const updateEvent = usePlanStore((s) => s.updateEvent);
   const removeEvent = usePlanStore((s) => s.removeEvent);
+  const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
+  const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
   const [selectedType, setSelectedType] = useState<EventType | null>(event?.type ?? null);
   const [error, setError] = useState<string | null>(null);
   const [retirementExpenseAdjustments, setRetirementExpenseAdjustments] = useState<TemporaryAdjustment[]>(
     event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []
   );
-  const { register, handleSubmit, watch, reset } = useForm<FormValues>({
+  const { register, handleSubmit, watch, reset, setValue } = useForm<FormValues>({
     defaultValues: event ? eventToFormValues(event) : DEFAULTS,
   });
 
@@ -194,6 +211,8 @@ export function EventDrawer({
   // buy_home event, both are real Accounts. See resolveEvents.ts.
   const realEstateOptions = accounts.filter((a) => a.class === "real_estate").map((a) => ({ value: a.id, label: a.name }));
   const hasRetirementExpense = watch("hasRetirementExpense");
+  const sellMode = watch("sellMode");
+  const retirePersonId = watch("personId");
 
   // buy_home is handled entirely by HomeDrawer (see the early return below),
   // so it never reaches this form.
@@ -204,6 +223,15 @@ export function EventDrawer({
       <HomeDrawer open={open} onClose={onClose} account={linkedAccount} event={buyEvent} accounts={accounts} initialMode="buy" />
     );
   }
+
+  /** Typing a retirement age fills the start date with that person's birthday at that age. */
+  const syncRetireDateFromAge = (ageStr: string) => {
+    const age = Number(ageStr);
+    const person = people.find((p) => p.id === (retirePersonId || people[0]?.id));
+    if (person && Number.isFinite(age) && age > 0) {
+      setValue("startDate", birthdayAtAge(person, age));
+    }
+  };
 
   const onSubmit = (v: FormValues) => {
     if (!selectedType) return;
@@ -225,8 +253,8 @@ export function EventDrawer({
           retirementAge: v.retirementAge ? Number(v.retirementAge) : undefined,
           retirementExpense: v.hasRetirementExpense
             ? {
-                amount: Number(v.retirementExpenseAmount),
-                growthRatePct: Number(v.retirementExpenseGrowthRatePct) || 0,
+                amount: moneyStrToNumber(v.retirementExpenseAmount) ?? 0,
+                growthRatePct: percentStrToFraction(v.retirementExpenseGrowthRatePct),
                 paymentAccountId: v.retirementExpensePaymentAccountId || null,
                 endDate: v.retirementExpenseEndDate || null,
                 adjustments: retirementExpenseAdjustments,
@@ -235,33 +263,26 @@ export function EventDrawer({
         };
         schema = retireEventSchema.omit({ id: true });
         break;
-      case "sell_home":
+      case "sell_home": {
+        const computed = v.sellMode === "computed";
         candidate = {
           ...base,
           type: "sell_home",
           realEstateAccountId: v.sellRealEstateAccountId,
-          netProceeds: Number(v.sellNetProceeds),
+          netProceeds: computed ? 0 : moneyStrToNumber(v.sellNetProceeds) ?? 0,
+          sellingCostsPct: computed ? percentStrToFraction(v.sellingCostsPct) ?? 0.06 : null,
           proceedsAccountId: v.sellProceedsAccountId || null,
         };
         schema = sellHomeEventSchema.omit({ id: true });
         break;
-      case "sell_home":
-        candidate = {
-          ...base,
-          type: "sell_home",
-          realEstateAccountId: v.sellRealEstateAccountId,
-          netProceeds: Number(v.sellNetProceeds),
-          proceedsAccountId: v.sellProceedsAccountId || null,
-        };
-        schema = sellHomeEventSchema.omit({ id: true });
-        break;
+      }
       case "have_a_kid":
         candidate = {
           ...base,
           type: "have_a_kid",
-          childcareMonthlyExpense: Number(v.childcareMonthlyExpense),
+          childcareMonthlyExpense: moneyStrToNumber(v.childcareMonthlyExpense) ?? 0,
           childcareEndDate: v.childcareYears.trim() !== "" ? addMonths(v.startDate, Number(v.childcareYears) * 12) : null,
-          additionalOneTimeCost: v.additionalOneTimeCost ? Number(v.additionalOneTimeCost) : undefined,
+          additionalOneTimeCost: moneyStrToNumber(v.additionalOneTimeCost) ?? undefined,
           paymentAccountId: v.kidPaymentAccountId,
         };
         schema = haveAKidEventSchema.omit({ id: true });
@@ -274,11 +295,11 @@ export function EventDrawer({
         candidate = {
           ...base,
           type: "custom_transfer",
-          amount: Number(v.transferAmount),
+          amount: moneyStrToNumber(v.transferAmount) ?? 0,
           fromAccountId: v.fromAccountId,
           toAccountId: v.toAccountId,
           frequency: v.transferFrequency,
-          growthRatePct: v.transferGrowthRatePct ? Number(v.transferGrowthRatePct) : undefined,
+          growthRatePct: percentStrToFraction(v.transferGrowthRatePct),
           intervalYears: v.transferIntervalYears.trim() !== "" ? Number(v.transferIntervalYears) : undefined,
         };
         schema = customTransferEventSchema.omit({ id: true });
@@ -317,18 +338,29 @@ export function EventDrawer({
           <Field label="Name">
             <TextInput reg={register("name", { required: true })} />
           </Field>
-          <Field label="Start Date">
-            <TextInput reg={register("startDate", { required: true })} type="date" />
-          </Field>
 
           {selectedType === "retire" && (
             <>
               <Field label="Person">
                 <SelectInput reg={register("personId")} options={personOptions} />
               </Field>
-              <Field label="Retirement Age" hint="Optional -- overrides the person's default retirement age from Assumptions for this event only.">
-                <TextInput reg={register("retirementAge")} type="number" />
+              <Field label="Retirement Age" hint="Typing an age fills the start date below with that person's birthday at that age -- adjust the exact date freely afterward.">
+                <TextInput
+                  reg={register("retirementAge", {
+                    onChange: (e: React.ChangeEvent<HTMLInputElement>) => syncRetireDateFromAge(e.target.value),
+                  })}
+                  type="number"
+                />
               </Field>
+            </>
+          )}
+
+          <Field label="Start Date">
+            <TextInput reg={register("startDate", { required: true })} type="date" />
+          </Field>
+
+          {selectedType === "retire" && (
+            <>
               <CheckboxInput
                 reg={register("hasRetirementExpense")}
                 label="Add a retirement expense (e.g. more travel, hobbies)"
@@ -336,10 +368,13 @@ export function EventDrawer({
               {hasRetirementExpense && (
                 <div className="flex flex-col gap-3 border-l border-border pl-3">
                   <Field label="Yearly Amount" hint="Today's dollars -- starts the day retirement begins.">
-                    <TextInput reg={register("retirementExpenseAmount", { required: true })} type="number" step="0.01" />
+                    <MoneyInput reg={register("retirementExpenseAmount", { required: true })} placeholder="e.g. 12,000" />
                   </Field>
-                  <Field label="Annual Growth Rate" hint="Actual rate, not just inflation. 0 = flat in nominal terms.">
-                    <TextInput reg={register("retirementExpenseGrowthRatePct")} type="number" step="0.001" />
+                  <Field
+                    label="Annual Growth Rate"
+                    hint={`Percent per year. Blank = matches inflation (${inflationPctLabel}%), keeping it flat in today's dollars. 0 = flat nominal (shrinks in real terms).`}
+                  >
+                    <PercentInput reg={register("retirementExpenseGrowthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
                   </Field>
                   <Field label="Payment Account">
                     <SelectInput
@@ -371,38 +406,37 @@ export function EventDrawer({
                   <SelectInput reg={register("sellRealEstateAccountId", { required: true })} options={realEstateOptions} />
                 </Field>
               )}
-              <Field
-                label="Net Proceeds from Sale"
-                hint="What actually lands in your account: sale price, minus your agent's commission and closing costs, minus whatever's left on the mortgage. E.g. a $500k sale, 6% selling costs ($30k), and a $250k mortgage payoff nets $220k. Can be negative if you'd owe more than the home is worth. Today's dollars -- inflated forward to the sale date; this home's mortgage (if any) is fully retired the same day."
-              >
-                <TextInput reg={register("sellNetProceeds", { required: true })} type="number" step="0.01" />
-              </Field>
-              <Field label="Proceeds Go To">
-                <SelectInput
-                  reg={register("sellProceedsAccountId")}
-                  options={[{ value: "", label: "Extra Savings (Default)" }, ...accountOptions]}
-                />
-              </Field>
-            </>
-          )}
-
-          {selectedType === "sell_home" && (
-            <>
-              {realEstateOptions.length === 0 ? (
-                <p className="text-sm text-dim">
-                  No homes to sell yet -- add one first via &ldquo;Add a Home You Already Own&rdquo; on the Accounts tab.
-                </p>
+              <div className="flex rounded-md border border-border p-0.5 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setValue("sellMode", "computed")}
+                  className={`flex-1 rounded px-3 py-1.5 font-medium ${sellMode === "computed" ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+                >
+                  Estimate for me
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setValue("sellMode", "fixed")}
+                  className={`flex-1 rounded px-3 py-1.5 font-medium ${sellMode === "fixed" ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+                >
+                  I know the net proceeds
+                </button>
+              </div>
+              {sellMode === "computed" ? (
+                <Field
+                  label="Selling Costs"
+                  hint="Agent commission + closing costs, as a share of the sale price -- 6 is typical. The engine credits the home's projected value at the sale date, minus these costs, minus whatever's left on its mortgage. This keeps the cash consistent with the equity the model itself projects."
+                >
+                  <PercentInput reg={register("sellingCostsPct")} placeholder="e.g. 6" />
+                </Field>
               ) : (
-                <Field label="Which Home">
-                  <SelectInput reg={register("sellRealEstateAccountId", { required: true })} options={realEstateOptions} />
+                <Field
+                  label="Net Proceeds from Sale"
+                  hint="What actually lands in your account: sale price, minus your agent's commission and closing costs, minus whatever's left on the mortgage. Can be negative if you'd owe more than the home is worth. Today's dollars -- inflated forward to the sale date. Careful: a fixed figure here can drift out of sync with the home value the model projects; 'Estimate for me' avoids that."
+                >
+                  <MoneyInput reg={register("sellNetProceeds", { required: sellMode === "fixed" })} placeholder="e.g. 220,000" />
                 </Field>
               )}
-              <Field
-                label="Net Proceeds from Sale"
-                hint="What actually lands in your account: sale price, minus your agent's commission and closing costs, minus whatever's left on the mortgage. E.g. a $500k sale, 6% selling costs ($30k), and a $250k mortgage payoff nets $220k. Can be negative if you'd owe more than the home is worth. Today's dollars -- inflated forward to the sale date; this home's mortgage (if any) is fully retired the same day."
-              >
-                <TextInput reg={register("sellNetProceeds", { required: true })} type="number" step="0.01" />
-              </Field>
               <Field label="Proceeds Go To">
                 <SelectInput
                   reg={register("sellProceedsAccountId")}
@@ -415,16 +449,16 @@ export function EventDrawer({
           {selectedType === "have_a_kid" && (
             <>
               <Field label="Monthly Childcare Expense" hint="Today's dollars -- inflates with the plan's inflation rate as each month's cost comes due.">
-                <TextInput reg={register("childcareMonthlyExpense", { required: true })} type="number" step="0.01" />
+                <MoneyInput reg={register("childcareMonthlyExpense", { required: true })} placeholder="e.g. 1,800" />
               </Field>
               <Field
-                label="Years of Child Expenses (optional)"
-                hint="An existing child? Enter remaining years of expenses. Leave blank to run through the end of the plan."
+                label="Years of Child Expenses"
+                hint="An existing child? Enter remaining years of expenses. Clear it to run through the end of the plan."
               >
                 <TextInput reg={register("childcareYears")} type="number" min="0" step="1" placeholder="e.g. 18" />
               </Field>
               <Field label="Upfront Child Costs (optional)" hint="One-time costs for birth, adoption, or setup -- today's dollars, inflated forward to when it occurs.">
-                <TextInput reg={register("additionalOneTimeCost")} type="number" step="0.01" />
+                <MoneyInput reg={register("additionalOneTimeCost")} placeholder="e.g. 5,000" />
               </Field>
               <Field label="Payment Account">
                 <SelectInput reg={register("kidPaymentAccountId", { required: true })} options={accountOptions} />
@@ -434,8 +468,8 @@ export function EventDrawer({
 
           {selectedType === "custom_transfer" && (
             <>
-              <Field label="Amount" hint="Per occurrence, today's dollars -- inflated forward from today to the start date.">
-                <TextInput reg={register("transferAmount", { required: true })} type="number" step="0.01" />
+              <Field label="Amount" hint="Per occurrence, today's dollars -- inflated forward from today to the start date. Sending money to a mortgage or loan pays it down.">
+                <MoneyInput reg={register("transferAmount", { required: true })} placeholder="e.g. 10,000" />
               </Field>
               <Field label="From Account">
                 <SelectInput reg={register("fromAccountId", { required: true })} options={accountOptions} />
@@ -455,8 +489,8 @@ export function EventDrawer({
               <Field label="End Date (optional)" hint="Leave blank to continue to the end of the plan.">
                 <TextInput reg={register("endDate")} type="date" />
               </Field>
-              <Field label="Annual Growth Rate (optional)" hint="Applies once the transfer starts.">
-                <TextInput reg={register("transferGrowthRatePct")} type="number" step="0.001" />
+              <Field label="Annual Growth Rate" hint={`Percent per year, applied once the transfer starts. Blank = matches inflation (${inflationPctLabel}%).`}>
+                <PercentInput reg={register("transferGrowthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
               </Field>
             </>
           )}

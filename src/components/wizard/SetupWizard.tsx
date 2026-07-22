@@ -4,7 +4,9 @@ import { useState } from "react";
 import type { FilingStatus, Person } from "@/domain";
 import { forecastSettingsSchema, personSchema } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
-import { Field, ErrorBanner, inputClass } from "@/components/ui/formFields";
+import { Field, ErrorBanner, PercentInput, MoneyInput, inputClass } from "@/components/ui/formFields";
+import { percentStrToFraction } from "@/lib/inputFormat";
+import { addMonths } from "@/engine/dateMath";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
 import { addExistingHome, EXISTING_HOME_DEFAULTS } from "@/lib/addExistingHome";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
@@ -59,6 +61,7 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
   const updatePerson = usePlanStore((s) => s.updatePerson);
   const addPerson = usePlanStore((s) => s.addPerson);
   const updateSettings = usePlanStore((s) => s.updateSettings);
+  const addEvent = usePlanStore((s) => s.addEvent);
 
   const [step, setStep] = useState<Step>("welcome");
   const [scenarioId, setScenarioId] = useState<string | null>(null);
@@ -76,16 +79,18 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
   const [newBirthDate, setNewBirthDate] = useState(defaultBirthDate());
 
   const [startDate, setStartDate] = useState(todayISO());
-  const [inflationRatePct, setInflationRatePct] = useState(0.03);
+  /** Percent string ("3" = 3%/yr). */
+  const [inflationRatePct, setInflationRatePct] = useState("3");
   const [filingStatus, setFilingStatus] = useState<FilingStatus>("single");
-  const [additionalFlatTaxRatePct, setAdditionalFlatTaxRatePct] = useState(0);
+  /** Percent string ("5" = 5%). */
+  const [additionalFlatTaxRatePct, setAdditionalFlatTaxRatePct] = useState("0");
 
   const [homeValue, setHomeValue] = useState("");
-  const [homeGrowthRatePct, setHomeGrowthRatePct] = useState("0.03");
+  const [homeGrowthRatePct, setHomeGrowthRatePct] = useState(EXISTING_HOME_DEFAULTS.homeGrowthRatePct);
   const [hasMortgage, setHasMortgage] = useState(false);
   const [mortgageBalance, setMortgageBalance] = useState("");
-  const [mortgageRate, setMortgageRate] = useState("0.065");
-  const [mortgageYearsLeft, setMortgageYearsLeft] = useState("25");
+  const [mortgageRate, setMortgageRate] = useState(EXISTING_HOME_DEFAULTS.mortgageRate);
+  const [mortgageYearsLeft, setMortgageYearsLeft] = useState(EXISTING_HOME_DEFAULTS.mortgageYearsLeft);
 
   const [accountDrawerOpen, setAccountDrawerOpen] = useState(false);
   const [incomeDrawerOpen, setIncomeDrawerOpen] = useState(false);
@@ -106,15 +111,15 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
     setNewName("");
     setNewBirthDate(defaultBirthDate());
     setStartDate(todayISO());
-    setInflationRatePct(0.03);
+    setInflationRatePct("3");
     setFilingStatus("single");
-    setAdditionalFlatTaxRatePct(0);
+    setAdditionalFlatTaxRatePct("0");
     setHomeValue("");
-    setHomeGrowthRatePct("0.03");
+    setHomeGrowthRatePct(EXISTING_HOME_DEFAULTS.homeGrowthRatePct);
     setHasMortgage(false);
     setMortgageBalance("");
-    setMortgageRate("0.065");
-    setMortgageYearsLeft("25");
+    setMortgageRate(EXISTING_HOME_DEFAULTS.mortgageRate);
+    setMortgageYearsLeft(EXISTING_HOME_DEFAULTS.mortgageYearsLeft);
   };
 
   const handleClose = () => {
@@ -178,6 +183,22 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
       setRetirementIndex(retirementIndex + 1);
       return;
     }
+    // Create the Retire event each person's answer implies -- a retirement
+    // age with no Retire event does nothing (only the event stops a salary,
+    // ends contributions, and drives the retirement KPIs).
+    const current = usePlanStore.getState().plan.scenarios.find((s) => s.id === scenarioId);
+    for (const p of current?.household.people ?? []) {
+      const alreadyHasEvent = current?.events.some((e) => e.type === "retire" && e.personId === p.id);
+      if (alreadyHasEvent) continue;
+      const retireEvent = {
+        type: "retire" as const,
+        name: `${p.name} retires`,
+        startDate: addMonths(p.birthDate, p.retirementAge * 12),
+        personId: p.id,
+        retirementAge: p.retirementAge,
+      };
+      addEvent(retireEvent as Parameters<typeof addEvent>[0]);
+    }
     setFilingStatus(people.length > 1 ? "marriedFilingJointly" : "single");
     setStep("assumptions");
   };
@@ -191,9 +212,9 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
       ...scenario.settings,
       startDate,
       horizonEndDate: `${horizonYear}-12-31`,
-      inflationRatePct: Number(inflationRatePct) || 0,
+      inflationRatePct: percentStrToFraction(inflationRatePct) ?? 0.03,
       filingStatus,
-      additionalFlatTaxRatePct: Number(additionalFlatTaxRatePct) || 0,
+      additionalFlatTaxRatePct: percentStrToFraction(additionalFlatTaxRatePct) ?? 0,
     };
     const result = forecastSettingsSchema.safeParse(candidate);
     if (!result.success) {
@@ -385,13 +406,11 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
               <Field label="Plan start date">
                 <input className={inputClass} type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
               </Field>
-              <Field label="Inflation rate (e.g. 0.03 for 3%)">
-                <input
-                  className={inputClass}
-                  type="number"
-                  step="0.001"
+              <Field label="Inflation rate (per year)" hint="Percent per year, e.g. 3 for 3%. Also the default growth for anything you leave blank later.">
+                <PercentInput
                   value={inflationRatePct}
-                  onChange={(e) => setInflationRatePct(Number(e.target.value))}
+                  placeholder="e.g. 3"
+                  onChange={(e) => setInflationRatePct(e.target.value)}
                 />
               </Field>
               <Field label="Filing status">
@@ -402,14 +421,12 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
               </Field>
               <Field
                 label="Extra flat tax rate (optional)"
-                hint="State or local income tax, as a flat add-on. Leave at 0 if unsure — you can add this later."
+                hint="State or local income tax, as a flat add-on in percent (e.g. 5 for 5%). Leave at 0 if unsure — you can add this later."
               >
-                <input
-                  className={inputClass}
-                  type="number"
-                  step="0.01"
+                <PercentInput
                   value={additionalFlatTaxRatePct}
-                  onChange={(e) => setAdditionalFlatTaxRatePct(Number(e.target.value))}
+                  placeholder="e.g. 5"
+                  onChange={(e) => setAdditionalFlatTaxRatePct(e.target.value)}
                 />
               </Field>
               <p className="text-xs text-dim">
@@ -465,14 +482,12 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
                 you own today.
               </p>
               <Field label="Current estimated value">
-                <input className={inputClass} type="number" step="0.01" value={homeValue} onChange={(e) => setHomeValue(e.target.value)} />
+                <MoneyInput value={homeValue} placeholder="e.g. 450,000" onChange={(e) => setHomeValue(e.target.value)} />
               </Field>
-              <Field label="Annual appreciation rate (e.g. 0.03 for 3%)">
-                <input
-                  className={inputClass}
-                  type="number"
-                  step="0.001"
+              <Field label="Annual appreciation rate" hint="Percent per year, e.g. 3 for 3%. Blank = matches inflation.">
+                <PercentInput
                   value={homeGrowthRatePct}
+                  placeholder="blank = inflation"
                   onChange={(e) => setHomeGrowthRatePct(e.target.value)}
                 />
               </Field>
@@ -483,20 +498,16 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
               {hasMortgage && (
                 <div className="flex flex-col gap-3 border-l border-border pl-3">
                   <Field label="Remaining balance">
-                    <input
-                      className={inputClass}
-                      type="number"
-                      step="0.01"
+                    <MoneyInput
                       value={mortgageBalance}
+                      placeholder="e.g. 320,000"
                       onChange={(e) => setMortgageBalance(e.target.value)}
                     />
                   </Field>
-                  <Field label="Interest rate (e.g. 0.065 for 6.5%)">
-                    <input
-                      className={inputClass}
-                      type="number"
-                      step="0.001"
+                  <Field label="Interest rate (per year)">
+                    <PercentInput
                       value={mortgageRate}
+                      placeholder="e.g. 6.5"
                       onChange={(e) => setMortgageRate(e.target.value)}
                     />
                   </Field>
