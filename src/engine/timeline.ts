@@ -21,9 +21,15 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
         break;
       }
       case "buy_home": {
-        const financing = event.mortgage
-          ? ` financed over ${Math.round(event.mortgage.termMonths / 12)} yrs at ${(
-              event.mortgage.annualInterestRatePct * 100
+        // Rates/mortgage terms now live on the linked real_estate account
+        // (and its own linked mortgage account) -- see BuyHomeEvent.realEstateAccountId.
+        const home = scenario.accounts.find((a) => a.id === event.realEstateAccountId);
+        const mortgage = home?.linkedLiabilityId
+          ? scenario.accounts.find((a) => a.id === home.linkedLiabilityId)
+          : undefined;
+        const financing = mortgage?.loanTerms
+          ? ` financed over ${Math.round(mortgage.loanTerms.termMonths / 12)} yrs at ${(
+              mortgage.loanTerms.annualInterestRatePct * 100
             ).toFixed(2)}%`
           : " paid in cash";
         description = `Buy a home for $${event.purchasePrice.toLocaleString()},${financing}`;

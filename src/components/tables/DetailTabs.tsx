@@ -130,6 +130,7 @@ export function DetailTabs({
           editableAccountIds={viewEditableAccountIds}
           people={viewPeople}
           dollarMode={dollarMode}
+          events={viewEvents}
         />
       )}
       {active === "Timeline" && (

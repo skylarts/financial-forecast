@@ -15,6 +15,7 @@ import { planSchema } from "@/domain";
 import { mockScenario } from "@/lib/mockScenario";
 import { makeBlankScenario } from "@/lib/blankScenario";
 import { looksLikeV2Plan, migrateV2PlanToV3 } from "@/lib/migrateV2Plan";
+import { migrateLegacyBuyHomeEvents } from "@/lib/migrateLegacyBuyHome";
 
 const defaultPlan: Plan = {
   id: "local-plan",
@@ -220,7 +221,8 @@ export const usePlanStore = create<PlanState>()(
 
       importPlan: (raw) => {
         const migrated = looksLikeV2Plan(raw);
-        const candidate = migrated ? migrateV2PlanToV3(raw) : raw;
+        const v3 = migrated ? migrateV2PlanToV3(raw) : raw;
+        const candidate = migrateLegacyBuyHomeEvents(v3);
         const result = planSchema.safeParse(candidate);
         if (!result.success) {
           return { ok: false, error: result.error.issues[0]?.message ?? "That file isn't a valid Forecast backup." };
@@ -254,7 +256,14 @@ export const usePlanStore = create<PlanState>()(
           scenario.events.some((e) => {
             switch (e.type) {
               case "buy_home":
+                // Deliberately NOT checking e.realEstateAccountId here -- that
+                // account is owned by this same event (see removeBoughtHome
+                // in src/lib/buyHome.ts, which removes the account, then the
+                // event, in that order); guarding it would deadlock its own
+                // cascade delete.
                 return e.downPaymentFromAccountId === id;
+              case "sell_home":
+                return e.realEstateAccountId === id || e.proceedsAccountId === id;
               case "have_a_kid":
                 return e.paymentAccountId === id;
               case "custom_transfer":
@@ -323,7 +332,13 @@ export const usePlanStore = create<PlanState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ plan: state.plan }),
       merge: (persisted, current) => {
-        const candidate = (persisted as { plan?: unknown })?.plan;
+        const raw = (persisted as { plan?: unknown })?.plan;
+        // A plan already sitting in localStorage from before the buy_home ->
+        // real-account unification predates the current schema (which now
+        // requires BuyHomeEvent.realEstateAccountId) -- repair it here, same
+        // as importPlan does for an uploaded backup, so an existing real plan
+        // doesn't silently reset to the sample scenario on next load.
+        const candidate = raw === undefined ? raw : migrateLegacyBuyHomeEvents(raw);
         const result = planSchema.safeParse(candidate);
         if (!result.success) {
           console.warn("Persisted plan failed validation; starting fresh.", result.error);

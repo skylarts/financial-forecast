@@ -133,6 +133,12 @@ export const accountObjectSchema = z
     taxTreatment: taxTreatmentSchema.default("n/a"),
     /** Only meaningful when class='tax_deferred' and ownerId is set. */
     subjectToRMD: z.boolean().default(false),
+    /** This account doesn't exist/count before this date -- startingBalance is
+     *  its value as of this date, not the plan start. Omitted = plan start
+     *  (every account's implicit behavior before this field existed). Lets a
+     *  future home purchase (see BuyHomeEvent) be a real, permanent Account
+     *  from the moment it's bought, not just an on-paper declaration today. */
+    startDate: isoDateSchema.optional(),
     /** Present only for credit_card | loan | mortgage. */
     loanTerms: loanTermsSchema.optional(),
     /** Present only for real_estate; overrides growthRatePct if set. */

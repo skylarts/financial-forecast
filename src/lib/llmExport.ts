@@ -296,16 +296,22 @@ export function buildLlmExport(scenario: Scenario): string {
           }
           break;
         case "buy_home": {
-          const financing = ev.mortgage
-            ? `Down payment ${formatMoney(ev.downPaymentAmount)} from ${accountName(ev.downPaymentFromAccountId)}. Mortgage: ${fmtPct(ev.mortgage.annualInterestRatePct)} over ${ev.mortgage.termMonths} months${ev.mortgage.extraPrincipalMonthly ? `, plus ${formatMoney(ev.mortgage.extraPrincipalMonthly)}/mo extra principal` : ""}.`
+          // Rates/mortgage terms now live on the linked real_estate account
+          // (and its own linked mortgage account) -- see BuyHomeEvent.realEstateAccountId.
+          const home = scenario.accounts.find((a) => a.id === ev.realEstateAccountId);
+          const mortgage = home?.linkedLiabilityId
+            ? scenario.accounts.find((a) => a.id === home.linkedLiabilityId)
+            : undefined;
+          const financing = mortgage?.loanTerms
+            ? `Down payment ${formatMoney(ev.downPaymentAmount)} from ${accountName(ev.downPaymentFromAccountId)}. Mortgage: ${fmtPct(mortgage.loanTerms.annualInterestRatePct)} over ${mortgage.loanTerms.termMonths} months${mortgage.loanTerms.extraPrincipalMonthly ? `, plus ${formatMoney(mortgage.loanTerms.extraPrincipalMonthly)}/mo extra principal` : ""}.`
             : `Paid in cash from ${accountName(ev.downPaymentFromAccountId)} — no mortgage created.`;
           const ownership = [
-            ev.propertyTaxRatePct ? `property tax ${fmtPct(ev.propertyTaxRatePct)}/yr of value` : null,
-            ev.homeInsuranceRatePct ? `insurance ${fmtPct(ev.homeInsuranceRatePct)}/yr of value` : null,
-            ev.maintenanceRatePct ? `maintenance ${fmtPct(ev.maintenanceRatePct)}/yr of value` : null,
+            home?.propertyTaxRatePct ? `property tax ${fmtPct(home.propertyTaxRatePct)}/yr of value` : null,
+            home?.homeInsuranceRatePct ? `insurance ${fmtPct(home.homeInsuranceRatePct)}/yr of value` : null,
+            home?.maintenanceRatePct ? `maintenance ${fmtPct(home.maintenanceRatePct)}/yr of value` : null,
           ].filter(Boolean);
           lines.push(
-            `  - Purchase price ${formatMoney(ev.purchasePrice)}, property grows ${fmtPct(ev.propertyGrowthRatePct)}/yr. ${financing}${ownership.length ? ` Ongoing: ${ownership.join(", ")}.` : ""}${ev.replaceHousingExpenses ? " Replaces any existing 'Housing' category expense as of this purchase date." : ""}`
+            `  - Purchase price ${formatMoney(ev.purchasePrice)}, property grows ${fmtPct(home?.propertyGrowthRatePct ?? 0)}/yr. ${financing}${ownership.length ? ` Ongoing: ${ownership.join(", ")}.` : ""}${ev.replaceHousingExpenses ? " Replaces any existing 'Housing' category expense as of this purchase date." : ""}`
           );
           break;
         }

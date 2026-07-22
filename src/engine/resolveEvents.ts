@@ -141,7 +141,11 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
 
   const accounts: EngineAccount[] = scenario.accounts.map((a) => ({
     ...a,
-    effectiveStartDate: settings.startDate,
+    // a.startDate is how a future home purchase (see BuyHomeEvent) stays
+    // frozen out of every balance/growth/rollforward calculation until its
+    // closing date -- omitted (every other account) means "exists from the
+    // plan's own start," unchanged from before this field existed.
+    effectiveStartDate: a.startDate ?? settings.startDate,
     growthRateOverrides: growthRateOverrides.get(a.id),
     soldDate: soldAccountDates.get(a.id),
   }));
@@ -184,17 +188,20 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     });
   }
 
-  // A real_estate account entered directly the same way prices its own
-  // property tax, insurance, and maintenance off its starting balance,
-  // growing from the plan start at its own propertyGrowthRatePct (falling
-  // back to growthRatePct if that's unset) -- and stops the same day its
-  // mortgage's payments do, for the same reason (a blanket
-  // replaceHousingExpenses purchase, or this specific home being sold).
+  // Every real_estate account -- whether entered directly ("Add a Home You
+  // Already Own") or created by a buy_home event, both are ordinary Accounts
+  // now -- prices its own property tax, insurance, and maintenance off its
+  // starting balance, growing from its own startDate (falling back to the
+  // plan start, same as effectiveStartDate above) at its own
+  // propertyGrowthRatePct (falling back to growthRatePct if that's unset).
+  // Stops the same day its mortgage's payments do, for the same reason (a
+  // blanket replaceHousingExpenses purchase, or this specific home being sold).
   for (const account of scenario.accounts) {
     if (excludedAccountIds.has(account.id)) continue;
     if (account.class !== "real_estate") continue;
     const soldDate = soldAccountDates.get(account.id);
     const costsEndDate = earliestDate(earliestHousingReplaceCutoff, soldDate ? addDays(soldDate, -1) : null);
+    const costsStartDate = account.startDate ?? settings.startDate;
     pushOwnershipCosts(pushPosting, horizonEnd, {
       rates: [
         { rate: account.propertyTaxRatePct, label: "Property tax", key: "property_tax" },
@@ -203,8 +210,8 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       ],
       baseValue: account.startingBalance,
       growthRate: account.propertyGrowthRatePct ?? account.growthRatePct,
-      referenceDate: settings.startDate,
-      startDate: settings.startDate,
+      referenceDate: costsStartDate,
+      startDate: costsStartDate,
       endDate: costsEndDate,
       accountId: primarySpendingAccountId,
       sourceIdPrefix: account.id,
@@ -398,20 +405,28 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // --- Remaining event types: direct postings + dynamically-created accounts ---
   for (const event of events) {
     if (event.type === "buy_home") {
+      // The real_estate account (and, if financed, its linked mortgage) this
+      // purchase created is a real, permanent Account by now -- see
+      // src/lib/buyHome.ts, which builds it at save time -- so it already
+      // flows through the ordinary real_estate/mortgage account loops above
+      // (ownership costs, amortization) via its own startDate. All that's
+      // left here is the down-payment transaction itself.
+      //
       // Purchase price and down payment are entered in today's dollars;
       // inflate both by the same factor so the loan-to-value ratio the user
-      // configured is preserved at the future purchase date.
+      // configured is preserved at the purchase date -- same inflation factor
+      // buyHome.ts used to compute the account's own startingBalance.
       const inflationFactor = growthAdjustedAmount(
         1,
         elapsedYears(settings.startDate, event.startDate),
         settings.inflationRatePct
       );
-      const purchasePrice = event.purchasePrice * inflationFactor;
       // In a cash purchase the UI stores downPaymentAmount === purchasePrice, so
       // this single upfront posting funds the whole home; when financed it's the
-      // real down payment and the mortgage below covers the rest. Either way it's
-      // an asset-for-asset swap (cash -> home equity), not consumption.
+      // real down payment and the mortgage covers the rest. Either way it's an
+      // asset-for-asset swap (cash -> home equity), not consumption.
       const downPaymentAmount = event.downPaymentAmount * inflationFactor;
+      const realEstateAccount = scenario.accounts.find((a) => a.id === event.realEstateAccountId);
 
       pushPosting({
         date: event.startDate,
@@ -419,93 +434,8 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         accountId: event.downPaymentFromAccountId,
         amount: -downPaymentAmount,
         category: "transfer",
-        label: event.mortgage ? `Down payment: ${event.name}` : `Home purchase: ${event.name}`,
+        label: realEstateAccount?.linkedLiabilityId ? `Down payment: ${event.name}` : `Home purchase: ${event.name}`,
         sourceId: `${event.id}:downpayment`,
-      });
-
-      // Derived from the event's own (stable) id, not a fresh nanoid() --
-      // resolveEvents reruns on every edit, and a random id here would give
-      // this account a new identity every render, breaking anything keyed by
-      // account id across recomputes (e.g. the chart's per-account
-      // show/hide toggle, which would silently "forget" these were hidden).
-      const realEstateId = `${event.id}:real_estate`;
-      let linkedLiabilityId: Id | undefined;
-
-      if (event.mortgage) {
-        const mortgageId = `${event.id}:mortgage`;
-        const principal = purchasePrice - downPaymentAmount;
-        accounts.push({
-          id: mortgageId,
-          name: `${event.name} (Mortgage)`,
-          class: "mortgage",
-          category: "liability",
-          ownerId: null,
-          startingBalance: principal,
-          growthRatePct: 0,
-          taxTreatment: "n/a",
-          subjectToRMD: false,
-          loanTerms: {
-            originalPrincipal: principal,
-            originationDate: event.startDate,
-            annualInterestRatePct: event.mortgage.annualInterestRatePct,
-            termMonths: event.mortgage.termMonths,
-            extraPrincipalMonthly: event.mortgage.extraPrincipalMonthly,
-            linkedAssetId: realEstateId,
-          },
-          effectiveStartDate: event.startDate,
-        });
-        mortgages.push({
-          accountId: mortgageId,
-          loanTerms: {
-            originalPrincipal: principal,
-            originationDate: event.startDate,
-            annualInterestRatePct: event.mortgage.annualInterestRatePct,
-            termMonths: event.mortgage.termMonths,
-            extraPrincipalMonthly: event.mortgage.extraPrincipalMonthly,
-          },
-          payingAccountId: primarySpendingAccountId,
-        });
-        linkedLiabilityId = mortgageId;
-      }
-
-      accounts.push({
-        id: realEstateId,
-        name: event.name,
-        class: "real_estate",
-        category: "asset",
-        ownerId: null,
-        startingBalance: purchasePrice,
-        growthRatePct: event.propertyGrowthRatePct,
-        propertyGrowthRatePct: event.propertyGrowthRatePct,
-        taxTreatment: "n/a",
-        subjectToRMD: false,
-        linkedLiabilityId,
-        effectiveStartDate: event.startDate,
-      });
-
-      // Property tax, home insurance, and maintenance -- stops the day before
-      // a blanket replaceHousingExpenses purchase retires it, or this specific
-      // home is sold via a sell_home event naming realEstateId (same
-      // earliest-wins convention as the directly-entered real_estate loop above).
-      const ownershipCostsSoldDate = soldAccountDates.get(realEstateId);
-      const ownershipCostsEndDate = earliestDate(
-        earliestHousingReplaceCutoff,
-        ownershipCostsSoldDate ? addDays(ownershipCostsSoldDate, -1) : null
-      );
-      pushOwnershipCosts(pushPosting, horizonEnd, {
-        rates: [
-          { rate: event.propertyTaxRatePct, label: "Property tax", key: "property_tax" },
-          { rate: event.homeInsuranceRatePct, label: "Home insurance", key: "home_insurance" },
-          { rate: event.maintenanceRatePct, label: "Maintenance", key: "maintenance" },
-        ],
-        baseValue: purchasePrice,
-        growthRate: event.propertyGrowthRatePct,
-        referenceDate: event.startDate,
-        startDate: event.startDate,
-        endDate: ownershipCostsEndDate,
-        accountId: primarySpendingAccountId ?? event.downPaymentFromAccountId,
-        sourceIdPrefix: event.id,
-        nameSuffix: `: ${event.name}`,
       });
     } else if (event.type === "sell_home") {
       // Net proceeds are entered directly (not sale price minus costs

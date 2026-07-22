@@ -5,17 +5,16 @@ import { useForm } from "react-hook-form";
 import type { Account, EventType, Person, RecurrenceFrequency, ScenarioEvent, TemporaryAdjustment } from "@/domain";
 import {
   retireEventSchema,
-  buyHomeEventSchema,
   sellHomeEventSchema,
   haveAKidEventSchema,
   customTransferEventSchema,
 } from "@/domain";
 import { addMonths, elapsedYears } from "@/engine/dateMath";
-import { computeMonthlyPayment } from "@/engine/amortization";
 import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
+import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 
 // income_change / expense_change and windfall are not separate event types
 // here -- a temporary raise/pause/cut lives directly on the income or
@@ -52,18 +51,6 @@ interface FormValues {
   retirementExpenseGrowthRatePct: string;
   retirementExpensePaymentAccountId: string;
   retirementExpenseEndDate: string;
-  purchasePrice: string;
-  downPaymentAmount: string;
-  downPaymentFromAccountId: string;
-  propertyGrowthRatePct: string;
-  financed: boolean;
-  mortgageRate: string;
-  mortgageTermYears: string;
-  mortgageExtraPrincipal: string;
-  propertyTaxRatePct: string;
-  homeInsuranceRatePct: string;
-  maintenanceRatePct: string;
-  replaceHousingExpenses: boolean;
   sellRealEstateAccountId: string;
   sellNetProceeds: string;
   sellProceedsAccountId: string;
@@ -91,18 +78,6 @@ const DEFAULTS: FormValues = {
   retirementExpenseGrowthRatePct: "0",
   retirementExpensePaymentAccountId: "",
   retirementExpenseEndDate: "",
-  purchasePrice: "",
-  downPaymentAmount: "",
-  downPaymentFromAccountId: "",
-  propertyGrowthRatePct: "0.03",
-  financed: true,
-  mortgageRate: "0.06",
-  mortgageTermYears: "30",
-  mortgageExtraPrincipal: "",
-  propertyTaxRatePct: "0.01",
-  homeInsuranceRatePct: "0.005",
-  maintenanceRatePct: "0.01",
-  replaceHousingExpenses: false,
   sellRealEstateAccountId: "",
   sellNetProceeds: "",
   sellProceedsAccountId: "",
@@ -139,21 +114,9 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         retirementExpenseEndDate: event.retirementExpense?.endDate ?? "",
       };
     case "buy_home":
-      return {
-        ...base,
-        purchasePrice: event.purchasePrice.toString(),
-        downPaymentAmount: event.downPaymentAmount.toString(),
-        downPaymentFromAccountId: event.downPaymentFromAccountId,
-        propertyGrowthRatePct: event.propertyGrowthRatePct.toString(),
-        financed: event.mortgage !== null,
-        mortgageRate: event.mortgage?.annualInterestRatePct.toString() ?? "0.06",
-        mortgageTermYears: event.mortgage ? Math.round(event.mortgage.termMonths / 12).toString() : "30",
-        mortgageExtraPrincipal: event.mortgage?.extraPrincipalMonthly?.toString() ?? "",
-        propertyTaxRatePct: event.propertyTaxRatePct?.toString() ?? "",
-        homeInsuranceRatePct: event.homeInsuranceRatePct?.toString() ?? "",
-        maintenanceRatePct: event.maintenanceRatePct?.toString() ?? "",
-        replaceHousingExpenses: event.replaceHousingExpenses ?? false,
-      };
+      // Handled entirely by HomeDrawer (see the early return in the component
+      // below) -- never actually reaches this form.
+      return base;
     case "sell_home":
       return {
         ...base,
@@ -206,7 +169,7 @@ export function EventDrawer({
   const [retirementExpenseAdjustments, setRetirementExpenseAdjustments] = useState<TemporaryAdjustment[]>(
     event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []
   );
-  const { register, handleSubmit, watch, reset, setValue } = useForm<FormValues>({
+  const { register, handleSubmit, watch, reset } = useForm<FormValues>({
     defaultValues: event ? eventToFormValues(event) : DEFAULTS,
   });
 
@@ -219,29 +182,21 @@ export function EventDrawer({
 
   const accountOptions = accounts.map((a) => ({ value: a.id, label: a.name }));
   const personOptions = people.map((p) => ({ value: p.id, label: p.name }));
-  // A home you already own (Accounts tab / "add a home you already own"),
-  // not one synthesized by an earlier buy_home event -- see resolveEvents.ts.
+  // Any real_estate account works here now -- whether entered directly (the
+  // Accounts tab / "add a home you already own") or created by an earlier
+  // buy_home event, both are real Accounts. See resolveEvents.ts.
   const realEstateOptions = accounts.filter((a) => a.class === "real_estate").map((a) => ({ value: a.id, label: a.name }));
-  const financed = watch("financed");
   const hasRetirementExpense = watch("hasRetirementExpense");
 
-  // Live monthly-payment breakdown for the Buy-a-home form. Recomputed from the
-  // current field values so the user sees P&I, tax, and insurance update as they
-  // type -- purely a display aid; the engine recomputes independently on save.
-  const homePrice = Number(watch("purchasePrice")) || 0;
-  const homeDown = financed ? Number(watch("downPaymentAmount")) || 0 : homePrice;
-  const homePrincipal = Math.max(0, homePrice - homeDown);
-  const homeRate = Number(watch("mortgageRate")) || 0;
-  const homeTermMonths = (Number(watch("mortgageTermYears")) || 0) * 12;
-  const homeExtra = financed ? Number(watch("mortgageExtraPrincipal")) || 0 : 0;
-  const homePI = financed && homePrincipal > 0 && homeTermMonths > 0
-    ? computeMonthlyPayment(homePrincipal, homeRate, homeTermMonths)
-    : 0;
-  const homeTaxMonthly = (homePrice * (Number(watch("propertyTaxRatePct")) || 0)) / 12;
-  const homeInsuranceMonthly = (homePrice * (Number(watch("homeInsuranceRatePct")) || 0)) / 12;
-  const homeMaintenanceMonthly = (homePrice * (Number(watch("maintenanceRatePct")) || 0)) / 12;
-  const homeMonthlyTotal = homePI + homeExtra + homeTaxMonthly + homeInsuranceMonthly + homeMaintenanceMonthly;
-  const money0 = (n: number) => `$${Math.round(n).toLocaleString()}`;
+  // buy_home is handled entirely by HomeDrawer (see the early return below),
+  // so it never reaches this form.
+  if (selectedType === "buy_home") {
+    const buyEvent = event?.type === "buy_home" ? event : undefined;
+    const linkedAccount = buyEvent ? accounts.find((a) => a.id === buyEvent.realEstateAccountId) : undefined;
+    return (
+      <HomeDrawer open={open} onClose={onClose} account={linkedAccount} event={buyEvent} accounts={accounts} initialMode="buy" />
+    );
+  }
 
   const onSubmit = (v: FormValues) => {
     if (!selectedType) return;
@@ -272,32 +227,6 @@ export function EventDrawer({
             : null,
         };
         schema = retireEventSchema.omit({ id: true });
-        break;
-      case "buy_home":
-        candidate = {
-          ...base,
-          type: "buy_home",
-          purchasePrice: Number(v.purchasePrice),
-          // Cash mode has no separate down payment -- store the full price so the
-          // single upfront posting funds the whole home (the engine treats the
-          // down payment as the money that leaves your account up front).
-          downPaymentAmount: v.financed ? Number(v.downPaymentAmount) : Number(v.purchasePrice),
-          downPaymentFromAccountId: v.downPaymentFromAccountId,
-          propertyGrowthRatePct: Number(v.propertyGrowthRatePct),
-          mortgage: v.financed
-            ? {
-                annualInterestRatePct: Number(v.mortgageRate),
-                termMonths: Number(v.mortgageTermYears) * 12,
-                extraPrincipalMonthly:
-                  v.mortgageExtraPrincipal.trim() !== "" ? Number(v.mortgageExtraPrincipal) : undefined,
-              }
-            : null,
-          propertyTaxRatePct: v.propertyTaxRatePct.trim() !== "" ? Number(v.propertyTaxRatePct) : undefined,
-          homeInsuranceRatePct: v.homeInsuranceRatePct.trim() !== "" ? Number(v.homeInsuranceRatePct) : undefined,
-          maintenanceRatePct: v.maintenanceRatePct.trim() !== "" ? Number(v.maintenanceRatePct) : undefined,
-          replaceHousingExpenses: v.replaceHousingExpenses,
-        };
-        schema = buyHomeEventSchema.omit({ id: true });
         break;
       case "sell_home":
         candidate = {
@@ -409,124 +338,6 @@ export function EventDrawer({
                     onChange={setRetirementExpenseAdjustments}
                     helpText="A temporary boost or cut to this expense (e.g. a few extra years of travel budget)."
                   />
-                </div>
-              )}
-            </>
-          )}
-
-          {selectedType === "buy_home" && (
-            <>
-              <Field label="Purchase Price" hint="Today's dollars -- inflated forward to the purchase date.">
-                <TextInput reg={register("purchasePrice", { required: true })} type="number" step="0.01" />
-              </Field>
-
-              {/* Finance / Pay cash segmented toggle. Cash mode funds the whole
-                  price from one account, so the down-payment inputs disappear. */}
-              <div className="flex rounded-md border border-border p-0.5 text-sm">
-                <button
-                  type="button"
-                  onClick={() => setValue("financed", true)}
-                  className={`flex-1 rounded px-3 py-1.5 font-medium ${
-                    financed ? "bg-accent text-white" : "text-dim hover:text-foreground"
-                  }`}
-                >
-                  Finance
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setValue("financed", false)}
-                  className={`flex-1 rounded px-3 py-1.5 font-medium ${
-                    !financed ? "bg-accent text-white" : "text-dim hover:text-foreground"
-                  }`}
-                >
-                  Pay cash
-                </button>
-              </div>
-
-              {financed && (
-                <>
-                  <Field label="Down Payment" hint="Today's dollars -- inflated the same as the purchase price, so it stays the same share.">
-                    <TextInput reg={register("downPaymentAmount", { required: true })} type="number" step="0.01" />
-                  </Field>
-                  <Field label="Mortgage Rate">
-                    <TextInput reg={register("mortgageRate")} type="number" step="0.001" />
-                  </Field>
-                  <Field label="Term (years)">
-                    <TextInput reg={register("mortgageTermYears")} type="number" step="1" />
-                  </Field>
-                  <Field
-                    label="Extra Principal / month (optional)"
-                    hint="Paid on top of the scheduled payment -- pays the loan off early."
-                  >
-                    <TextInput reg={register("mortgageExtraPrincipal")} type="number" step="0.01" placeholder="e.g. 200" />
-                  </Field>
-                </>
-              )}
-
-              <Field label={financed ? "Pay Down Payment From" : "Pay From"}>
-                <SelectInput reg={register("downPaymentFromAccountId", { required: true })} options={accountOptions} />
-              </Field>
-              <Field label="Annual Property Growth Rate">
-                <TextInput reg={register("propertyGrowthRatePct")} type="number" step="0.001" />
-              </Field>
-              <Field label="Property Tax Rate (per year, optional)" hint="Share of the home's value per year, e.g. 0.01 = 1%. Grows with the home.">
-                <TextInput reg={register("propertyTaxRatePct")} type="number" step="0.001" placeholder="e.g. 0.01" />
-              </Field>
-              <Field label="Home Insurance Rate (per year, optional)" hint="Share of the home's value per year, e.g. 0.005 = 0.5%. Grows with the home.">
-                <TextInput reg={register("homeInsuranceRatePct")} type="number" step="0.001" placeholder="e.g. 0.005" />
-              </Field>
-              <Field label="Maintenance Rate (per year, optional)" hint="Share of the home's value per year -- the classic '1% rule' upkeep estimate. Grows with the home.">
-                <TextInput reg={register("maintenanceRatePct")} type="number" step="0.001" placeholder="e.g. 0.01" />
-              </Field>
-              <CheckboxInput
-                reg={register("replaceHousingExpenses")}
-                label="Replace existing housing expenses"
-              />
-              {watch("replaceHousingExpenses") && (
-                <p className="-mt-2 pl-6 text-xs text-dim">
-                  Any expense categorized as "Housing" (e.g. rent) stops the day before this purchase closes.
-                </p>
-              )}
-
-              {homePrice > 0 && (
-                <div className="rounded-md border border-border p-3 text-sm">
-                  <div className="mb-2 flex items-baseline justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-dim">Est. monthly cost</span>
-                    <span className="text-base font-semibold">{money0(homeMonthlyTotal)}</span>
-                  </div>
-                  <div className="flex flex-col gap-1 text-xs text-dim">
-                    {financed && (
-                      <div className="flex justify-between">
-                        <span>Principal &amp; interest</span>
-                        <span>{money0(homePI)}</span>
-                      </div>
-                    )}
-                    {homeExtra > 0 && (
-                      <div className="flex justify-between">
-                        <span>Extra principal</span>
-                        <span>{money0(homeExtra)}</span>
-                      </div>
-                    )}
-                    {homeTaxMonthly > 0 && (
-                      <div className="flex justify-between">
-                        <span>Property tax</span>
-                        <span>{money0(homeTaxMonthly)}</span>
-                      </div>
-                    )}
-                    {homeInsuranceMonthly > 0 && (
-                      <div className="flex justify-between">
-                        <span>Home insurance</span>
-                        <span>{money0(homeInsuranceMonthly)}</span>
-                      </div>
-                    )}
-                    {homeMaintenanceMonthly > 0 && (
-                      <div className="flex justify-between">
-                        <span>Maintenance</span>
-                        <span>{money0(homeMaintenanceMonthly)}</span>
-                      </div>
-                    )}
-                  </div>
-                  <p className="mt-2 text-[11px] text-dim">Today's dollars. Tax, insurance &amp; maintenance grow with the home's value.</p>
                 </div>
               )}
             </>

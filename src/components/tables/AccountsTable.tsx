@@ -1,11 +1,11 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import type { Account, Id, Person, YearSnapshot } from "@/domain";
+import type { Account, BuyHomeEvent, Id, Person, ScenarioEvent, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ASSET_CLASS_GROUPS, LIABILITY_CLASS_GROUPS, type AccountClassGroup } from "@/lib/labels";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
-import { ExistingHomeDrawer } from "@/components/accounts/ExistingHomeDrawer";
+import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 
 /** Deflate a nominal dollar amount to today's dollars when in real mode. */
 function deflate(value: number, year: YearSnapshot, mode: DollarMode): number {
@@ -193,16 +193,36 @@ export function AccountsTable({
   editableAccountIds,
   people,
   dollarMode,
+  events,
 }: {
   accounts: Account[];
   years: YearSnapshot[];
   editableAccountIds: Set<Id>;
   people: Person[];
   dollarMode: DollarMode;
+  events: ScenarioEvent[];
 }) {
   const [drawerAccount, setDrawerAccount] = useState<Account | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [homeDrawerOpen, setHomeDrawerOpen] = useState(false);
+  const [homeDrawer, setHomeDrawer] = useState<{ open: boolean; account?: Account }>({ open: false });
+
+  /** A real_estate account edited via the pencil: HomeDrawer itself, along
+   *  with its linked buy_home event (if this home was bought rather than
+   *  entered as already-owned) so it opens in the right mode. A mortgage
+   *  account routes to the same place via its linked real_estate asset --
+   *  a mortgage's own terms are edited as part of its home, not standalone. */
+  const openHomeDrawer = (account: Account) => {
+    const homeAccount =
+      account.class === "real_estate"
+        ? account
+        : accounts.find((a) => a.class === "real_estate" && a.linkedLiabilityId === account.id);
+    if (homeAccount) setHomeDrawer({ open: true, account: homeAccount });
+  };
+  const homeDrawerEvent: BuyHomeEvent | undefined = homeDrawer.account
+    ? (events.find((e) => e.type === "buy_home" && e.realEstateAccountId === homeDrawer.account!.id) as
+        | BuyHomeEvent
+        | undefined)
+    : undefined;
 
   if (years.length === 0) {
     return (
@@ -219,7 +239,7 @@ export function AccountsTable({
       <div className="flex justify-end gap-2">
         <button
           type="button"
-          onClick={() => setHomeDrawerOpen(true)}
+          onClick={() => setHomeDrawer({ open: true, account: undefined })}
           className="rounded-md border border-border px-3 py-1.5 text-sm font-semibold text-foreground hover:border-accent"
         >
           + Add a Home You Already Own
@@ -264,8 +284,12 @@ export function AccountsTable({
               groups={ASSET_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
-                setDrawerAccount(a);
-                setDrawerOpen(true);
+                if (a.class === "real_estate") {
+                  openHomeDrawer(a);
+                } else {
+                  setDrawerAccount(a);
+                  setDrawerOpen(true);
+                }
               }}
               mode={dollarMode}
             />
@@ -276,8 +300,12 @@ export function AccountsTable({
               groups={LIABILITY_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
-                setDrawerAccount(a);
-                setDrawerOpen(true);
+                if (a.class === "mortgage") {
+                  openHomeDrawer(a);
+                } else {
+                  setDrawerAccount(a);
+                  setDrawerOpen(true);
+                }
               }}
               mode={dollarMode}
             />
@@ -285,12 +313,19 @@ export function AccountsTable({
         </table>
         </div>
         <p className="border-t border-border px-2 py-2 text-xs text-dim">
-          Click an account to see its year-by-year rollforward. Accounts created by an event (e.g. a
-          home purchase) are edited via that event, not here.
+          Click an account to see its year-by-year rollforward. A home&rsquo;s mortgage is edited as part of
+          that home, not standalone.
         </p>
       </div>
       <AccountDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} account={drawerAccount} people={people} />
-      <ExistingHomeDrawer open={homeDrawerOpen} onClose={() => setHomeDrawerOpen(false)} />
+      <HomeDrawer
+        open={homeDrawer.open}
+        onClose={() => setHomeDrawer({ open: false })}
+        account={homeDrawer.account}
+        event={homeDrawerEvent}
+        accounts={accounts}
+        initialMode="existing"
+      />
     </div>
   );
 }

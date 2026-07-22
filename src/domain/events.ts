@@ -45,26 +45,22 @@ export type RetireEvent = z.infer<typeof retireEventSchema>;
 export const buyHomeEventSchema = z.object({
   ...baseEventFields,
   type: z.literal("buy_home"),
+  /** Today's dollars -- inflated forward to startDate (the closing date) at
+   *  save time to seed the linked account's startingBalance (a snapshot: if
+   *  the plan's inflation assumption changes later, re-save this event to
+   *  refresh it). See src/lib/buyHome.ts. */
   purchasePrice: z.number().positive(),
   downPaymentAmount: z.number().nonnegative(),
   /** Financed: funds the down payment. Cash: funds the whole purchase price. */
   downPaymentFromAccountId: idSchema,
-  propertyGrowthRatePct: z.number(),
-  /** null = paid in cash, no liability created. */
-  mortgage: z
-    .object({
-      annualInterestRatePct: z.number().min(0).max(1),
-      termMonths: z.number().int().positive(),
-      /** Extra principal paid each month on top of the scheduled payment. */
-      extraPrincipalMonthly: z.number().nonnegative().optional(),
-    })
-    .nullable(),
-  /** Annual property tax as a fraction of the home's (growing) value, e.g. 0.01 = 1%/yr. */
-  propertyTaxRatePct: z.number().nonnegative().optional(),
-  /** Annual home insurance as a fraction of the home's (growing) value, e.g. 0.005 = 0.5%/yr. */
-  homeInsuranceRatePct: z.number().nonnegative().optional(),
-  /** Annual maintenance as a fraction of the home's (growing) value, e.g. 0.01 = 1%/yr -- the classic "1% rule" upkeep estimate. */
-  maintenanceRatePct: z.number().nonnegative().optional(),
+  /** The real_estate account this purchase created (and, if financed, its
+   *  linked mortgage via that account's own linkedLiabilityId) -- a real,
+   *  permanent Account exactly like one added via "Add a Home You Already
+   *  Own", editable on the Account tab and sellable via a later sell_home
+   *  event. This event itself only records the purchase transaction; ongoing
+   *  appreciation/tax/insurance/maintenance rates and mortgage terms live on
+   *  the account from here on. See src/lib/buyHome.ts and HomeDrawer. */
+  realEstateAccountId: idSchema,
   /** When true, any Expense with category "housing" stops the day before this
    *  purchase closes -- the old rent/mortgage payment it's replacing. */
   replaceHousingExpenses: z.boolean().optional(),
@@ -74,9 +70,9 @@ export type BuyHomeEvent = z.infer<typeof buyHomeEventSchema>;
 export const sellHomeEventSchema = z.object({
   ...baseEventFields,
   type: z.literal("sell_home"),
-  /** The real_estate account being sold -- must be entered directly (Accounts
-   *  tab / "add a home you already own"), not one synthesized by an earlier
-   *  buy_home event. */
+  /** The real_estate account being sold -- any real_estate account works,
+   *  whether entered directly (Accounts tab / "add a home you already own")
+   *  or created by an earlier buy_home event (both are real Accounts). */
   realEstateAccountId: idSchema,
   /** What actually lands in your account: sale price minus agent commission,
    *  closing costs, and whatever's left on the mortgage. Entered directly

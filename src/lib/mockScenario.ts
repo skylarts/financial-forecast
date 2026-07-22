@@ -17,6 +17,8 @@ const brokerageId = nanoid();
 const alex401kId = nanoid();
 const jordan401kId = nanoid();
 const alexRothId = nanoid();
+const homeId = nanoid();
+const homeMortgageId = nanoid();
 
 const accounts: Account[] = [
   {
@@ -100,6 +102,45 @@ const accounts: Account[] = [
     growthRatePct: 0.07,
     taxTreatment: "tax_free",
     subjectToRMD: false,
+  },
+  // Created by the "Buy a home" event below -- a real, permanent account
+  // exactly like one added via "Add a Home You Already Own", not just a
+  // formula tied to the event. startingBalance is the purchase price
+  // ($550,000 today's dollars) inflated forward to the 2032-06-01 closing
+  // date at the plan's 3% inflation rate, same one-time snapshot
+  // src/lib/buyHome.ts computes when the event is actually saved.
+  {
+    id: homeId,
+    name: "Buy a home",
+    class: "real_estate",
+    category: "asset",
+    ownerId: null,
+    startingBalance: 664_830,
+    growthRatePct: 0.035,
+    propertyGrowthRatePct: 0.035,
+    taxTreatment: "n/a",
+    subjectToRMD: false,
+    startDate: "2032-06-01",
+    linkedLiabilityId: homeMortgageId,
+  },
+  {
+    id: homeMortgageId,
+    name: "Buy a home (Mortgage)",
+    class: "mortgage",
+    category: "liability",
+    ownerId: null,
+    startingBalance: 531_864,
+    growthRatePct: 0,
+    taxTreatment: "n/a",
+    subjectToRMD: false,
+    startDate: "2032-06-01",
+    loanTerms: {
+      originalPrincipal: 531_864,
+      originationDate: "2032-06-01",
+      annualInterestRatePct: 0.06,
+      termMonths: 360,
+      linkedAssetId: homeId,
+    },
   },
 ];
 
@@ -226,8 +267,7 @@ export const mockScenario: Scenario = {
       purchasePrice: 550_000,
       downPaymentAmount: 110_000,
       downPaymentFromAccountId: brokerageId,
-      propertyGrowthRatePct: 0.035,
-      mortgage: { annualInterestRatePct: 0.06, termMonths: 360 },
+      realEstateAccountId: homeId,
     },
     {
       id: nanoid(),
