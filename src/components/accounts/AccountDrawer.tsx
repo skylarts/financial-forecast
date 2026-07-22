@@ -14,6 +14,7 @@ const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
   { value: "taxable_investment", label: "Taxable Investment" },
   { value: "tax_deferred", label: "Tax-deferred (Traditional 401k/IRA)" },
   { value: "tax_free", label: "Tax-free (Roth 401k/IRA)" },
+  { value: "real_estate", label: "Real Estate (Home)" },
   { value: "other_asset", label: "Other Asset" },
   { value: "credit_card", label: "Credit Card" },
   { value: "loan", label: "Loan" },
@@ -74,6 +75,25 @@ function toLoanDraft(account?: Account): LoanDraft {
     annualInterestRatePct: lt ? lt.annualInterestRatePct.toString() : "0.07",
     termYears: lt ? Math.round(lt.termMonths / 12).toString() : "5",
     monthlyPayment: lt?.monthlyPayment?.toString() ?? "",
+  };
+}
+
+/** Home-specific fields for class "real_estate" -- kept as free-text strings
+ *  (like LoanDraft) since they're all optional and a blank field must stay
+ *  blank (omitted from the saved account), not coerce to 0. */
+interface HomeDraft {
+  propertyGrowthRatePct: string;
+  propertyTaxRatePct: string;
+  homeInsuranceRatePct: string;
+  maintenanceRatePct: string;
+}
+
+function toHomeDraft(account?: Account): HomeDraft {
+  return {
+    propertyGrowthRatePct: account?.propertyGrowthRatePct?.toString() ?? "",
+    propertyTaxRatePct: account?.propertyTaxRatePct?.toString() ?? "",
+    homeInsuranceRatePct: account?.homeInsuranceRatePct?.toString() ?? "",
+    maintenanceRatePct: account?.maintenanceRatePct?.toString() ?? "",
   };
 }
 
@@ -173,6 +193,7 @@ export function AccountDrawer({
   const [growthRows, setGrowthRows] = useState<GrowthRow[]>(() => toGrowthRows(account));
   const [contribRows, setContribRows] = useState<ContribRow[]>(() => toContribRows(account));
   const [loanDraft, setLoanDraft] = useState<LoanDraft>(() => toLoanDraft(account));
+  const [homeDraft, setHomeDraft] = useState<HomeDraft>(() => toHomeDraft(account));
 
   const { register, handleSubmit, reset, watch } = useForm<FormValues>({
     defaultValues: toFormValues(account),
@@ -183,6 +204,7 @@ export function AccountDrawer({
     setGrowthRows(toGrowthRows(account));
     setContribRows(toContribRows(account));
     setLoanDraft(toLoanDraft(account));
+    setHomeDraft(toHomeDraft(account));
     setError(null);
     // Auto-expand Advanced when editing an account that already has
     // something set there, so it's never silently hidden.
@@ -280,6 +302,7 @@ export function AccountDrawer({
         }
       : undefined;
 
+    const isRealEstate = cls === "real_estate";
     const candidate = {
       name: values.name.trim(),
       class: cls,
@@ -297,6 +320,16 @@ export function AccountDrawer({
       growthRateSchedule: growthRateSchedule.length > 0 ? growthRateSchedule : undefined,
       contributionSchedule,
       loanTerms,
+      // Real-estate-only fields, edited via homeDraft above (not react-hook-form,
+      // same free-text-string pattern as loanDraft). Preserve linkedLiabilityId
+      // (e.g. the mortgage set up by "Add a Home You Already Own" or a buy_home
+      // event) since there's no UI control for it here -- it would otherwise be
+      // silently dropped on every save of an existing real_estate account.
+      propertyGrowthRatePct: isRealEstate && homeDraft.propertyGrowthRatePct.trim() !== "" ? Number(homeDraft.propertyGrowthRatePct) : undefined,
+      propertyTaxRatePct: isRealEstate && homeDraft.propertyTaxRatePct.trim() !== "" ? Number(homeDraft.propertyTaxRatePct) : undefined,
+      homeInsuranceRatePct: isRealEstate && homeDraft.homeInsuranceRatePct.trim() !== "" ? Number(homeDraft.homeInsuranceRatePct) : undefined,
+      maintenanceRatePct: isRealEstate && homeDraft.maintenanceRatePct.trim() !== "" ? Number(homeDraft.maintenanceRatePct) : undefined,
+      linkedLiabilityId: isRealEstate ? account?.linkedLiabilityId : undefined,
     };
 
     const result = accountObjectSchema.omit({ id: true }).safeParse(candidate);
@@ -368,7 +401,61 @@ export function AccountDrawer({
             </div>
           </div>
         )}
-        {selectedClass !== "loan" && selectedClass !== "credit_card" && (
+        {selectedClass === "real_estate" && (
+          <div className="rounded-md border border-border p-3">
+            <div className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
+              Home Details
+              <InfoTooltip text="Property tax, insurance, and maintenance are each a share of the home's (growing) value per year, paid monthly from your spending account. Leave any blank to skip it." />
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className={labelClass}>
+                Appreciation rate (e.g. 0.03 for 3%)
+                <input
+                  className={inputClass}
+                  type="number"
+                  step="0.001"
+                  placeholder="e.g. 0.03"
+                  value={homeDraft.propertyGrowthRatePct}
+                  onChange={(e) => setHomeDraft((d) => ({ ...d, propertyGrowthRatePct: e.target.value }))}
+                />
+              </label>
+              <label className={labelClass}>
+                Property tax rate
+                <input
+                  className={inputClass}
+                  type="number"
+                  step="0.001"
+                  placeholder="e.g. 0.01"
+                  value={homeDraft.propertyTaxRatePct}
+                  onChange={(e) => setHomeDraft((d) => ({ ...d, propertyTaxRatePct: e.target.value }))}
+                />
+              </label>
+              <label className={labelClass}>
+                Home insurance rate
+                <input
+                  className={inputClass}
+                  type="number"
+                  step="0.001"
+                  placeholder="e.g. 0.005"
+                  value={homeDraft.homeInsuranceRatePct}
+                  onChange={(e) => setHomeDraft((d) => ({ ...d, homeInsuranceRatePct: e.target.value }))}
+                />
+              </label>
+              <label className={labelClass}>
+                Maintenance rate
+                <input
+                  className={inputClass}
+                  type="number"
+                  step="0.001"
+                  placeholder="e.g. 0.01"
+                  value={homeDraft.maintenanceRatePct}
+                  onChange={(e) => setHomeDraft((d) => ({ ...d, maintenanceRatePct: e.target.value }))}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+        {selectedClass !== "loan" && selectedClass !== "credit_card" && selectedClass !== "real_estate" && (
           <Field
             label="Annual Growth Rate (e.g. 0.07 for 7%)"
             hint={

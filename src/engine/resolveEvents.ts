@@ -477,9 +477,15 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         effectiveStartDate: event.startDate,
       });
 
-      // Property tax, home insurance, and maintenance -- runs through the end
-      // of the plan (there's no "sell the home" event yet, so a home from a
-      // buy_home event can't itself be "replaced" later).
+      // Property tax, home insurance, and maintenance -- stops the day before
+      // a blanket replaceHousingExpenses purchase retires it, or this specific
+      // home is sold via a sell_home event naming realEstateId (same
+      // earliest-wins convention as the directly-entered real_estate loop above).
+      const ownershipCostsSoldDate = soldAccountDates.get(realEstateId);
+      const ownershipCostsEndDate = earliestDate(
+        earliestHousingReplaceCutoff,
+        ownershipCostsSoldDate ? addDays(ownershipCostsSoldDate, -1) : null
+      );
       pushOwnershipCosts(pushPosting, horizonEnd, {
         rates: [
           { rate: event.propertyTaxRatePct, label: "Property tax", key: "property_tax" },
@@ -490,7 +496,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         growthRate: event.propertyGrowthRatePct,
         referenceDate: event.startDate,
         startDate: event.startDate,
-        endDate: null,
+        endDate: ownershipCostsEndDate,
         accountId: primarySpendingAccountId ?? event.downPaymentFromAccountId,
         sourceIdPrefix: event.id,
         nameSuffix: `: ${event.name}`,
