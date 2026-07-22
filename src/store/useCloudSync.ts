@@ -5,6 +5,7 @@ import { planSchema } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
+import { migrateLegacyBuyHomeEvents } from "@/lib/migrateLegacyBuyHome";
 
 const SYNC_DEBOUNCE_MS = 1500;
 
@@ -50,7 +51,13 @@ export function useCloudSync(): { cloudSyncReady: boolean } {
         }
 
         if (data?.plan) {
-          const result = planSchema.safeParse(data.plan);
+          // A cloud row can predate the buy-home unification (saved from an
+          // older build, or written by a device that hasn't upgraded yet) --
+          // migrate it the same way importPlan/localStorage rehydration do,
+          // so a legacy-shaped plan doesn't fail validation, and so it can't
+          // drift out of sync with a locally-migrated copy of the same plan.
+          const migrated = migrateLegacyBuyHomeEvents(data.plan);
+          const result = planSchema.safeParse(migrated);
           if (result.success) {
             loadPlan(result.data);
             return;
