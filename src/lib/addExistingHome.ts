@@ -148,6 +148,13 @@ export function updateExistingHome(
   const existingMortgage = realEstateAccount.linkedLiabilityId
     ? scenario.accounts.find((a) => a.id === realEstateAccount.linkedLiabilityId)
     : undefined;
+  if (realEstateAccount.linkedLiabilityId && !existingMortgage) {
+    // The home points at a mortgage id that no longer resolves -- don't
+    // silently fabricate a replacement and leave the stale one an orphan;
+    // that's how a home ends up with two mortgage accounts, one of them
+    // unreachable in the UI.
+    return { ok: false, error: "This home's linked mortgage is missing. Reload the plan before editing it." };
+  }
 
   let linkedLiabilityId = realEstateAccount.linkedLiabilityId;
 
