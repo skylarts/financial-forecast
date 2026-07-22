@@ -365,8 +365,34 @@ describe("forecastScenario -- buy_home", () => {
     // expense every month for the rest of the plan, even decades after
     // payoff. A short (24-month) term keeps this test fast.
     const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 200_000, growthRatePct: 0 });
+    // The home a buy_home event purchases is now a real, permanent Account
+    // (and its mortgage a real, permanent Account too) -- see
+    // src/lib/buyHome.ts -- built directly here rather than embedded in the
+    // event, which now just records the purchase transaction.
+    const home = makeAccount({
+      class: "real_estate",
+      name: "Home",
+      startingBalance: 100_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      startDate: "2026-01-01",
+    });
+    const mortgage = makeAccount({
+      class: "mortgage",
+      name: "Home Mortgage",
+      startingBalance: 80_000,
+      growthRatePct: 0,
+      startDate: "2026-01-01",
+      loanTerms: {
+        originalPrincipal: 80_000,
+        originationDate: "2026-01-01",
+        annualInterestRatePct: 0.06,
+        termMonths: 24,
+        linkedAssetId: home.id,
+      },
+    });
     const scenario = makeScenario({
-      accounts: [checking],
+      accounts: [checking, { ...home, linkedLiabilityId: mortgage.id }, mortgage],
       events: [
         {
           id: nanoid(),
@@ -376,8 +402,7 @@ describe("forecastScenario -- buy_home", () => {
           purchasePrice: 100_000,
           downPaymentAmount: 20_000,
           downPaymentFromAccountId: checking.id,
-          propertyGrowthRatePct: 0,
-          mortgage: { annualInterestRatePct: 0.06, termMonths: 24 },
+          realEstateAccountId: home.id,
         },
       ],
       startDate: "2026-01-01",
@@ -404,8 +429,31 @@ describe("forecastScenario -- buy_home", () => {
   it("extra monthly principal pays the mortgage off ahead of schedule", () => {
     const makeBuy = (extraPrincipalMonthly?: number) => {
       const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 500_000, growthRatePct: 0 });
+      const home = makeAccount({
+        class: "real_estate",
+        name: "Home",
+        startingBalance: 200_000,
+        growthRatePct: 0,
+        propertyGrowthRatePct: 0,
+        startDate: "2026-01-01",
+      });
+      const mortgage = makeAccount({
+        class: "mortgage",
+        name: "Home Mortgage",
+        startingBalance: 160_000,
+        growthRatePct: 0,
+        startDate: "2026-01-01",
+        loanTerms: {
+          originalPrincipal: 160_000,
+          originationDate: "2026-01-01",
+          annualInterestRatePct: 0.06,
+          termMonths: 360,
+          extraPrincipalMonthly,
+          linkedAssetId: home.id,
+        },
+      });
       return makeScenario({
-        accounts: [checking],
+        accounts: [checking, { ...home, linkedLiabilityId: mortgage.id }, mortgage],
         events: [
           {
             id: nanoid(),
@@ -415,8 +463,7 @@ describe("forecastScenario -- buy_home", () => {
             purchasePrice: 200_000,
             downPaymentAmount: 40_000,
             downPaymentFromAccountId: checking.id,
-            propertyGrowthRatePct: 0,
-            mortgage: { annualInterestRatePct: 0.06, termMonths: 360, extraPrincipalMonthly },
+            realEstateAccountId: home.id,
           },
         ],
         startDate: "2026-01-01",
@@ -435,25 +482,31 @@ describe("forecastScenario -- buy_home", () => {
     expect(extraPayments[extraPayments.length - 1].amount).toBeGreaterThan(0);
   });
 
-  it("charges property tax, home insurance, and maintenance as a share of the home's value", () => {
+  it("charges property tax, home insurance, and maintenance as one rolled-up share of the home's value", () => {
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
-    const eventId = nanoid();
+    const home = makeAccount({
+      class: "real_estate",
+      name: "Buy a home",
+      startingBalance: 500_000,
+      growthRatePct: 0, // flat value keeps the yearly cost exact
+      propertyGrowthRatePct: 0,
+      startDate: "2026-01-01",
+      propertyTaxRatePct: 0.01,
+      homeInsuranceRatePct: 0.005,
+      maintenanceRatePct: 0.01,
+    });
     const scenario = makeScenario({
-      accounts: [checking],
+      accounts: [checking, home],
       events: [
         {
-          id: eventId,
+          id: nanoid(),
           type: "buy_home",
           name: "Buy a home",
           startDate: "2026-01-01",
           purchasePrice: 500_000,
           downPaymentAmount: 500_000, // cash purchase (down payment == price)
           downPaymentFromAccountId: checking.id,
-          propertyGrowthRatePct: 0, // flat value keeps the yearly cost exact
-          mortgage: null,
-          propertyTaxRatePct: 0.01,
-          homeInsuranceRatePct: 0.005,
-          maintenanceRatePct: 0.01,
+          realEstateAccountId: home.id,
         },
       ],
       startDate: "2026-01-01",
@@ -461,20 +514,27 @@ describe("forecastScenario -- buy_home", () => {
     });
     const result = forecastScenario(scenario);
     const y2027 = result.years.find((y) => y.year === 2027)!; // full year, home value flat at 500k
-    const tax = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:property_tax`);
-    const insurance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:home_insurance`);
-    const maintenance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${eventId}:maintenance`);
-    expect(tax?.amount).toBeCloseTo(5_000, 0); // 1% of $500k
-    expect(insurance?.amount).toBeCloseTo(2_500, 0); // 0.5% of $500k
-    expect(maintenance?.amount).toBeCloseTo(5_000, 0); // 1% of $500k
+    // Tax, insurance, and maintenance share one sourceId (see resolveEvents.ts's
+    // pushOwnershipCosts) so the Cash Flow tab shows a single combined line.
+    const ownershipItems = y2027.cashFlow.expenseByItem.filter((i) => i.id === `${home.id}:ownership_costs`);
+    expect(ownershipItems).toHaveLength(1);
+    expect(ownershipItems[0].amount).toBeCloseTo(12_500, 0); // 1% + 0.5% + 1% of $500k
   });
 
   it("replaceHousingExpenses stops any category=housing expense the day before the purchase closes", () => {
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
     const rent = makeExpense({ category: "housing", paymentAccountId: checking.id, amount: 2_000, growthRatePct: 0 });
     const groceries = makeExpense({ category: "food", paymentAccountId: checking.id, amount: 500, growthRatePct: 0 });
+    const home = makeAccount({
+      class: "real_estate",
+      name: "Buy a home",
+      startingBalance: 400_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      startDate: "2026-07-01",
+    });
     const scenario = makeScenario({
-      accounts: [checking],
+      accounts: [checking, home],
       expenses: [rent, groceries],
       events: [
         {
@@ -485,8 +545,7 @@ describe("forecastScenario -- buy_home", () => {
           purchasePrice: 400_000,
           downPaymentAmount: 400_000,
           downPaymentFromAccountId: checking.id,
-          propertyGrowthRatePct: 0,
-          mortgage: null,
+          realEstateAccountId: home.id,
           replaceHousingExpenses: true,
         },
       ],
@@ -518,12 +577,10 @@ describe("forecastScenario -- buy_home", () => {
     });
     const result = forecastScenario(scenario);
     const y2027 = result.years.find((y) => y.year === 2027)!;
-    const tax = y2027.cashFlow.expenseByItem.find((i) => i.id === `${home.id}:property_tax`);
-    const insurance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${home.id}:home_insurance`);
-    const maintenance = y2027.cashFlow.expenseByItem.find((i) => i.id === `${home.id}:maintenance`);
-    expect(tax?.amount).toBeCloseTo(3_000, 0); // 1% of $300k
-    expect(insurance?.amount).toBeCloseTo(1_500, 0); // 0.5% of $300k
-    expect(maintenance?.amount).toBeCloseTo(3_000, 0); // 1% of $300k
+    // Tax, insurance, and maintenance share one sourceId (see resolveEvents.ts's
+    // pushOwnershipCosts) so the Cash Flow tab shows a single combined line.
+    const ownershipCosts = y2027.cashFlow.expenseByItem.find((i) => i.id === `${home.id}:ownership_costs`);
+    expect(ownershipCosts?.amount).toBeCloseTo(7_500, 0); // 1% + 0.5% + 1% of $300k
   });
 
   it("replaceHousingExpenses also retires an already-owned home's mortgage and its ongoing costs", () => {
@@ -549,8 +606,16 @@ describe("forecastScenario -- buy_home", () => {
         linkedAssetId: home.id,
       },
     });
+    const newHome = makeAccount({
+      class: "real_estate",
+      name: "Buy a new home",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      startDate: "2027-06-01",
+    });
     const scenario = makeScenario({
-      accounts: [checking, { ...home, linkedLiabilityId: mortgage.id }, mortgage],
+      accounts: [checking, { ...home, linkedLiabilityId: mortgage.id }, mortgage, newHome],
       events: [
         {
           id: nanoid(),
@@ -560,8 +625,7 @@ describe("forecastScenario -- buy_home", () => {
           purchasePrice: 500_000,
           downPaymentAmount: 500_000,
           downPaymentFromAccountId: checking.id,
-          propertyGrowthRatePct: 0,
-          mortgage: null,
+          realEstateAccountId: newHome.id,
           replaceHousingExpenses: true,
         },
       ],
@@ -578,7 +642,7 @@ describe("forecastScenario -- buy_home", () => {
     expect(y2028.accountBalances[mortgage.id]).toBeCloseTo(y2027.accountBalances[mortgage.id], 2);
 
     // Old home's ongoing property tax stops too.
-    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${home.id}:property_tax`)).toBe(false);
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${home.id}:ownership_costs`)).toBe(false);
   });
 });
 
@@ -636,7 +700,7 @@ describe("forecastScenario -- sell_home", () => {
 
     // No more mortgage payments or property tax after the sale.
     expect(y2028.cashFlow.expenseByItem.some((i) => i.id === mortgage.id)).toBe(false);
-    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${home.id}:property_tax`)).toBe(false);
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${home.id}:ownership_costs`)).toBe(false);
   });
 
   it("selling one of two homes leaves the other's mortgage and costs untouched", () => {
@@ -691,14 +755,17 @@ describe("forecastScenario -- sell_home", () => {
     expect(y2028.accountBalances[homeB.id]).toBeCloseTo(500_000, 0);
     expect(y2028.accountBalances[mortgageB.id]).toBeGreaterThan(0);
     expect(y2028.cashFlow.expenseByItem.some((i) => i.id === mortgageB.id)).toBe(true);
-    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${homeB.id}:property_tax`)).toBe(true);
+    expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${homeB.id}:ownership_costs`)).toBe(true);
   });
 });
 
 describe("forecastScenario -- exposes the full resolved account list", () => {
-  it("includes event-created accounts (real estate + mortgage), not just Scenario.accounts", () => {
+  it("includes the buy_home event's real estate + mortgage accounts, same count as Scenario.accounts", () => {
+    // The home a buy_home event purchases is now a real, permanent Account
+    // (see src/lib/buyHome.ts) -- resolveEvents no longer synthesizes extra
+    // accounts on top of Scenario.accounts, it just passes them through.
     const result = forecastScenario(mockScenario);
-    expect(result.accounts.length).toBeGreaterThan(mockScenario.accounts.length);
+    expect(result.accounts.length).toBe(mockScenario.accounts.length);
     expect(result.accounts.some((a) => a.class === "real_estate")).toBe(true);
     expect(result.accounts.some((a) => a.class === "mortgage")).toBe(true);
     // Every accountId referenced anywhere in the output must resolve to a name via this list.
@@ -973,8 +1040,16 @@ describe("forecastScenario -- cash flow statement reconciles exactly", () => {
     // hub and a buy_home down payment sourced from the hub.
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 500_000 });
     const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 50_000 });
+    const home = makeAccount({
+      class: "real_estate",
+      name: "Buy a home",
+      startingBalance: 200_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      startDate: "2026-06-01",
+    });
     const scenario = makeScenario({
-      accounts: [checking, savings],
+      accounts: [checking, savings, home],
       events: [
         {
           id: nanoid(),
@@ -994,8 +1069,7 @@ describe("forecastScenario -- cash flow statement reconciles exactly", () => {
           purchasePrice: 200_000,
           downPaymentAmount: 40_000,
           downPaymentFromAccountId: checking.id,
-          propertyGrowthRatePct: 0,
-          mortgage: null,
+          realEstateAccountId: home.id,
         },
       ],
       startDate: "2026-01-01",

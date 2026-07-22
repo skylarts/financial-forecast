@@ -114,23 +114,28 @@ export function buildChartMarkers({
           rows.push({ label: "Retirement expense", value: `${formatMoney(ev.retirementExpense.amount)}/yr` });
         }
         break;
-      case "buy_home":
+      case "buy_home": {
+        // Rates/mortgage terms now live on the linked real_estate account
+        // (and its own linked mortgage account) -- see BuyHomeEvent.realEstateAccountId.
+        const home = accounts.find((a) => a.id === ev.realEstateAccountId);
+        const mortgage = home?.linkedLiabilityId ? accounts.find((a) => a.id === home.linkedLiabilityId) : undefined;
         rows.push({ label: "Purchase price", value: formatMoney(ev.purchasePrice) });
-        if (ev.mortgage) {
+        if (mortgage?.loanTerms) {
           rows.push({ label: "Down payment", value: formatMoney(ev.downPaymentAmount) });
-          rows.push({ label: "Mortgage term", value: `${Math.round(ev.mortgage.termMonths / 12)} years` });
-          rows.push({ label: "Mortgage rate", value: `${(ev.mortgage.annualInterestRatePct * 100).toFixed(2)}%` });
-          if (ev.mortgage.extraPrincipalMonthly) {
-            rows.push({ label: "Extra principal", value: `${formatMoney(ev.mortgage.extraPrincipalMonthly)}/mo` });
+          rows.push({ label: "Mortgage term", value: `${Math.round(mortgage.loanTerms.termMonths / 12)} years` });
+          rows.push({ label: "Mortgage rate", value: `${(mortgage.loanTerms.annualInterestRatePct * 100).toFixed(2)}%` });
+          if (mortgage.loanTerms.extraPrincipalMonthly) {
+            rows.push({ label: "Extra principal", value: `${formatMoney(mortgage.loanTerms.extraPrincipalMonthly)}/mo` });
           }
         } else {
           rows.push({ label: "Financing", value: "Paid in cash" });
         }
-        if (ev.propertyTaxRatePct) rows.push({ label: "Property tax", value: `${(ev.propertyTaxRatePct * 100).toFixed(2)}%/yr` });
-        if (ev.homeInsuranceRatePct) rows.push({ label: "Home insurance", value: `${(ev.homeInsuranceRatePct * 100).toFixed(2)}%/yr` });
-        if (ev.maintenanceRatePct) rows.push({ label: "Maintenance", value: `${(ev.maintenanceRatePct * 100).toFixed(2)}%/yr` });
+        if (home?.propertyTaxRatePct) rows.push({ label: "Property tax", value: `${(home.propertyTaxRatePct * 100).toFixed(2)}%/yr` });
+        if (home?.homeInsuranceRatePct) rows.push({ label: "Home insurance", value: `${(home.homeInsuranceRatePct * 100).toFixed(2)}%/yr` });
+        if (home?.maintenanceRatePct) rows.push({ label: "Maintenance", value: `${(home.maintenanceRatePct * 100).toFixed(2)}%/yr` });
         if (ev.replaceHousingExpenses) rows.push({ label: "Replaces housing expenses", value: "Yes" });
         break;
+      }
       case "sell_home":
         rows.push({ label: "Home", value: accountName(ev.realEstateAccountId) });
         rows.push({ label: "Net proceeds", value: formatMoney(ev.netProceeds) });

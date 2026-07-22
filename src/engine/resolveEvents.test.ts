@@ -17,33 +17,21 @@ describe("resolveEvents (mock fixture)", () => {
     elapsedYears(mockScenario.settings.startDate, buyEvent.startDate),
     mockScenario.settings.inflationRatePct
   );
-  const inflatedPurchasePrice = buyEvent.purchasePrice * inflationFactor;
   const inflatedDownPayment = buyEvent.downPaymentAmount * inflationFactor;
 
-  it("creates the real estate + mortgage accounts from the buy_home event", () => {
+  it("registers the buy_home event's linked real estate + mortgage accounts for amortization", () => {
+    // The home a buy_home event purchases is a real, permanent Account (see
+    // src/lib/buyHome.ts and BuyHomeEvent.realEstateAccountId) -- resolveEvents
+    // no longer synthesizes it, just picks it up via the same generic
+    // real_estate/mortgage account loops every directly-entered home uses.
     const realEstate = resolved.accounts.find((a) => a.class === "real_estate");
     const mortgage = resolved.accounts.find((a) => a.class === "mortgage");
     expect(realEstate).toBeDefined();
     expect(mortgage).toBeDefined();
-    expect(realEstate!.startingBalance).toBeCloseTo(inflatedPurchasePrice, 6);
-    expect(mortgage!.startingBalance).toBeCloseTo(inflatedPurchasePrice - inflatedDownPayment, 6);
+    expect(realEstate!.id).toBe(buyEvent.realEstateAccountId);
     expect(realEstate!.linkedLiabilityId).toBe(mortgage!.id);
     expect(mortgage!.loanTerms?.linkedAssetId).toBe(realEstate!.id);
     expect(resolved.mortgages).toHaveLength(1);
-  });
-
-  it("gives the buy_home-created real estate and mortgage accounts stable ids across repeated resolves", () => {
-    // Regression: these used to get a fresh nanoid() every call, so anything
-    // keyed by account id (e.g. the chart's per-account show/hide toggle)
-    // would silently lose track of them on every edit, since useProjection
-    // recomputes forecastScenario -> resolveEvents on every scenario change.
-    const again = resolveEvents(mockScenario);
-    const realEstate1 = resolved.accounts.find((a) => a.class === "real_estate")!;
-    const realEstate2 = again.accounts.find((a) => a.class === "real_estate")!;
-    const mortgage1 = resolved.accounts.find((a) => a.class === "mortgage")!;
-    const mortgage2 = again.accounts.find((a) => a.class === "mortgage")!;
-    expect(realEstate2.id).toBe(realEstate1.id);
-    expect(mortgage2.id).toBe(mortgage1.id);
   });
 
   it("stops Alex's salary postings after the retire event", () => {
