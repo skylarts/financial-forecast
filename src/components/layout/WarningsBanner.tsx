@@ -7,6 +7,8 @@ const KIND_LABELS: Record<ProjectionWarning["kind"], string> = {
   insufficient_funds: "Insufficient funds",
   unlinked_mortgage: "Unlinked mortgage",
   routing_conflict: "Conflicting routing rules",
+  early_withdrawal_penalty: "Early-withdrawal penalty (pre-59½)",
+  unamortized_debt: "Debt with no payoff plan",
 };
 
 export function WarningsBanner({ warnings, accounts }: { warnings: ProjectionWarning[]; accounts: Account[] }) {

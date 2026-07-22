@@ -107,6 +107,9 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // addDays(..., -1) at the point of use. "Earliest wins" if an account is
   // somehow named by more than one sell_home event.
   const soldAccountDates = new Map<Id, ISODate>();
+  // The computed-proceeds sale mode (sellingCostsPct set): the engine credits
+  // simulated equity at the sale month instead of a fixed netProceeds figure.
+  const saleInfoByAccount = new Map<Id, { sellingCostsPct: number; proceedsAccountId: Id | null }>();
   for (const event of events) {
     if (event.type !== "sell_home") continue;
     const setSoldDate = (id: Id) => {
@@ -114,6 +117,12 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       if (!existing || compareDates(event.startDate, existing) < 0) soldAccountDates.set(id, event.startDate);
     };
     setSoldDate(event.realEstateAccountId);
+    if (event.sellingCostsPct != null) {
+      saleInfoByAccount.set(event.realEstateAccountId, {
+        sellingCostsPct: event.sellingCostsPct,
+        proceedsAccountId: event.proceedsAccountId,
+      });
+    }
     const realEstateAccount = scenario.accounts.find((a) => a.id === event.realEstateAccountId);
     if (realEstateAccount?.linkedLiabilityId) setSoldDate(realEstateAccount.linkedLiabilityId);
   }
@@ -148,6 +157,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     effectiveStartDate: a.startDate ?? settings.startDate,
     growthRateOverrides: growthRateOverrides.get(a.id),
     soldDate: soldAccountDates.get(a.id),
+    saleInfo: saleInfoByAccount.get(a.id),
   }));
   const postings: Posting[] = [];
   const mortgages: MortgageSpec[] = [];
@@ -177,9 +187,19 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // is <= 0 regardless of paymentEndDate).
   for (const account of scenario.accounts) {
     if (excludedAccountIds.has(account.id)) continue;
-    if ((account.class !== "loan" && account.class !== "mortgage") || !account.loanTerms) continue;
+    if ((account.class !== "loan" && account.class !== "mortgage" && account.class !== "credit_card") || !account.loanTerms) continue;
     const soldDate = soldAccountDates.get(account.id);
-    const paymentEndDate = earliestDate(earliestHousingReplaceCutoff, soldDate ? addDays(soldDate, -1) : null);
+    // The housing-replace cutoff only retires mortgages that EXISTED before
+    // the replacing purchase closed -- never the mortgage that purchase
+    // itself creates (which starts on/after the cutoff and must amortize
+    // normally). Guards the "buy a new home, drop the old housing costs"
+    // flow from silently killing its own payments.
+    const accountStart = account.startDate ?? settings.startDate;
+    const applicableCutoff =
+      earliestHousingReplaceCutoff && compareDates(accountStart, earliestHousingReplaceCutoff) <= 0
+        ? earliestHousingReplaceCutoff
+        : null;
+    const paymentEndDate = earliestDate(applicableCutoff, soldDate ? addDays(soldDate, -1) : null);
     mortgages.push({
       accountId: account.id,
       loanTerms: account.loanTerms,
@@ -200,8 +220,15 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     if (excludedAccountIds.has(account.id)) continue;
     if (account.class !== "real_estate") continue;
     const soldDate = soldAccountDates.get(account.id);
-    const costsEndDate = earliestDate(earliestHousingReplaceCutoff, soldDate ? addDays(soldDate, -1) : null);
     const costsStartDate = account.startDate ?? settings.startDate;
+    // Same scoping as the mortgage loop above: a replaceHousingExpenses
+    // purchase only stops the ownership costs of homes that predate it --
+    // the newly-bought home's own tax/insurance/maintenance must still run.
+    const applicableCutoff =
+      earliestHousingReplaceCutoff && compareDates(costsStartDate, earliestHousingReplaceCutoff) <= 0
+        ? earliestHousingReplaceCutoff
+        : null;
+    const costsEndDate = earliestDate(applicableCutoff, soldDate ? addDays(soldDate, -1) : null);
     pushOwnershipCosts(pushPosting, horizonEnd, {
       rates: [
         { rate: account.propertyTaxRatePct, label: "Property tax", key: "property_tax" },
@@ -209,7 +236,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         { rate: account.maintenanceRatePct, label: "Maintenance", key: "maintenance" },
       ],
       baseValue: account.startingBalance,
-      growthRate: account.propertyGrowthRatePct ?? account.growthRatePct,
+      growthRate: account.propertyGrowthRatePct ?? account.growthRatePct ?? settings.inflationRatePct,
       referenceDate: costsStartDate,
       startDate: costsStartDate,
       endDate: costsEndDate,
@@ -263,7 +290,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         src.startDate,
         occ,
         settings.inflationRatePct,
-        src.growthRatePct,
+        src.growthRatePct ?? settings.inflationRatePct, // blank growth = keep pace with inflation
         src.category === "social_security"
       );
       const amount = base * activeMultiplier(windows, occ);
@@ -300,7 +327,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         exp.startDate,
         occ,
         settings.inflationRatePct,
-        exp.growthRatePct
+        exp.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
       );
       const amount = base * activeMultiplier(windows, occ);
       if (amount === 0) continue;
@@ -385,7 +412,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             segment.startDate,
             occ,
             settings.inflationRatePct,
-            segment.growthRatePct
+            segment.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
           );
           postContribution(account, occ, amount, segment.payrollDeducted);
         }
@@ -396,7 +423,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       const occurrences = expandOccurrences(settings.startDate, contributionEnd, frequency, horizonEnd);
       for (const occ of occurrences) {
         const years = elapsedYears(settings.startDate, occ);
-        const amount = growthAdjustedAmount(baseAmount, years, growthRatePct);
+        const amount = growthAdjustedAmount(baseAmount, years, growthRatePct ?? settings.inflationRatePct);
         postContribution(account, occ, amount, payrollDeducted);
       }
     }
@@ -438,8 +465,14 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         sourceId: `${event.id}:downpayment`,
       });
     } else if (event.type === "sell_home") {
-      // Net proceeds are entered directly (not sale price minus costs
-      // separately) since the mortgage payoff isn't known until the
+      // Computed-proceeds mode: no posting here -- the engine credits
+      // simulated value × (1 − sellingCostsPct) − remaining mortgage at the
+      // sale month itself (see EngineAccount.saleInfo and forecastScenario's
+      // home-sale step), so the cash credited always matches the equity the
+      // model projects at that date.
+      if (event.sellingCostsPct != null) continue;
+      // Fixed mode: net proceeds are entered directly (not sale price minus
+      // costs separately) since the mortgage payoff isn't known until the
       // projection runs -- see EngineAccount.soldDate, which zeroes the
       // real_estate account and its linked mortgage this same month in
       // forecastScenario's monthly loop. Entered in today's dollars,
@@ -513,7 +546,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           event.startDate,
           occ,
           settings.inflationRatePct,
-          exp.growthRatePct
+          exp.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
         );
         const amount = base * activeMultiplier(windows, occ);
         if (amount === 0) continue;
@@ -540,7 +573,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           event.startDate,
           occ,
           settings.inflationRatePct,
-          event.growthRatePct ?? 0
+          event.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
         );
         pushPosting({
           date: occ,

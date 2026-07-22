@@ -67,7 +67,8 @@ function fmtRecurrence(amount: number, frequency: string, intervalYears?: number
   return `${money} ${frequency}`;
 }
 
-function fmtGrowth(rate: number | undefined): string {
+function fmtGrowth(rate: number | null | undefined): string {
+  if (rate == null) return "growth matches the plan's inflation rate (left blank)";
   if (!rate) return "flat in nominal terms (0% growth)";
   return `growing ${fmtPct(rate)}/yr (nominal)`;
 }
@@ -211,7 +212,7 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push(section("Accounts"));
   for (const a of scenario.accounts as Account[]) {
     lines.push(
-      `- **${a.name}** (id: \`${a.id}\`) — class: ${a.class} (${a.category}), tax treatment: ${a.taxTreatment}, owner: ${personName(a.ownerId)}, starting balance: ${formatMoney(a.startingBalance)}, growth rate: ${fmtPct(a.growthRatePct)}/yr nominal${a.subjectToRMD ? ", subject to RMDs" : ""}${a.isExtraSavings ? " — **this is the mandatory Extra Savings account** (see Money Flow / Routing above)" : ""}${a.isExcluded ? " — **excluded from the plan** (engine skips it entirely)" : ""}`
+      `- **${a.name}** (id: \`${a.id}\`) — class: ${a.class} (${a.category}), tax treatment: ${a.taxTreatment}, owner: ${personName(a.ownerId)}, starting balance: ${formatMoney(a.startingBalance)}, growth rate: ${a.growthRatePct == null ? "matches the plan's inflation rate" : `${fmtPct(a.growthRatePct)}/yr nominal`}${a.subjectToRMD ? ", subject to RMDs" : ""}${a.isExtraSavings ? " — **this is the mandatory Extra Savings account** (see Money Flow / Routing above)" : ""}${a.isExcluded ? " — **excluded from the plan** (engine skips it entirely)" : ""}`
     );
     if (a.propertyGrowthRatePct !== undefined) {
       lines.push(`  - Property growth rate: ${fmtPct(a.propertyGrowthRatePct)}/yr (overrides the growth rate above).`);
@@ -291,7 +292,7 @@ export function buildLlmExport(scenario: Scenario): string {
           );
           if (ev.retirementExpense) {
             lines.push(
-              `  - Retirement expense: ${formatMoney(ev.retirementExpense.amount)}/yr from ${accountName(ev.retirementExpense.paymentAccountId)}, growing ${fmtPct(ev.retirementExpense.growthRatePct)}/yr${ev.retirementExpense.endDate ? ` through ${ev.retirementExpense.endDate}` : ""}.`
+              `  - Retirement expense: ${formatMoney(ev.retirementExpense.amount)}/yr from ${accountName(ev.retirementExpense.paymentAccountId)}, ${fmtGrowth(ev.retirementExpense.growthRatePct)}${ev.retirementExpense.endDate ? ` through ${ev.retirementExpense.endDate}` : ""}.`
             );
           }
           break;

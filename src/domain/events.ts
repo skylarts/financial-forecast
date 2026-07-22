@@ -28,8 +28,9 @@ export const retireEventSchema = z.object({
   retirementExpense: z
     .object({
       amount: z.number().nonnegative(),
-      /** Nominal annual growth rate, already includes inflation. 0 = flat in nominal terms. */
-      growthRatePct: z.number().default(0),
+      /** Nominal annual growth rate, already includes inflation.
+       *  0 = flat in nominal terms; null/omitted = match the plan's inflation rate. */
+      growthRatePct: z.number().nullable().default(null),
       /** null = pays automatically from Extra Savings. */
       paymentAccountId: idSchema.nullable(),
       /** null/omitted = runs through the end of the plan. */
@@ -81,6 +82,15 @@ export const sellHomeEventSchema = z.object({
    *  the sale date like every other dollar amount in this app. Can be
    *  negative (an underwater sale where you bring cash to closing). */
   netProceeds: z.number(),
+  /**
+   * When set, the engine IGNORES netProceeds and computes the proceeds
+   * itself at the sale month: the home's simulated value × (1 − this
+   * fraction of selling costs) − whatever is left on the linked mortgage.
+   * This keeps the credited cash consistent with the equity the model
+   * itself projects at the sale date. null/omitted = use netProceeds
+   * (the original fixed, inflation-adjusted entry).
+   */
+  sellingCostsPct: z.number().min(0).max(1).nullable().optional(),
   /** Where net proceeds land. null = Extra Savings. */
   proceedsAccountId: idSchema.nullable(),
 });
@@ -103,7 +113,8 @@ export const customTransferEventSchema = z.object({
   fromAccountId: idSchema,
   toAccountId: idSchema,
   frequency: recurrenceFrequencySchema,
-  growthRatePct: z.number().optional(),
+  /** null/omitted = match the plan's inflation rate; 0 = flat in nominal terms. */
+  growthRatePct: z.number().nullable().optional(),
   /** Repeat every N years (e.g. a car replaced every 7 yrs); overrides frequency. */
   intervalYears: z.number().int().positive().optional(),
 });

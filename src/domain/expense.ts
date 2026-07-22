@@ -20,8 +20,9 @@ export const expenseBaselineSchema = z.object({
   frequency: recurrenceFrequencySchema,
   startDate: isoDateSchema,
   endDate: isoDateSchema.nullable(),
-  /** Nominal (actual) annual growth rate -- already includes inflation. 0 = flat in nominal terms. */
-  growthRatePct: z.number().default(0),
+  /** Nominal (actual) annual growth rate -- already includes inflation.
+   *  0 = flat in nominal terms; null/omitted = match the plan's inflation rate. */
+  growthRatePct: z.number().nullable().default(null),
   /** Repeat every N years (e.g. a car replaced every 7 yrs); overrides frequency. */
   intervalYears: z.number().int().positive().optional(),
   /** null = pays automatically from Extra Savings; set = explicit override (e.g. paid straight out of an investment). */

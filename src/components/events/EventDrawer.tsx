@@ -109,7 +109,7 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         retirementAge: event.retirementAge?.toString() ?? "",
         hasRetirementExpense: !!event.retirementExpense,
         retirementExpenseAmount: event.retirementExpense?.amount.toString() ?? "",
-        retirementExpenseGrowthRatePct: event.retirementExpense?.growthRatePct.toString() ?? "0",
+        retirementExpenseGrowthRatePct: event.retirementExpense?.growthRatePct?.toString() ?? "",
         retirementExpensePaymentAccountId: event.retirementExpense?.paymentAccountId ?? "",
         retirementExpenseEndDate: event.retirementExpense?.endDate ?? "",
       };

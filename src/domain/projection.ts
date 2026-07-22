@@ -58,6 +58,7 @@ export type FederalTaxComponentKey =
   | "pension"
   | "taxable_social_security"
   | "capital_gains"
+  | "early_withdrawal_penalty"
   | "state_local";
 
 /**
@@ -84,8 +85,9 @@ export interface CashFlowYearRow {
    * this year -- always exactly right by construction (it's the real
    * simulated balance delta, not a sum of categorized buckets). Lands near
    * zero when you draw exactly what you need (the buffer is maintained).
-   * Equals: operatingCashFlow + withdrawalsToCashNet - afterTaxContributionTotal
-   *         - surplusRouted + cashInterest + otherAccountActivity.
+   * Equals: operatingCashFlow - incomeTaxWithheldFromCash + withdrawalsToCashNet
+   *         + taxSettlement - afterTaxContributionTotal - surplusRouted
+   *         + cashInterest + otherAccountActivity.
    */
   netCashFlow: number;
   surplusRouted: number;
@@ -94,6 +96,16 @@ export interface CashFlowYearRow {
   rmdTotal: number;
   /** Total tax realized on all account withdrawals this year (part of each withdrawal's gross). */
   withdrawalTaxes: number;
+  /**
+   * Year-end tax true-up posted to the spending hub: taxes withheld during
+   * the year minus the exact bracket-computed bill. Positive = refund into
+   * cash (the estimated withholding over-collected), negative = additional
+   * tax paid from cash. Guarantees the household's actual cash tax for the
+   * year equals federalTaxTotal exactly.
+   */
+  taxSettlement: number;
+  /** Estimated tax withheld from Social Security / pension deposits that landed on the hub (reduces cash). */
+  incomeTaxWithheldFromCash: number;
   /** Interest/growth earned directly on the spending hub balance this year. */
   cashInterest: number;
   /**
@@ -167,7 +179,7 @@ export interface TimelineRow {
  */
 export interface LedgerEvent {
   date: ISODate;
-  kind: "rmd" | "deficit_withdrawal" | "mortgage_payment" | "surplus_route" | "cap_overflow";
+  kind: "rmd" | "deficit_withdrawal" | "mortgage_payment" | "surplus_route" | "cap_overflow" | "tax_settlement" | "home_sale";
   accountId: Id;
   toAccountId?: Id;
   amount: number;
@@ -182,8 +194,13 @@ export interface YearSnapshot {
   netWorthNominal: number;
   /** Nominal deflated by cumulative inflation back to start-date dollars. */
   netWorthReal: number;
-  /** (1+inflation)^(year-startYear). Divide any nominal dollar by this to show it in today's dollars. */
+  /** (1+inflation)^(full years elapsed from the plan start through Dec 31 of this year).
+   *  Divide an end-of-year BALANCE by this to show it in today's dollars. */
   inflationDeflator: number;
+  /** (1+inflation)^(years elapsed from the plan start to mid-year) -- the right
+   *  deflator for FLOWS (income/expenses/withdrawals occur throughout the year,
+   *  so on average at mid-year), vs. inflationDeflator for year-end balances. */
+  flowInflationDeflator: number;
   accountBalances: Record<Id, number>;
   rollforwards: AccountYearRollforward[];
   cashFlow: CashFlowYearRow;
@@ -191,7 +208,7 @@ export interface YearSnapshot {
 
 export interface ProjectionWarning {
   year: number;
-  kind: "insufficient_funds" | "unlinked_mortgage" | "routing_conflict";
+  kind: "insufficient_funds" | "unlinked_mortgage" | "routing_conflict" | "early_withdrawal_penalty" | "unamortized_debt";
   message: string;
   accountId?: Id;
 }
