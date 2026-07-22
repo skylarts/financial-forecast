@@ -15,12 +15,14 @@ interface Piece {
   height: number;
 }
 
+const SESSION_KEY = "joy-confetti-fired";
+
 /**
  * A dependency-free confetti burst. Fires on the rising edge of `fire` -- i.e.
- * each time you switch *into* joy mode with a plan that reaches retirement -- so
- * hitting your goal feels like a genuine celebration, and you can re-trigger it
- * any time by toggling the theme. Falling from false->true is what matters, so
- * ordinary re-renders never re-fire it.
+ * when you switch *into* joy mode with a plan that reaches retirement -- but at
+ * most ONCE per browser session, so it celebrates without replaying on every
+ * page load and covering the chart each visit. (Toggling joy off and on again
+ * within a session stays quiet; a fresh session celebrates again.)
  */
 export function JoyConfetti({ fire }: { fire: boolean }) {
   const [pieces, setPieces] = useState<Piece[] | null>(null);
@@ -30,6 +32,12 @@ export function JoyConfetti({ fire }: { fire: boolean }) {
     const risingEdge = fire && !wasFiring.current;
     wasFiring.current = fire;
     if (!risingEdge) return;
+    try {
+      if (sessionStorage.getItem(SESSION_KEY)) return;
+      sessionStorage.setItem(SESSION_KEY, "1");
+    } catch {
+      // sessionStorage unavailable (private mode edge cases) -- fire anyway.
+    }
 
     const items: Piece[] = Array.from({ length: 90 }).map((_, i) => ({
       id: i,

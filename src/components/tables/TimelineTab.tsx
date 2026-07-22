@@ -77,6 +77,7 @@ export function TimelineTab({
   const [expenseDrawer, setExpenseDrawer] = useState<{ open: boolean; item?: ExpenseBaseline }>({ open: false });
   const [eventDrawer, setEventDrawer] = useState<{ open: boolean; item?: ScenarioEvent }>({ open: false });
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [showSmallMovements, setShowSmallMovements] = useState(false);
 
   const toggleGroup = (key: string) => {
     setExpandedGroups((prev) => {
@@ -158,7 +159,14 @@ export function TimelineTab({
 
   rows.sort((a, b) => a.date.localeCompare(b.date) || TONE_SORT[a.tone] - TONE_SORT[b.tone]);
 
-  const ledgerGroups = groupLedgerByYear(ledger);
+  // Penny-level cap overflows (interest nudging a capped account over its
+  // ceiling) swamp the ledger with noise -- hide small movements by default.
+  const SMALL_MOVEMENT_THRESHOLD = 250;
+  const allLedgerGroups = groupLedgerByYear(ledger);
+  const ledgerGroups = showSmallMovements
+    ? allLedgerGroups
+    : allLedgerGroups.filter((g) => Math.abs(g.totalAmount) >= SMALL_MOVEMENT_THRESHOLD);
+  const hiddenGroupCount = allLedgerGroups.length - ledgerGroups.length;
   const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "an account";
 
   return (
@@ -229,8 +237,19 @@ export function TimelineTab({
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border bg-panel">
-        <div className="border-b border-border px-2 py-2 text-xs font-semibold text-dim">
-          Automatic Withdrawals &amp; RMDs
+        <div className="flex items-center justify-between border-b border-border px-2 py-2 text-xs font-semibold text-dim">
+          <span>Automatic Withdrawals &amp; RMDs</span>
+          {(hiddenGroupCount > 0 || showSmallMovements) && (
+            <button
+              type="button"
+              onClick={() => setShowSmallMovements((v) => !v)}
+              className="font-normal text-dim hover:text-foreground hover:underline"
+            >
+              {showSmallMovements
+                ? "Hide small movements"
+                : `Show ${hiddenGroupCount} small movement${hiddenGroupCount === 1 ? "" : "s"} (under $${SMALL_MOVEMENT_THRESHOLD})`}
+            </button>
+          )}
         </div>
         <table className="w-full text-sm">
           <thead>

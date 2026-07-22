@@ -2,7 +2,6 @@ import type {
   Id,
   ISODate,
   Scenario,
-  ForecastSettings,
   AccountYearRollforward,
   CashFlowYearRow,
   YearSnapshot,

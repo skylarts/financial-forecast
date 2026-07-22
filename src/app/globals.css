@@ -42,9 +42,20 @@
    (bg-panel, bg-accent) so every card and primary button gets the joyful
    treatment at once, without editing each component. */
 
+/* The sunny wash is painted by a fixed-position pseudo-element instead of
+   `background-attachment: fixed` -- the latter is a notorious mobile-Safari
+   jank source and made screenshots/prints render black below the first
+   viewport. A fixed ::before covers the viewport at all scroll positions
+   with none of those problems. */
 :root[data-theme="joy"] body {
+  background: #fff8f0; /* solid fallback behind the wash */
+}
+:root[data-theme="joy"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
   background: var(--joy-gradient);
-  background-attachment: fixed;
 }
 
 /* Cards: soft warm glow and a gentle lift on hover so the whole page feels
@@ -56,6 +67,12 @@
 :root[data-theme="joy"] .bg-panel:hover {
   transform: translateY(-2px);
   box-shadow: 0 14px 30px -12px rgba(255, 122, 89, 0.45);
+}
+
+/* The header tagline: the coral accent on cream fails contrast, so joy mode
+   uses a darker terracotta that stays warm but is actually readable. */
+:root[data-theme="joy"] .joy-tagline {
+  color: #b8502e;
 }
 
 /* Primary/active buttons (scenario tabs, sign-in) get a sunset gradient. */
@@ -136,6 +153,12 @@
   --color-negative: var(--negative);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+/* Explicit root background so overscroll regions, prints, and screenshots
+   never composite as black. */
+html {
+  background-color: var(--background);
 }
 
 body {

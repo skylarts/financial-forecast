@@ -677,6 +677,7 @@ export function NetWorthChart({
                   dot={isJoy ? renderSunDot : false}
                   activeDot={isJoy ? renderSunActiveDot : undefined}
                   strokeWidth={2}
+                  isAnimationActive={false}
                 />
 
                 {compareName && (
@@ -687,6 +688,7 @@ export function NetWorthChart({
                     dot={false}
                     strokeWidth={2}
                     strokeDasharray="6 4"
+                    isAnimationActive={false}
                   />
                 )}
               </>
@@ -700,6 +702,7 @@ export function NetWorthChart({
                   dot={false}
                   strokeWidth={2}
                   hide={hiddenAccountIds.has(a.id)}
+                  isAnimationActive={false}
                 />
               ))
             )}
@@ -709,9 +712,14 @@ export function NetWorthChart({
 
         {viewMode === "net_worth" && layout && (
           <div className="pointer-events-none absolute inset-0">
-            {[...markersByYear.entries()].map(([year, list]) => {
-              const x = layout.xByYear.get(year);
-              if (x === undefined) return null;
+            {[...markersByYear.entries()].map(([year, rawList]) => {
+              const rawX = layout.xByYear.get(year);
+              if (rawX === undefined) return null;
+              // Keep icons inside the plot area: markers on the first visible
+              // year would otherwise center over the y-axis and sit on top of
+              // its dollar labels.
+              const x = Math.max(rawX, layout.left + ICON_SIZE / 2 + 2);
+              const list = rawList;
               const stackBottom = layout.top + TOP_PAD + list.length * (ICON_SIZE + ICON_GAP) - ICON_GAP;
               return (
                 <div key={year}>
