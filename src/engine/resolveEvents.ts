@@ -50,9 +50,15 @@ function pushOwnershipCosts(
   const active = input.rates.filter((r) => r.rate);
   if (!active.length || !input.accountId) return;
   const occurrences = expandOccurrences(input.startDate, input.endDate, "monthly", horizonEnd);
+  // All three rates share one sourceId/label -- separate from the mortgage
+  // payment's own posting/key -- so the Cash Flow tab's per-item breakdown
+  // (which aggregates by sourceId, see forecastScenario.ts's addTo/itemLabels)
+  // rolls them up into a single "Home ownership costs" line instead of three.
+  const sourceId = `${input.sourceIdPrefix}:ownership_costs`;
+  const label = `Home ownership costs${input.nameSuffix}`;
   for (const occ of occurrences) {
     const homeValue = growthAdjustedAmount(input.baseValue, elapsedYears(input.referenceDate, occ), input.growthRate);
-    for (const { rate, label, key } of active) {
+    for (const { rate } of active) {
       const amount = (homeValue * (rate ?? 0)) / 12;
       if (amount === 0) continue;
       pushPosting({
@@ -61,8 +67,8 @@ function pushOwnershipCosts(
         accountId: input.accountId,
         amount: -amount,
         category: "expense",
-        label: `${label}${input.nameSuffix}`,
-        sourceId: `${input.sourceIdPrefix}:${key}`,
+        label,
+        sourceId,
       });
     }
   }
