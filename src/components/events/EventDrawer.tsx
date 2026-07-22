@@ -124,6 +124,13 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         sellNetProceeds: event.netProceeds.toString(),
         sellProceedsAccountId: event.proceedsAccountId ?? "",
       };
+    case "sell_home":
+      return {
+        ...base,
+        sellRealEstateAccountId: event.realEstateAccountId,
+        sellNetProceeds: event.netProceeds.toString(),
+        sellProceedsAccountId: event.proceedsAccountId ?? "",
+      };
     case "have_a_kid":
       return {
         ...base,
@@ -238,6 +245,16 @@ export function EventDrawer({
         };
         schema = sellHomeEventSchema.omit({ id: true });
         break;
+      case "sell_home":
+        candidate = {
+          ...base,
+          type: "sell_home",
+          realEstateAccountId: v.sellRealEstateAccountId,
+          netProceeds: Number(v.sellNetProceeds),
+          proceedsAccountId: v.sellProceedsAccountId || null,
+        };
+        schema = sellHomeEventSchema.omit({ id: true });
+        break;
       case "have_a_kid":
         candidate = {
           ...base,
@@ -340,6 +357,32 @@ export function EventDrawer({
                   />
                 </div>
               )}
+            </>
+          )}
+
+          {selectedType === "sell_home" && (
+            <>
+              {realEstateOptions.length === 0 ? (
+                <p className="text-sm text-dim">
+                  No homes to sell yet -- add one first via &ldquo;Add a Home You Already Own&rdquo; on the Accounts tab.
+                </p>
+              ) : (
+                <Field label="Which Home">
+                  <SelectInput reg={register("sellRealEstateAccountId", { required: true })} options={realEstateOptions} />
+                </Field>
+              )}
+              <Field
+                label="Net Proceeds from Sale"
+                hint="What actually lands in your account: sale price, minus your agent's commission and closing costs, minus whatever's left on the mortgage. E.g. a $500k sale, 6% selling costs ($30k), and a $250k mortgage payoff nets $220k. Can be negative if you'd owe more than the home is worth. Today's dollars -- inflated forward to the sale date; this home's mortgage (if any) is fully retired the same day."
+              >
+                <TextInput reg={register("sellNetProceeds", { required: true })} type="number" step="0.01" />
+              </Field>
+              <Field label="Proceeds Go To">
+                <SelectInput
+                  reg={register("sellProceedsAccountId")}
+                  options={[{ value: "", label: "Extra Savings (Default)" }, ...accountOptions]}
+                />
+              </Field>
             </>
           )}
 
