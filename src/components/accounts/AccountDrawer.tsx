@@ -6,7 +6,8 @@ import { nanoid } from "nanoid";
 import type { Account, AccountClass, Person, RecurrenceFrequency, TaxTreatment } from "@/domain";
 import { accountObjectSchema, categoryForClass } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner, InfoTooltip, inputClass, labelClass } from "@/components/ui/formFields";
+import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, InfoTooltip, inputClass, labelClass } from "@/components/ui/formFields";
+import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 
 const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
@@ -19,10 +20,24 @@ const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
   { value: "loan", label: "Loan" },
 ];
 
+// Real-estate and mortgage accounts are normally edited via the Home drawer,
+// but an UNLINKED mortgage (its home was deleted, or it was imported) still
+// needs to be editable somewhere -- when such an account is opened here, its
+// class is shown (read-only in practice: it's just kept on save).
+const EXTRA_CLASS_LABELS: Partial<Record<AccountClass, string>> = {
+  mortgage: "Mortgage",
+  real_estate: "Real Estate",
+};
+
 /** Mirrors engine's effectiveTaxTreatment: explicit taxTreatment wins, else infer from class. */
 function isEffectivelyTaxDeferred(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
   if (taxTreatment !== "n/a") return taxTreatment === "tax_deferred";
   return cls === "tax_deferred";
+}
+
+function isEffectivelyTaxable(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
+  if (taxTreatment !== "n/a") return taxTreatment === "taxable";
+  return cls === "taxable_investment";
 }
 
 const TAX_TREATMENT_OPTIONS: { value: TaxTreatment; label: string }[] = [
@@ -49,31 +64,36 @@ interface FormValues {
   name: string;
   class: AccountClass;
   ownerId: string;
-  startingBalance: number;
-  growthRatePct: number;
+  /** Money string ("250,000"). */
+  startingBalance: string;
+  /** Percent string ("7" = 7%/yr); blank = matches inflation. */
+  growthRatePct: string;
+  /** Money string; blank = whole balance is basis (no embedded gains). Taxable accounts only. */
+  startingCostBasis: string;
   taxTreatment: TaxTreatment;
   subjectToRMD: boolean;
+  noEarlyWithdrawalPenalty: boolean;
   isExcluded: boolean;
 }
 
-/** Loan terms for class "loan" -- amortized monthly by the engine (see
- *  resolveEvents.ts, which registers any loan/mortgage-class account with
- *  loanTerms for amortization, not just ones created via a buy_home event).
+/** Loan terms for amortized classes (loan, credit card, unlinked mortgage).
  *  `originalPrincipal` isn't user-edited here -- it's set to the account's
  *  current Starting Balance at save time, same convention the buy_home event
  *  and the setup wizard's "home you already own" flow use. */
 interface LoanDraft {
+  /** Percent string ("7" = 7%). */
   annualInterestRatePct: string;
   termYears: string;
+  /** Money string; blank = computed by standard amortization. */
   monthlyPayment: string;
 }
 
 function toLoanDraft(account?: Account): LoanDraft {
   const lt = account?.loanTerms;
   return {
-    annualInterestRatePct: lt ? lt.annualInterestRatePct.toString() : "0.07",
+    annualInterestRatePct: lt ? fractionToPercentStr(lt.annualInterestRatePct) : "7",
     termYears: lt ? Math.round(lt.termMonths / 12).toString() : "5",
-    monthlyPayment: lt?.monthlyPayment?.toString() ?? "",
+    monthlyPayment: lt?.monthlyPayment != null ? moneyToStr(lt.monthlyPayment) : "",
   };
 }
 
@@ -81,6 +101,7 @@ function toLoanDraft(account?: Account): LoanDraft {
 interface GrowthRow {
   key: string;
   startDate: string;
+  /** Percent string. */
   ratePct: string;
 }
 
@@ -94,8 +115,10 @@ interface GrowthRow {
 interface ContribRow {
   key: string;
   startDate: string;
+  /** Money string. */
   amount: string;
   frequency: RecurrenceFrequency;
+  /** Percent string; blank = matches inflation. */
   growthRatePct: string;
   funding: string;
   endDate: string;
@@ -106,16 +129,18 @@ function toFormValues(account?: Account): FormValues {
     name: account?.name ?? "",
     class: account?.class ?? "cash",
     ownerId: account?.ownerId ?? "",
-    startingBalance: account?.startingBalance ?? 0,
-    growthRatePct: account?.growthRatePct ?? 0,
+    startingBalance: account ? moneyToStr(account.startingBalance) : "0",
+    growthRatePct: fractionToPercentStr(account?.growthRatePct),
+    startingCostBasis: account?.startingCostBasis != null ? moneyToStr(account.startingCostBasis) : "",
     taxTreatment: account?.taxTreatment ?? "n/a",
     subjectToRMD: account?.subjectToRMD ?? false,
+    noEarlyWithdrawalPenalty: account?.noEarlyWithdrawalPenalty ?? false,
     isExcluded: account?.isExcluded ?? false,
   };
 }
 
 function toGrowthRows(account?: Account): GrowthRow[] {
-  return (account?.growthRateSchedule ?? []).map((e) => ({ key: nanoid(), startDate: e.startDate, ratePct: e.ratePct.toString() }));
+  return (account?.growthRateSchedule ?? []).map((e) => ({ key: nanoid(), startDate: e.startDate, ratePct: fractionToPercentStr(e.ratePct) }));
 }
 
 /**
@@ -129,9 +154,9 @@ function toContribRows(account?: Account): ContribRow[] {
     return account.contributionSchedule.map((seg) => ({
       key: nanoid(),
       startDate: seg.startDate,
-      amount: seg.amount.toString(),
+      amount: moneyToStr(seg.amount),
       frequency: seg.frequency,
-      growthRatePct: (seg.growthRatePct ?? 0).toString(),
+      growthRatePct: fractionToPercentStr(seg.growthRatePct),
       funding: seg.payrollDeducted ? "paycheck" : "take_home",
       endDate: seg.endDate ?? "",
     }));
@@ -142,9 +167,9 @@ function toContribRows(account?: Account): ContribRow[] {
       {
         key: nanoid(),
         startDate: "",
-        amount: c.amount.toString(),
+        amount: moneyToStr(c.amount),
         frequency: c.frequency,
-        growthRatePct: (c.growthRatePct ?? 0).toString(),
+        growthRatePct: fractionToPercentStr(c.growthRatePct),
         funding: c.payrollDeducted ? "paycheck" : "take_home",
         endDate: c.endDate ?? "",
       },
@@ -168,6 +193,7 @@ export function AccountDrawer({
   const updateAccount = usePlanStore((s) => s.updateAccount);
   const removeAccount = usePlanStore((s) => s.removeAccount);
   const planStartDate = usePlanStore((s) => s.activeScenario().settings.startDate);
+  const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [growthRows, setGrowthRows] = useState<GrowthRow[]>(() => toGrowthRows(account));
@@ -191,6 +217,8 @@ export function AccountDrawer({
         (account.subjectToRMD ||
           account.isExcluded === true ||
           account.taxTreatment !== "n/a" ||
+          account.startingCostBasis != null ||
+          account.noEarlyWithdrawalPenalty === true ||
           !!account.contribution ||
           !!account.contributionSchedule?.length)
     );
@@ -199,6 +227,19 @@ export function AccountDrawer({
   const selectedClass = watch("class");
   const selectedTaxTreatment = watch("taxTreatment");
   const showRmdCheckbox = isEffectivelyTaxDeferred(selectedClass, selectedTaxTreatment);
+  const showCostBasis = isEffectivelyTaxable(selectedClass, selectedTaxTreatment);
+  const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
+
+  // Amortized classes (and, defensively, an unlinked mortgage edited here).
+  const isAmortized = selectedClass === "loan" || selectedClass === "credit_card" || selectedClass === "mortgage";
+
+  const classOptions = (() => {
+    const opts = [...CLASS_OPTIONS];
+    if (account && !opts.some((o) => o.value === account.class)) {
+      opts.unshift({ value: account.class, label: EXTRA_CLASS_LABELS[account.class] ?? account.class });
+    }
+    return opts;
+  })();
 
   const addGrowthRow = () => setGrowthRows((rows) => [...rows, { key: nanoid(), startDate: "", ratePct: "" }]);
   const updateGrowthRow = (key: string, patch: Partial<GrowthRow>) =>
@@ -213,7 +254,7 @@ export function AccountDrawer({
       const funding = last?.funding ?? (selectedTaxTreatment === "tax_deferred" ? "paycheck" : "take_home");
       return [
         ...rows,
-        { key: nanoid(), startDate: "", amount: "", frequency: last?.frequency ?? "monthly", growthRatePct: "0", funding, endDate: "" },
+        { key: nanoid(), startDate: "", amount: "", frequency: last?.frequency ?? "monthly", growthRatePct: "", funding, endDate: "" },
       ];
     });
   const updateContribRow = (key: string, patch: Partial<ContribRow>) =>
@@ -222,25 +263,26 @@ export function AccountDrawer({
 
   const onSubmit = (values: FormValues) => {
     const cls = values.class;
+    const startingBalance = moneyStrToNumber(values.startingBalance) ?? 0;
 
     const growthRateSchedule = growthRows
-      .filter((r) => r.startDate && r.ratePct.trim() !== "")
-      .map((r) => ({ startDate: r.startDate, ratePct: Number(r.ratePct) }));
+      .filter((r) => r.startDate && percentStrToFraction(r.ratePct) !== null)
+      .map((r) => ({ startDate: r.startDate, ratePct: percentStrToFraction(r.ratePct)! }));
 
     // Every contribution segment with a positive amount counts. A single
     // segment with a blank start date collapses back to the simple
     // `contribution` field (no schedule churn for the common case); anything
     // else becomes a `contributionSchedule`.
-    const validContribRows = contribRows.filter((r) => r.amount.trim() !== "" && Number(r.amount) > 0);
+    const validContribRows = contribRows.filter((r) => (moneyStrToNumber(r.amount) ?? 0) > 0);
     let contribution = null as Account["contribution"];
     let contributionSchedule: Account["contributionSchedule"];
 
     if (validContribRows.length === 1 && validContribRows[0].startDate.trim() === "") {
       const r = validContribRows[0];
       contribution = {
-        amount: Number(r.amount),
+        amount: moneyStrToNumber(r.amount)!,
         frequency: r.frequency,
-        growthRatePct: Number(r.growthRatePct) || 0,
+        growthRatePct: percentStrToFraction(r.growthRatePct),
         payrollDeducted: r.funding === "paycheck",
         endDate: r.endDate.trim() === "" ? null : r.endDate,
       };
@@ -256,48 +298,69 @@ export function AccountDrawer({
       }
       contributionSchedule = validContribRows.map((r) => ({
         startDate: r.startDate.trim() || planStartDate,
-        amount: Number(r.amount),
+        amount: moneyStrToNumber(r.amount)!,
         frequency: r.frequency,
-        growthRatePct: Number(r.growthRatePct) || 0,
+        growthRatePct: percentStrToFraction(r.growthRatePct),
         payrollDeducted: r.funding === "paycheck",
         endDate: r.endDate.trim() === "" ? null : r.endDate,
       }));
     }
 
     // Amortized classes don't grow via growthRatePct at all (see
-    // forecastScenario.ts's monthly growth step, which skips credit_card/
-    // loan/mortgage entirely) -- force it to 0 rather than leave a stale,
-    // misleading rate on the record.
-    const isLoan = cls === "loan";
-    const termMonths = Math.max(1, Math.round(Number(loanDraft.termYears) || 0) * 12);
-    const loanTerms: Account["loanTerms"] = isLoan
-      ? {
-          originalPrincipal: Number(values.startingBalance) || 0,
-          originationDate: planStartDate,
-          annualInterestRatePct: Number(loanDraft.annualInterestRatePct) || 0,
-          termMonths,
-          monthlyPayment: loanDraft.monthlyPayment.trim() !== "" ? Number(loanDraft.monthlyPayment) : undefined,
-        }
-      : undefined;
+    // forecastScenario.ts's monthly growth step) -- force it to an explicit
+    // 0 rather than leave a stale or "matches inflation" rate on the record.
+    let loanTerms: Account["loanTerms"];
+    if (isAmortized) {
+      const annualInterestRatePct = percentStrToFraction(loanDraft.annualInterestRatePct) ?? 0;
+      const termMonths = Math.max(1, Math.round(Number(loanDraft.termYears) || 0) * 12);
+      const monthlyPayment = moneyStrToNumber(loanDraft.monthlyPayment) ?? undefined;
+      // A payment below interest-only would negative-amortize forever --
+      // catch it here instead of letting the balance silently grow unbounded.
+      if (monthlyPayment != null && monthlyPayment <= (startingBalance * annualInterestRatePct) / 12) {
+        setError(
+          `That monthly payment doesn't cover the interest (~$${Math.ceil((startingBalance * annualInterestRatePct) / 12).toLocaleString()}/mo) -- the balance would grow forever. Raise the payment or leave it blank to auto-calculate.`
+        );
+        return;
+      }
+      loanTerms = {
+        // Preserve the original origination info when editing an existing loan.
+        ...(account?.loanTerms ?? {}),
+        originalPrincipal: startingBalance,
+        originationDate: account?.loanTerms?.originationDate ?? planStartDate,
+        annualInterestRatePct,
+        termMonths,
+        monthlyPayment,
+      };
+    }
 
+    // Merge over the existing account rather than rebuilding it -- fields
+    // this form doesn't edit (isExtraSavings, startDate, linkedLiabilityId,
+    // property rates, ...) must survive a save untouched. (A dropped
+    // isExtraSavings flag used to silently break the spending hub.)
     const candidate = {
+      ...(account ?? {}),
       name: values.name.trim(),
       class: cls,
       category: categoryForClass(cls),
       ownerId: values.ownerId || null,
-      startingBalance: Number(values.startingBalance),
-      growthRatePct: cls === "loan" || cls === "credit_card" ? 0 : Number(values.growthRatePct),
+      startingBalance,
+      startingCostBasis: isEffectivelyTaxable(cls, values.taxTreatment)
+        ? moneyStrToNumber(values.startingCostBasis) ?? undefined
+        : undefined,
+      growthRatePct: isAmortized ? 0 : percentStrToFraction(values.growthRatePct),
       isExcluded: values.isExcluded,
       taxTreatment: values.taxTreatment,
       // A Roth account (class or explicit taxTreatment) can never be subject
       // to RMDs -- clear a stale checked box left over from before the
       // account was marked/reclassed as tax-free.
       subjectToRMD: values.subjectToRMD && isEffectivelyTaxDeferred(cls, values.taxTreatment),
+      noEarlyWithdrawalPenalty: values.noEarlyWithdrawalPenalty || undefined,
       contribution,
       growthRateSchedule: growthRateSchedule.length > 0 ? growthRateSchedule : undefined,
       contributionSchedule,
       loanTerms,
     };
+    delete (candidate as { id?: string }).id;
 
     const result = accountObjectSchema.omit({ id: true }).safeParse(candidate);
     if (!result.success) {
@@ -318,12 +381,12 @@ export function AccountDrawer({
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Joint Checking" />
         </Field>
         <Field label="Class">
-          <SelectInput reg={register("class")} options={CLASS_OPTIONS} />
+          <SelectInput reg={register("class")} options={classOptions} />
         </Field>
         <Field label="Starting Balance">
-          <TextInput reg={register("startingBalance", { valueAsNumber: true })} type="number" step="0.01" />
+          <MoneyInput reg={register("startingBalance")} placeholder="e.g. 25,000" />
         </Field>
-        {selectedClass === "loan" && (
+        {isAmortized && (
           <div className="rounded-md border border-border p-3">
             <div className="mb-2 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
               Loan Details
@@ -331,12 +394,10 @@ export function AccountDrawer({
             </div>
             <div className="flex flex-wrap items-end gap-2">
               <label className={labelClass}>
-                Interest rate (e.g. 0.07 for 7%)
-                <input
-                  className={inputClass}
-                  type="number"
-                  step="0.001"
+                Interest rate (per year)
+                <PercentInput
                   value={loanDraft.annualInterestRatePct}
+                  placeholder="e.g. 7"
                   onChange={(e) => setLoanDraft((d) => ({ ...d, annualInterestRatePct: e.target.value }))}
                 />
               </label>
@@ -356,30 +417,27 @@ export function AccountDrawer({
                   Monthly payment (optional)
                   <InfoTooltip text="Leave blank to calculate automatically from the balance, rate, and remaining term." />
                 </span>
-                <input
-                  className={inputClass}
-                  type="number"
-                  step="0.01"
-                  placeholder="auto"
+                <MoneyInput
                   value={loanDraft.monthlyPayment}
+                  placeholder="auto"
                   onChange={(e) => setLoanDraft((d) => ({ ...d, monthlyPayment: e.target.value }))}
                 />
               </label>
             </div>
           </div>
         )}
-        {selectedClass !== "loan" && selectedClass !== "credit_card" && (
+        {!isAmortized && (
           <Field
-            label="Annual Growth Rate (e.g. 0.07 for 7%)"
+            label="Annual Growth Rate"
             hint={
-              "Use a nominal rate (i.e. the rate you'd actually see reported, already including inflation) — not an inflation-adjusted \"real\" rate. For example, use 0.07 for a 7% stock market return, not 0.045 for its inflation-adjusted equivalent." +
+              `Percent per year, e.g. 7 for 7%. Use a nominal rate (the rate you'd actually see reported, already including inflation). Leave blank to match your inflation assumption (currently ${inflationPctLabel}%).` +
               (growthRows.length > 0 ? " Applies until the first scheduled change below." : "")
             }
           >
-            <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
+            <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
           </Field>
         )}
-        {selectedClass !== "loan" && selectedClass !== "credit_card" && growthRows.map((row) => (
+        {!isAmortized && growthRows.map((row) => (
           <div key={row.key} className="flex items-end gap-2 rounded-md border border-border p-2">
             <label className={labelClass}>
               Starting
@@ -392,12 +450,9 @@ export function AccountDrawer({
             </label>
             <label className={labelClass}>
               New rate
-              <input
-                className={inputClass}
-                type="number"
-                step="0.001"
-                placeholder="e.g. 0.05"
+              <PercentInput
                 value={row.ratePct}
+                placeholder="e.g. 5"
                 onChange={(e) => updateGrowthRow(row.key, { ratePct: e.target.value })}
               />
             </label>
@@ -406,7 +461,7 @@ export function AccountDrawer({
             </button>
           </div>
         ))}
-        {selectedClass !== "loan" && selectedClass !== "credit_card" && (
+        {!isAmortized && (
           <button
             type="button"
             onClick={addGrowthRow}
@@ -436,8 +491,22 @@ export function AccountDrawer({
             <Field label="Tax Treatment (blank/N-A infers from class)">
               <SelectInput reg={register("taxTreatment")} options={TAX_TREATMENT_OPTIONS} />
             </Field>
+            {showCostBasis && (
+              <Field
+                label="Cost Basis Today (optional)"
+                hint="What you've actually contributed to this account -- the rest of the balance is unrealized gains that get taxed when sold. Leave blank if the whole balance is basis (no embedded gains)."
+              >
+                <MoneyInput reg={register("startingCostBasis")} placeholder="blank = whole balance" />
+              </Field>
+            )}
             {showRmdCheckbox && (
-              <CheckboxInput reg={register("subjectToRMD")} label="Subject to RMDs (age 73+)" />
+              <>
+                <CheckboxInput reg={register("subjectToRMD")} label="Subject to RMDs (at 73, or 75 if born 1960+)" />
+                <CheckboxInput
+                  reg={register("noEarlyWithdrawalPenalty")}
+                  label="No 10% early-withdrawal penalty (72(t) SEPP / rule of 55)"
+                />
+              </>
             )}
 
             <div className="rounded-md border border-border p-3">
@@ -474,12 +543,9 @@ export function AccountDrawer({
                     </label>
                     <label className={labelClass}>
                       Amount (per occurrence)
-                      <input
-                        className={inputClass}
-                        type="number"
-                        step="0.01"
-                        placeholder="e.g. 1500"
+                      <MoneyInput
                         value={row.amount}
+                        placeholder="e.g. 1,500"
                         onChange={(e) => updateContribRow(row.key, { amount: e.target.value })}
                       />
                     </label>
@@ -500,13 +566,13 @@ export function AccountDrawer({
                   </div>
                   <div className="flex flex-wrap items-end gap-2">
                     <label className={labelClass}>
-                      Growth rate (optional, actual)
-                      <input
-                        className={inputClass}
-                        type="number"
-                        step="0.001"
-                        placeholder="0"
+                      <span className="inline-flex items-center gap-1">
+                        Growth rate (per year)
+                        <InfoTooltip text={`How the contribution amount itself rises over time. Blank = matches inflation (${inflationPctLabel}%); 0 = stays flat.`} />
+                      </span>
+                      <PercentInput
                         value={row.growthRatePct}
+                        placeholder={`blank = inflation`}
                         onChange={(e) => updateContribRow(row.key, { growthRatePct: e.target.value })}
                       />
                     </label>

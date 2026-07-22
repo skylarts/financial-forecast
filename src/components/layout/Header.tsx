@@ -174,7 +174,7 @@ export function Header({ scenario }: { scenario: Scenario }) {
         <div className="flex flex-col">
           <h1 className="text-xl font-bold">{isJoy ? "Forecast ✨" : "Forecast"}</h1>
           {isJoy && (
-            <span className="text-xs font-medium text-accent">Bright days ahead — let&apos;s grow your money ☀️</span>
+            <span className="joy-tagline text-xs font-medium">Bright days ahead — let&apos;s grow your money ☀️</span>
           )}
         </div>
         {lastSavedAt > 0 && <span className="text-xs text-dim">Saved to this browser</span>}

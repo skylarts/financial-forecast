@@ -70,6 +70,11 @@ function AccountRow({
         <td className="cursor-pointer py-2 pl-10" onClick={() => setExpanded((v) => !v)}>
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}
+          {account.isExtraSavings && (
+            <span className="ml-2 text-xs text-dim" title="The spending hub: income lands here, expenses pay from here, and each month's surplus is swept out to your split targets -- so a $0 balance is normal and healthy.">
+              (spending hub)
+            </span>
+          )}
           {account.isExcluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
           {editable && (
             <button
@@ -314,7 +319,8 @@ export function AccountsTable({
         </div>
         <p className="border-t border-border px-2 py-2 text-xs text-dim">
           Click an account to see its year-by-year rollforward. A home&rsquo;s mortgage is edited as part of
-          that home, not standalone.
+          that home, not standalone. Extra Savings is the spending hub &mdash; its surplus is swept out monthly,
+          so a $0 balance there is normal.
         </p>
       </div>
       <AccountDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} account={drawerAccount} people={people} />

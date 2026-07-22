@@ -102,8 +102,12 @@ export function CashFlowTable({
     });
   const isOpen = (key: string) => expanded.has(key);
 
-  // Deflate a nominal figure for the given visible-year index when in real mode.
+  // Deflate a nominal FLOW for the given visible-year index when in real mode.
+  // Flows happen throughout the year, so they use the mid-year flow deflator;
+  // the ending-balance row uses the year-end balance deflator instead.
   const d = (value: number, yearIndex: number) =>
+    dollarMode === "real" ? value / (years[yearIndex].flowInflationDeflator ?? years[yearIndex].inflationDeflator) : value;
+  const dBalance = (value: number, yearIndex: number) =>
     dollarMode === "real" ? value / years[yearIndex].inflationDeflator : value;
 
   // Per-year id→amount lookup maps + union id lists for each drill-down section.
@@ -145,6 +149,10 @@ export function CashFlowTable({
   const hasWithdrawals = withdrawalGroups.length > 0;
   const hasSaved = years.some((y) => y.cashFlow.afterTaxContributionTotal + y.cashFlow.surplusRouted > 0.005);
   const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
+  const hasBenefitWithholding = years.some((y) => Math.abs(y.cashFlow.incomeTaxWithheldFromCash) > 0.5);
+  const hasSettlement = years.some((y) => Math.abs(y.cashFlow.taxSettlement) > 0.5);
+  const hasOtherActivity = years.some((y) => Math.abs(y.cashFlow.otherAccountActivity) > 0.5);
+  const hasFederalTax = years.some((y) => y.cashFlow.federalTaxTotal > 0.5);
 
   if (years.length === 0) {
     return (
@@ -191,7 +199,7 @@ export function CashFlowTable({
   const summaryRow = (
     label: string,
     get: (yi: number) => number,
-    opts?: { totalIsMeaningful?: boolean; strong?: boolean; hint?: string }
+    opts?: { totalIsMeaningful?: boolean; strong?: boolean; hint?: string; balance?: boolean }
   ) => (
     <tr className={`border-t border-border ${opts?.strong ? "bg-background/40" : ""}`}>
       <td className="py-2.5 pl-2 font-bold">
@@ -201,7 +209,7 @@ export function CashFlowTable({
         </span>
       </td>
       {years.map((y, yi) => {
-        const v = d(get(yi), yi);
+        const v = opts?.balance ? dBalance(get(yi), yi) : d(get(yi), yi);
         return (
           <td key={y.year} className="py-2 pr-3 text-right font-semibold tabular-nums">
             <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
@@ -217,6 +225,31 @@ export function CashFlowTable({
       ) : (
         totalCell(totalOf(get), { signed: true })
       )}
+    </tr>
+  );
+
+  // A plain reconciling line item (signed, dimmer than a summary row).
+  const reconcileRow = (label: string, get: (yi: number) => number, hint?: string) => (
+    <tr className="text-dim hover:bg-accent/15">
+      <td className="py-2 pl-2">
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {hint && <InfoTooltip text={hint} />}
+        </span>
+      </td>
+      {years.map((y, yi) => {
+        const v = d(get(yi), yi);
+        return (
+          <td key={y.year} className="py-2 pr-3 text-right tabular-nums">
+            {Math.abs(v) < 0.5 ? (
+              <span className="text-dim">—</span>
+            ) : (
+              <span className={v < 0 ? "text-negative" : ""}>{formatMoney(v)}</span>
+            )}
+          </td>
+        );
+      })}
+      {totalCell(totalOf(get), { signed: true })}
     </tr>
   );
 
@@ -280,12 +313,14 @@ export function CashFlowTable({
               hint: "Income minus expenses. When it goes negative (typically once income drops in retirement), Withdrawals below pull from your accounts to cover it.",
             })}
 
-            {/* Withdrawals -- comprehensive: everything that left an account, grouped by tax, with per-account tax. */}
+            {/* Withdrawals -- header shows the NET amount that actually reached
+                cash (what the reconciliation needs); the drill-down below shows
+                each source account GROSS with its estimated withholding. */}
             {sectionHeader(
               "withdrawals",
-              "Withdrawals",
-              (yi) => years[yi].cashFlow.withdrawalsByAccount.reduce((s, w) => s + w.gross, 0),
-              "Planned withdrawals, RMDs, and the taxes they trigger -- shown gross by account, grouped by tax treatment. A transfer between your own accounts also appears here for visibility, but doesn't change your total cash."
+              "Withdrawals (net to cash)",
+              (yi) => years[yi].cashFlow.withdrawalsToCashNet,
+              "Money pulled from your accounts that actually reached your spending: planned drawdowns and RMDs, net of tax withheld at the source. Expand to see each account's GROSS withdrawal (net + estimated withholding) -- so the expanded rows intentionally total more than this line. A transfer between your own accounts also appears in the breakdown for visibility."
             )}
             {isOpen("withdrawals") &&
               (hasWithdrawals
@@ -330,31 +365,22 @@ export function CashFlowTable({
                   ))
                 : emptyRow("No withdrawals in this range."))}
 
-            {/* Federal tax -- the exact bracket-computed bill for the year (RMDs/withdrawals,
-                taxable Social Security, pension, and capital gains combined), not a sum of the
-                approximate per-withdrawal figures above. Expandable into its exact components,
-                which sum to this total. */}
-            <tr className="border-t border-border">
-              <td className="py-2.5 pl-2 font-bold">
-                <span className="inline-flex items-center gap-1">
-                  <ToggleLabel label="Federal tax" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
-                  <InfoTooltip text="The exact bill for the year from real IRS brackets on actual realized income. Expand to see exactly which income sources it came from. The 'estimated withholding' lines under Withdrawals are an earlier, separate estimate and won't exactly match this -- that's expected." />
-                </span>
-              </td>
-              {years.map((y, yi) => {
-                const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
-                return (
-                  <td key={y.year} className="py-2 pr-3 text-right font-semibold tabular-nums">
-                    <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
-                  </td>
-                );
-              })}
-              {totalCell(totalOf((yi) => -years[yi].cashFlow.federalTaxTotal), { signed: true })}
-            </tr>
-            {isOpen("federalTax") &&
-              (federalTaxComponentItems.length
-                ? itemRows(federalTaxComponentItems, federalTaxComponentMaps)
-                : emptyRow("No federal tax in this range."))}
+            {/* Cash-side tax rows: withholding taken from benefit deposits, and
+                the December true-up that settles withholding onto the exact
+                bracket bill. Together with the net Withdrawals line above,
+                these make the visible rows sum exactly to Net change in cash. */}
+            {hasBenefitWithholding &&
+              reconcileRow(
+                "Tax withheld on benefits",
+                (yi) => -years[yi].cashFlow.incomeTaxWithheldFromCash,
+                "Estimated tax withheld from Social Security / pension deposits before they reach your cash (both are entered gross)."
+              )}
+            {hasSettlement &&
+              reconcileRow(
+                "Tax true-up (year-end settlement)",
+                (yi) => years[yi].cashFlow.taxSettlement,
+                "Each December the estimated withholding is settled against the exact bracket-computed bill -- positive is a refund back into cash, negative is extra tax owed. After this, the year's actual cash tax equals the Federal tax line below exactly."
+              )}
 
             {/* Saved to accounts */}
             {hasSaved &&
@@ -384,28 +410,73 @@ export function CashFlowTable({
               </>
             )}
 
-            {/* Interest earned directly on cash, and any edge-case direct hub
-                activity (a transfer to/from checking, income landed straight in
-                an investment) -- shown only when materially present, so the
-                statement stays clean in the common case while still always
-                reconciling exactly to the bottom line. */}
+            {/* Interest earned directly on cash, and any direct hub activity
+                (a down payment from cash, home-sale proceeds, a custom
+                transfer touching the hub) -- shown whenever present so the
+                visible rows always sum exactly to the bottom line. */}
             {hasCashInterest && (
               <tr className="text-dim hover:bg-accent/15">
                 <td className="py-2 pl-2">Interest earned on cash</td>
                 {cells((yi) => years[yi].cashFlow.cashInterest)}
               </tr>
             )}
+            {hasOtherActivity &&
+              reconcileRow(
+                "Other account activity",
+                (yi) => years[yi].cashFlow.otherAccountActivity,
+                "One-off flows that touched cash directly: a home purchase down payment, home-sale proceeds, a custom transfer to/from the hub, net of income deposited straight into an investment."
+              )}
             {/* Net change in cash -- the reconciling bottom line. Always exactly
                 equals every row above summed, because it's measured directly
                 from the actual simulated cash balance, not derived from them. */}
             {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, {
               strong: true,
-              hint: "Operating result + after-tax withdrawals that reached your spending, minus money saved into accounts. Lands near $0 in a year where you draw just what you need.",
+              hint: "The measured change in Extra Savings' balance this year -- exactly the sum of the rows above: operating result, net withdrawals, tax rows, saving, interest, and other activity. Lands near $0 in a year where you draw just what you need.",
             })}
             {summaryRow("Ending cash on hand", (yi) => years[yi].cashFlow.endingCashBalance, {
               totalIsMeaningful: false,
-              hint: "Your total balance across all cash accounts, not just Extra Savings -- a small gap versus the rows above is expected. Not summed in the Total column since it's a balance, not a flow.",
+              balance: true,
+              hint: "Your total balance across all cash accounts, not just Extra Savings -- a broader figure than the reconciliation above. Not summed in the Total column since it's a balance, not a flow.",
             })}
+
+            {/* Federal tax -- informational: the exact bracket-computed bill for
+                the year. Thanks to the true-up row above, this IS the cash tax
+                the household actually paid for the year; it's shown separately
+                (not part of the reconciliation sum) because most of it was
+                withheld at the source accounts, not from cash. */}
+            {hasFederalTax && (
+              <>
+                <tr className="border-t-2 border-border bg-background/40">
+                  <td className="py-2.5 pl-2 font-bold" colSpan={col}>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
+                      Taxes (informational)
+                      <InfoTooltip text="Not part of the cash reconciliation above -- most tax is withheld inside the source accounts (it shows up in each account's gross withdrawal), with the year-end true-up settling the difference into cash." />
+                    </span>
+                  </td>
+                </tr>
+                <tr className="border-t border-border">
+                  <td className="py-2.5 pl-2 font-bold">
+                    <span className="inline-flex items-center gap-1">
+                      <ToggleLabel label="Federal tax (actual bill)" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
+                      <InfoTooltip text="The exact bill for the year from real IRS brackets on actual realized income -- and, after the year-end true-up, exactly what the household actually paid. Expand to see which income sources it came from." />
+                    </span>
+                  </td>
+                  {years.map((y, yi) => {
+                    const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
+                    return (
+                      <td key={y.year} className="py-2 pr-3 text-right font-semibold tabular-nums">
+                        <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
+                      </td>
+                    );
+                  })}
+                  {totalCell(totalOf((yi) => -years[yi].cashFlow.federalTaxTotal), { signed: true })}
+                </tr>
+                {isOpen("federalTax") &&
+                  (federalTaxComponentItems.length
+                    ? itemRows(federalTaxComponentItems, federalTaxComponentMaps)
+                    : emptyRow("No federal tax in this range."))}
+              </>
+            )}
           </tbody>
         </table>
       </div>

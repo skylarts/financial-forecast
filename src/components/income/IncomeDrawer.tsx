@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { incomeSourceSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 
@@ -28,11 +29,13 @@ const FREQUENCIES: { value: RecurrenceFrequency; label: string }[] = [
 interface FormValues {
   name: string;
   ownerId: string;
-  amount: number;
+  /** Money string ("7,500"). */
+  amount: string;
   frequency: RecurrenceFrequency;
   startDate: string;
   endDate: string;
-  growthRatePct: number;
+  /** Percent string ("5" = 5%/yr); blank = matches inflation. */
+  growthRatePct: string;
   intervalYears: string;
   depositAccountId: string;
   category: IncomeCategory;
@@ -43,11 +46,11 @@ function toFormValues(income?: IncomeSource): FormValues {
   return {
     name: income?.name ?? "",
     ownerId: income?.ownerId ?? "",
-    amount: income?.amount ?? 0,
+    amount: income ? moneyToStr(income.amount) : "",
     frequency: income?.frequency ?? "monthly",
     startDate: income?.startDate ?? "",
     endDate: income?.endDate ?? "",
-    growthRatePct: income?.growthRatePct ?? 0,
+    growthRatePct: fractionToPercentStr(income?.growthRatePct),
     intervalYears: income?.intervalYears?.toString() ?? "",
     depositAccountId: income?.depositAccountId ?? "",
     category: income?.category ?? "salary",
@@ -76,21 +79,32 @@ export function IncomeDrawer({
   const [advancedOpen, setAdvancedOpen] = useState(
     !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
   );
+  const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
+  const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
-  const { register, handleSubmit, watch } = useForm<FormValues>({
+  const { register, handleSubmit, watch, reset } = useForm<FormValues>({
     defaultValues: toFormValues(income),
   });
   const category = watch("category");
+
+  // Re-sync the form whenever the drawer opens on a different income item --
+  // without this, a reused drawer instance shows the previous item's values.
+  useEffect(() => {
+    reset(toFormValues(income));
+    setAdjustments(income?.adjustments ?? []);
+    setError(null);
+    setAdvancedOpen(!!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true));
+  }, [income, open, reset]);
 
   const onSubmit = (values: FormValues) => {
     const candidate = {
       name: values.name.trim(),
       ownerId: values.ownerId || null,
-      amount: Number(values.amount),
+      amount: moneyStrToNumber(values.amount) ?? 0,
       frequency: values.frequency,
       startDate: values.startDate,
       endDate: values.endDate || null,
-      growthRatePct: Number(values.growthRatePct) || 0,
+      growthRatePct: percentStrToFraction(values.growthRatePct),
       intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       depositAccountId: values.depositAccountId === "" ? null : values.depositAccountId,
       category: values.category,
@@ -130,7 +144,7 @@ export function IncomeDrawer({
               : "Per occurrence, today's dollars."
           }
         >
-          <TextInput reg={register("amount", { valueAsNumber: true, required: true })} type="number" step="0.01" />
+          <MoneyInput reg={register("amount", { required: true })} placeholder="e.g. 7,500" />
         </Field>
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
@@ -157,14 +171,14 @@ export function IncomeDrawer({
           <TextInput reg={register("endDate")} type="date" />
         </Field>
         <Field
-          label="Annual Growth Rate (e.g. 0.05 for 5%/yr)"
+          label="Annual Growth Rate"
           hint={
             category === "social_security"
-              ? "Actual raises, including inflation. Social Security grows once per year (a COLA), not continuously -- use your inflation assumption to keep it flat in today's dollars, or a smaller rate to model a reduced COLA."
-              : "Actual raises, including inflation."
+              ? `Percent per year, e.g. 2.5 for a 2.5% COLA -- actual raises, including inflation. Social Security steps once each January, not continuously. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the benefit flat in today's dollars.`
+              : `Percent per year, e.g. 5 for 5% -- actual raises, including inflation. Blank = matches your inflation assumption (${inflationPctLabel}%); 0 = flat in nominal terms (shrinks in real terms).`
           }
         >
-          <TextInput reg={register("growthRatePct", { valueAsNumber: true })} type="number" step="0.001" />
+          <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
         </Field>
 
         <button

@@ -16,6 +16,15 @@ export const RMD_DIVISORS: Record<number, number> = {
 
 export const RMD_START_AGE = 73;
 
+/**
+ * SECURE 2.0 first-RMD age by birth year: 73 for people born 1951-1959,
+ * 75 for anyone born 1960 or later. (Born 1950 or earlier already started
+ * under the old rules; 73 is the right floor for a forward-looking forecast.)
+ */
+export function rmdStartAgeForBirthYear(birthYear: number): number {
+  return birthYear >= 1960 ? 75 : 73;
+}
+
 export function rmdDivisor(age: number): number | null {
   if (age < RMD_START_AGE) return null;
   const maxAge = Math.max(...Object.keys(RMD_DIVISORS).map(Number));

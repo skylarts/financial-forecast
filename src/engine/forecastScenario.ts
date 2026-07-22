@@ -2,7 +2,6 @@ import type {
   Id,
   ISODate,
   Scenario,
-  ForecastSettings,
   AccountYearRollforward,
   CashFlowYearRow,
   YearSnapshot,
@@ -12,9 +11,9 @@ import type {
   SplitStop,
   DrainStop,
 } from "@/domain";
-import { ageOn, compareDates, eachMonthStart, endOfYear, yearOf } from "./dateMath";
+import { ageOn, compareDates, eachMonthStart, elapsedYears, endOfYear, yearOf } from "./dateMath";
 import { monthlyRateFromAnnual } from "./growth";
-import { rmdDivisor } from "./rmd";
+import { rmdDivisor, rmdStartAgeForBirthYear } from "./rmd";
 import { computeMonthlyPayment, amortizeMonth } from "./amortization";
 import { resolveEvents } from "./resolveEvents";
 import { resolvePrimarySpendingAccountId } from "./moneyFlow";
@@ -61,6 +60,10 @@ interface YearAccumulator {
   hubTransferNet: number;
   /** Taxes paid on RMDs and shortfall withdrawals (cash leaving the household). */
   taxesPaid: number;
+  /** Portion of taxesPaid that was withheld from SS/pension deposits landing ON the hub (needed for the hub-scoped reconcile). */
+  incomeWithheldFromHub: number;
+  /** 10% early-withdrawal penalties charged on pre-59½ tax-deferred withdrawals (part of taxesPaid). */
+  earlyWithdrawalPenalties: number;
   /** Cash outflow from after-tax contributions (reduces net cash flow). */
   afterTaxContributions: number;
   /** Positive per-source inflows, keyed by Posting.sourceId. */
@@ -95,6 +98,8 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
     directIncomeToOtherAccounts: 0,
     hubTransferNet: 0,
     taxesPaid: 0,
+    incomeWithheldFromHub: 0,
+    earlyWithdrawalPenalties: 0,
     afterTaxContributions: 0,
     incomeByItem: new Map(),
     expenseByItem: new Map(),
@@ -112,7 +117,7 @@ function addTo(map: Map<Id, number>, key: Id, amount: number): void {
   map.set(key, (map.get(key) ?? 0) + amount);
 }
 
-function effectiveAnnualRate(account: EngineAccount, month: string): number {
+function effectiveAnnualRate(account: EngineAccount, month: string, inflationRatePct: number): number {
   // A growthRateSchedule entry overrides everything else once it's started --
   // pick the last one (by startDate) that has begun as of this month.
   const overrides = account.growthRateOverrides;
@@ -127,7 +132,9 @@ function effectiveAnnualRate(account: EngineAccount, month: string): number {
   if (account.class === "real_estate" && account.propertyGrowthRatePct !== undefined) {
     return account.propertyGrowthRatePct;
   }
-  return account.growthRatePct;
+  // A blank (null) growth rate means "keep pace with the plan's inflation
+  // assumption" -- the app-wide convention for every growth-rate input.
+  return account.growthRatePct ?? inflationRatePct;
 }
 
 /**
@@ -232,10 +239,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // order IS the priority -- no numeric priority fields anywhere.
   const primarySpendingAccountId = resolvePrimarySpendingAccountId(activeAccounts);
   const extraSavingsAccount = primarySpendingAccountId ? accountById.get(primarySpendingAccountId) : undefined;
+  // Split targets must be assets -- surplus "deposited" into a liability
+  // would corrupt its amount-owed balance (mirrors the drainStops filter).
   const splitStops = moneyFlow.splitOrder
     .map((stop) => {
       const account = accountById.get(stop.accountId);
-      return account && !account.isExcluded ? { account, stop } : null;
+      return account && account.category === "asset" && !account.isExcluded ? { account, stop } : null;
     })
     .filter((x): x is { account: EngineAccount; stop: SplitStop } => x !== null);
   const drainStops = moneyFlow.drainOrder
@@ -285,8 +294,23 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const contributionFromPaycheck = new Map<Id, boolean>();
 
   let currentYear = yearOf(settings.startDate);
+  // The month being simulated -- advanced at the top of the loop so the
+  // withdrawal-tax helpers below (defined once, used every month) can do
+  // age-dependent checks like the pre-59½ early-withdrawal penalty.
+  let currentMonth: ISODate = settings.startDate;
   let acc = freshAccumulator(accountIds);
   const yearStartBalances = new Map<Id, number>(balances);
+
+  const personById = new Map(scenario.household.people.map((p) => [p.id, p]));
+  const EARLY_WITHDRAWAL_PENALTY_RATE = 0.1;
+  /** 10% penalty applies to a tax-deferred withdrawal when the owner is under 59½ and the account isn't flagged exempt (72(t) / rule of 55). */
+  const earlyWithdrawalPenaltyRate = (account: EngineAccount): number => {
+    if (account.noEarlyWithdrawalPenalty) return 0;
+    if (effectiveTaxTreatment(account) !== "tax_deferred") return 0;
+    const owner = account.ownerId ? personById.get(account.ownerId) : undefined;
+    if (!owner) return 0; // jointly-held/unowned: no age to test against
+    return elapsedYears(owner.birthDate, currentMonth) < 59.5 ? EARLY_WITHDRAWAL_PENALTY_RATE : 0;
+  };
 
   // New money landing in a taxable_investment account (a contribution, a
   // routed surplus sweep, a rebalanced transfer) is basis, not gain --
@@ -307,7 +331,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const estimatedWithdrawalRate = (account: EngineAccount): number => {
     const treatment = effectiveTaxTreatment(account);
     const rates = ratesForYear(currentYear);
-    if (treatment === "tax_deferred") return rates.ordinaryMarginalRate;
+    if (treatment === "tax_deferred") return rates.ordinaryMarginalRate + earlyWithdrawalPenaltyRate(account);
     if (treatment === "taxable") {
       const bal = balances.get(account.id) ?? 0;
       const bas = basis.get(account.id) ?? 0;
@@ -337,6 +361,26 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     let tax = 0;
     if (treatment === "tax_deferred") {
       tax = amount * rates.ordinaryMarginalRate;
+      // 10% early-withdrawal penalty before the owner turns 59½ -- charged
+      // at the source like the ordinary-income withholding, counted in the
+      // exact year-end bill (see federalTaxByComponent), and surfaced as a
+      // once-per-year warning so it never silently drains a retire-early plan.
+      const penaltyRate = earlyWithdrawalPenaltyRate(src);
+      if (penaltyRate > 0) {
+        const penalty = amount * penaltyRate;
+        tax += penalty;
+        acc.earlyWithdrawalPenalties += penalty;
+        const warnKey = `${currentYear}:penalty:${src.id}`;
+        if (!warnedThisYear.has(warnKey)) {
+          warnedThisYear.add(warnKey);
+          warnings.push({
+            year: currentYear,
+            kind: "early_withdrawal_penalty",
+            accountId: src.id,
+            message: `${src.name}: 10% early-withdrawal penalty applied before age 59½ (starting ${currentMonth}). Consider a Roth/taxable bridge, 72(t), or the rule of 55.`,
+          });
+        }
+      }
     } else if (treatment === "taxable") {
       const balBefore = (balances.get(sourceId) ?? 0) + amount;
       const bas = basis.get(sourceId) ?? 0;
@@ -399,6 +443,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
 
   for (let i = 0; i < months.length; i++) {
     const month = months[i];
+    currentMonth = month;
     const yearMonth = month.slice(0, 7);
     const isJanuary = month.endsWith("-01-01");
 
@@ -417,6 +462,37 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    nothing accrues on a sold home's final month, and before
     //    amortization (step 3) so a sold mortgage's currentBalance<=0 guard
     //    already sees it as paid off -- no separate payment-skipping needed.
+    //
+    //    Computed-proceeds sales (saleInfo set) credit the proceeds here,
+    //    BEFORE any balance is zeroed, from the actual simulated equity:
+    //    home value × (1 − selling costs) − remaining linked mortgage.
+    for (const account of accounts) {
+      if (!account.saleInfo || !account.soldDate || compareDates(month, account.soldDate) < 0) continue;
+      const homeValue = balances.get(account.id) ?? 0;
+      if (homeValue === 0) continue; // already sold in an earlier month
+      const mortgageBalance = account.linkedLiabilityId ? balances.get(account.linkedLiabilityId) ?? 0 : 0;
+      const proceeds = homeValue * (1 - account.saleInfo.sellingCostsPct) - mortgageBalance;
+      const targetId = account.saleInfo.proceedsAccountId ?? primarySpendingAccountId;
+      if (targetId && Math.abs(proceeds) > 0.005) {
+        balances.set(targetId, (balances.get(targetId) ?? 0) + proceeds);
+        const targetBucket = acc.rollforward.get(targetId);
+        if (targetBucket) {
+          if (proceeds >= 0) targetBucket.deposits += proceeds;
+          else targetBucket.withdrawals += -proceeds;
+        }
+        // Asset-for-asset swap (home equity -> cash): reconcile like any
+        // other transfer leg landing on the hub directly.
+        if (hubIds.has(targetId)) acc.hubTransferNet += proceeds;
+        ledger.push({
+          date: month,
+          kind: "home_sale",
+          accountId: account.id,
+          toAccountId: targetId,
+          amount: proceeds,
+          note: `Sold ${account.name}: value ${Math.round(homeValue).toLocaleString()} − selling costs − mortgage payoff ${Math.round(mortgageBalance).toLocaleString()}`,
+        });
+      }
+    }
     for (const account of accounts) {
       if (!account.soldDate || compareDates(month, account.soldDate) < 0) continue;
       const remaining = balances.get(account.id) ?? 0;
@@ -436,15 +512,17 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       if (isCreationMonth) {
         // The opening balance is the account's starting balance for its first
         // year -- surface it in the "Starting balance" rollforward row rather
-        // than counting it as a deposit.
+        // than counting it as a deposit. Cost basis starts at the entered
+        // startingCostBasis (embedded unrealized gains), else the whole
+        // balance (no embedded gains -- the historical assumption).
         balances.set(account.id, account.startingBalance);
         yearStartBalances.set(account.id, account.startingBalance);
-        basis.set(account.id, account.startingBalance);
+        basis.set(account.id, Math.min(account.startingCostBasis ?? account.startingBalance, account.startingBalance));
         continue;
       }
       if (account.isExcluded) continue;
       if (account.class === "credit_card" || account.class === "loan" || account.class === "mortgage") continue;
-      const rate = monthlyRateFromAnnual(effectiveAnnualRate(account, month));
+      const rate = monthlyRateFromAnnual(effectiveAnnualRate(account, month, settings.inflationRatePct));
       if (!rate) continue;
       const growthAmount = (balances.get(account.id) ?? 0) * rate;
       balances.set(account.id, (balances.get(account.id) ?? 0) + growthAmount);
@@ -457,11 +535,30 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const targetAccount = accountById.get(posting.accountId);
       if (targetAccount?.isExcluded) continue;
       if (compareDates(month, (targetAccount?.effectiveStartDate ?? month)) < 0) continue;
-      balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) + posting.amount);
       const bucket = acc.rollforward.get(posting.accountId);
-      if (bucket) {
-        if (posting.amount >= 0) bucket.deposits += posting.amount;
-        else bucket.withdrawals += -posting.amount;
+      // Money sent TO a liability (a transfer aimed at a mortgage/loan, or
+      // income directed at one) PAYS IT DOWN -- liability balances are
+      // stored as positive amounts owed, so a naive `+= amount` would GROW
+      // the debt. Paydown is capped at the remaining balance; any excess is
+      // returned to the spending hub rather than vanishing.
+      let liabilityExcessToHub = 0;
+      if (posting.amount > 0 && targetAccount && targetAccount.category === "liability") {
+        const owed = balances.get(posting.accountId) ?? 0;
+        const applied = Math.min(posting.amount, owed);
+        balances.set(posting.accountId, owed - applied);
+        if (bucket) bucket.withdrawals += applied; // reducing a liability is a "withdrawal" from its balance
+        liabilityExcessToHub = posting.amount - applied;
+        if (liabilityExcessToHub > 0 && primarySpendingAccountId && primarySpendingAccountId !== posting.accountId) {
+          balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) + liabilityExcessToHub);
+          acc.rollforward.get(primarySpendingAccountId)!.deposits += liabilityExcessToHub;
+          if (hubIds.has(primarySpendingAccountId)) acc.hubTransferNet += liabilityExcessToHub;
+        }
+      } else {
+        balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) + posting.amount);
+        if (bucket) {
+          if (posting.amount >= 0) bucket.deposits += posting.amount;
+          else bucket.withdrawals += -posting.amount;
+        }
       }
       if (posting.category === "income") {
         acc.totalIncome += posting.amount;
@@ -471,8 +568,9 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // Income landing straight in a non-hub account (e.g. a windfall
         // deposited to a brokerage) still counts in totalIncome for the
         // itemized list, but never reached cash on hand -- track separately
-        // so it doesn't inflate the reconciled Net.
-        if (!hubIds.has(posting.accountId)) acc.directIncomeToOtherAccounts += posting.amount;
+        // so it doesn't inflate the reconciled Net. (Any liability-paydown
+        // excess bounced back to the hub DID reach cash, so it's not direct.)
+        if (!hubIds.has(posting.accountId)) acc.directIncomeToOtherAccounts += posting.amount - liabilityExcessToHub;
 
         // Social Security and pension income are entered GROSS (unlike every
         // other income category, which is take-home) so their real
@@ -491,6 +589,9 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
             const withheldBucket = acc.rollforward.get(posting.accountId);
             if (withheldBucket) withheldBucket.withdrawals += withheld;
             acc.taxesPaid += withheld;
+            // Withholding taken from a deposit that landed ON the hub reduces
+            // cash directly -- tracked separately for the hub-scoped reconcile.
+            if (hubIds.has(posting.accountId)) acc.incomeWithheldFromHub += withheld;
           }
         }
       } else if (posting.category === "expense") {
@@ -539,10 +640,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       }
     }
 
-    // 3. Amortize mortgages/loans.
+    // 3. Amortize mortgages/loans (and credit cards that have loanTerms --
+    //    a payoff plan -- so carried card debt doesn't sit frozen forever).
     for (const account of accounts) {
       if (account.isExcluded) continue;
-      if (account.class !== "mortgage" && account.class !== "loan") continue;
+      if (account.class !== "mortgage" && account.class !== "loan" && account.class !== "credit_card") continue;
       if (compareDates(month, account.effectiveStartDate) < 0) continue;
       if (month.slice(0, 7) === account.effectiveStartDate.slice(0, 7)) continue; // originates this month, first payment next month
       const currentBalance = balances.get(account.id) ?? 0;
@@ -600,7 +702,9 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     }
 
     // 4. RMDs -- once per year, in January, using the prior Dec-31 balance.
-    if (isJanuary) {
+    //    Honors the global settings.rmdEnabled toggle, and SECURE 2.0's
+    //    birth-year-dependent start age (73 for born 1951-1959, 75 for 1960+).
+    if (isJanuary && settings.rmdEnabled) {
       const year = yearOf(month);
       for (const account of accounts) {
         if (account.isExcluded || !account.subjectToRMD || !account.ownerId) continue;
@@ -614,6 +718,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         const owner = scenario.household.people.find((p) => p.id === account.ownerId);
         if (!owner) continue;
         const age = ageOn(owner.birthDate, endOfYear(year));
+        if (age < rmdStartAgeForBirthYear(yearOf(owner.birthDate))) continue;
         const divisor = rmdDivisor(age);
         const priorBalance = priorYearEndBalances.get(account.id) ?? 0;
         if (!divisor || priorBalance <= 0) continue;
@@ -803,53 +908,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     const nextMonth = i + 1 < months.length ? months[i + 1] : null;
     const isLastMonthOfYear = !nextMonth || yearOf(nextMonth) !== yearOf(month);
     if (isLastMonthOfYear) {
-      const rollforwards: AccountYearRollforward[] = accounts.map((account) => {
-        const bucket = acc.rollforward.get(account.id)!;
-        const startingBalance = yearStartBalances.get(account.id) ?? 0;
-        const endingBalance = balances.get(account.id) ?? 0;
-        return {
-          accountId: account.id,
-          year: currentYear,
-          startingBalance,
-          inflationAdjustment: 0, // folded into growth/deposits per-posting; see forecast engine spec
-          growth: bucket.growth,
-          deposits: bucket.deposits,
-          withdrawals: bucket.withdrawals,
-          endingBalance,
-        };
-      });
-
-      // Excluded accounts don't count toward net worth, KPIs, or subtotals.
-      const totalAssetsNominal = activeAccounts
-        .filter((a) => a.category === "asset")
-        .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
-      const totalLiabilitiesNominal = activeAccounts
-        .filter((a) => a.category === "liability")
-        .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
-      const netWorthNominal = totalAssetsNominal - totalLiabilitiesNominal;
-      const cumulativeInflation = Math.pow(1 + settings.inflationRatePct, currentYear - yearOf(settings.startDate));
-      const netWorthReal = netWorthNominal / cumulativeInflation;
-
-      // "Ending cash on hand" (display only, e.g. the row of that name on the
-      // Cash Flow tab) is the total balance across every class="cash" account
-      // (Extra Savings, checking, an emergency fund, etc.) -- a surplus swept
-      // from the hub into checking or an emergency fund is still cash, not
-      // withdrawn or invested.
-      const endingCashBalance = [...cashAccountIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
-
-      // "Net change in cash" and "Interest earned on cash" -- the reconciling
-      // figures that must sum exactly from the itemized rows above them --
-      // stay scoped to the hub specifically, not every cash account. Every
-      // bucket in this statement (surplusRouted, withdrawalsToCashNet,
-      // hubTransferNet, etc.) tracks flows into/out of the hub, so measuring
-      // the hub's own balance delta directly guarantees an exact reconcile
-      // with no possibility of an uncaptured mechanism -- e.g. a transfer
-      // between two non-hub cash accounts, which the broader figure above
-      // can't distinguish from money actually leaving cash -- silently
-      // creating a gap.
-      const hubCashStart = [...hubIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
-      const hubEndingBalance = [...hubIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
-      const hubCashInterest = [...hubIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
+      // NOTE ON ORDER: the exact federal bill is computed FIRST, then the
+      // withholding-vs-exact true-up is posted to the hub, and only then are
+      // rollforwards, net worth, and the hub delta measured -- so every
+      // ending figure already includes the settlement.
 
       // Sorted line-item arrays; labels come from itemLabels (posting/mortgage
       // ids) or the account name (for account-keyed maps).
@@ -918,7 +980,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // no-income-tax state).
       const additionalTax =
         (ordinaryTaxableIncome + acc.capitalGainsRealized) * settings.additionalFlatTaxRatePct;
-      const federalTaxTotal = federalOrdinaryTax + federalLtcgTax + additionalTax;
+      // The 10% early-withdrawal penalty is a flat excise on the withdrawn
+      // amount, not bracket-dependent -- the amount charged during the
+      // monthly loop IS the exact figure, so it joins the exact bill as-is.
+      const federalTaxTotal = federalOrdinaryTax + federalLtcgTax + additionalTax + acc.earlyWithdrawalPenalties;
 
       // Allocate the ordinary-income tax pro-rata across its gross sources so
       // the breakdown ties out exactly to federalTaxTotal, however the year's
@@ -939,9 +1004,97 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
           { key: "pension", label: "Tax on pension income", amount: pensionTax },
           { key: "taxable_social_security", label: "Tax on taxable Social Security", amount: taxableSocialSecurityTax },
           { key: "capital_gains", label: "Capital gains tax", amount: capitalGainsTax },
+          { key: "early_withdrawal_penalty", label: "Early-withdrawal penalty (10%, pre-59½)", amount: acc.earlyWithdrawalPenalties },
           { key: "state_local", label: "State/local add-on", amount: stateLocalAddOn },
         ] as const
       ).filter((c) => c.amount > 0.005);
+
+      // --- Year-end tax true-up -----------------------------------------
+      // The monthly loop withheld ESTIMATED tax (marginal rate on every
+      // dollar, no standard deduction). Settle the difference against the
+      // exact bracket bill so the household's actual cash tax for the year
+      // equals federalTaxTotal exactly: refund over-withholding to the hub,
+      // charge any shortfall from it. Skipped when no rate table was
+      // supplied (raw untaxed engine runs, e.g. most unit tests).
+      let taxSettlement = 0;
+      if (ratesByYearOverride !== undefined && extraSavingsAccount) {
+        taxSettlement = acc.taxesPaid - federalTaxTotal;
+        if (Math.abs(taxSettlement) > 0.005) {
+          const hubId = extraSavingsAccount.id;
+          balances.set(hubId, (balances.get(hubId) ?? 0) + taxSettlement);
+          const hubBucket = acc.rollforward.get(hubId)!;
+          if (taxSettlement >= 0) hubBucket.deposits += taxSettlement;
+          else hubBucket.withdrawals += -taxSettlement;
+          ledger.push({
+            date: month,
+            kind: "tax_settlement",
+            accountId: hubId,
+            amount: taxSettlement,
+            note:
+              taxSettlement >= 0
+                ? `Tax true-up refund (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`
+                : `Tax true-up payment (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`,
+          });
+        } else {
+          taxSettlement = 0;
+        }
+      }
+
+      // --- Everything below reads balances AFTER the settlement ----------
+      const rollforwards: AccountYearRollforward[] = accounts.map((account) => {
+        const bucket = acc.rollforward.get(account.id)!;
+        const startingBalance = yearStartBalances.get(account.id) ?? 0;
+        const endingBalance = balances.get(account.id) ?? 0;
+        return {
+          accountId: account.id,
+          year: currentYear,
+          startingBalance,
+          inflationAdjustment: 0, // folded into growth/deposits per-posting; see forecast engine spec
+          growth: bucket.growth,
+          deposits: bucket.deposits,
+          withdrawals: bucket.withdrawals,
+          endingBalance,
+        };
+      });
+
+      // Excluded accounts don't count toward net worth, KPIs, or subtotals.
+      const totalAssetsNominal = activeAccounts
+        .filter((a) => a.category === "asset")
+        .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
+      const totalLiabilitiesNominal = activeAccounts
+        .filter((a) => a.category === "liability")
+        .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
+      const netWorthNominal = totalAssetsNominal - totalLiabilitiesNominal;
+      // Deflate end-of-year-N figures by the inflation actually elapsed from
+      // the plan start THROUGH the end of year N (previously the exponent
+      // stopped at the start of year N, overstating every "real" figure by
+      // one year of inflation).
+      const cumulativeInflation = Math.pow(
+        1 + settings.inflationRatePct,
+        Math.max(0, elapsedYears(settings.startDate, endOfYear(currentYear)))
+      );
+      // Flows land throughout the year -- mid-year is their average timing,
+      // so real (today's-dollars) flow figures deflate to July 1, not Dec 31.
+      const flowInflationDeflator = Math.pow(
+        1 + settings.inflationRatePct,
+        Math.max(0, elapsedYears(settings.startDate, `${currentYear}-07-01`))
+      );
+      const netWorthReal = netWorthNominal / cumulativeInflation;
+
+      // "Ending cash on hand" (display only, e.g. the row of that name on the
+      // Cash Flow tab) is the total balance across every class="cash" account
+      // (Extra Savings, checking, an emergency fund, etc.) -- a surplus swept
+      // from the hub into checking or an emergency fund is still cash, not
+      // withdrawn or invested.
+      const endingCashBalance = [...cashAccountIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
+
+      // "Net change in cash" and "Interest earned on cash" -- the reconciling
+      // figures that must sum exactly from the itemized rows above them --
+      // stay scoped to the hub specifically, not every cash account (see the
+      // reconcile identity on CashFlowYearRow.netCashFlow).
+      const hubCashStart = [...hubIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
+      const hubEndingBalance = [...hubIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
+      const hubCashInterest = [...hubIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
 
       const operatingCashFlow = acc.totalIncome - acc.totalExpenses;
       // Cash that flowed in from accounts to cover the operating gap: deficit
@@ -966,6 +1119,8 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         withdrawalsToCashNet,
         rmdTotal: acc.rmdTotal,
         withdrawalTaxes: acc.taxesPaid,
+        taxSettlement,
+        incomeTaxWithheldFromCash: acc.incomeWithheldFromHub,
         cashInterest: hubCashInterest,
         otherAccountActivity,
         endingCashBalance,
@@ -999,6 +1154,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         netWorthNominal,
         netWorthReal,
         inflationDeflator: cumulativeInflation,
+        flowInflationDeflator,
         accountBalances: Object.fromEntries(balances),
         rollforwards,
         cashFlow,
@@ -1030,6 +1186,19 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const unlinkedMortgages = activeAccounts.filter((a) => a.class === "mortgage" && !a.loanTerms?.linkedAssetId);
   for (const m of unlinkedMortgages) {
     warnings.unshift({ year: yearOf(m.effectiveStartDate), kind: "unlinked_mortgage", accountId: m.id, message: `${m.name} has no linked real estate asset.` });
+  }
+  // A carried debt with no payoff plan just sits frozen forever (no interest,
+  // no payments) -- flag it so the user knows the projection is ignoring it.
+  const unamortizedDebts = activeAccounts.filter(
+    (a) => (a.class === "credit_card" || a.class === "loan") && a.startingBalance > 0 && !a.loanTerms
+  );
+  for (const d of unamortizedDebts) {
+    warnings.unshift({
+      year: yearOf(d.effectiveStartDate),
+      kind: "unamortized_debt",
+      accountId: d.id,
+      message: `${d.name} has a balance but no interest rate/term -- it will sit frozen (no interest, no payments) until you add loan details.`,
+    });
   }
 
   return {

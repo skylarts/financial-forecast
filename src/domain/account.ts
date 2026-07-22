@@ -55,8 +55,9 @@ export type LoanTerms = z.infer<typeof loanTermsSchema>;
 export const contributionSchema = z.object({
   amount: z.number().positive(),
   frequency: recurrenceFrequencySchema,
-  /** Nominal (actual) annual growth of the contribution amount; 0 = flat. */
-  growthRatePct: z.number().default(0),
+  /** Nominal (actual) annual growth of the contribution amount; 0 = flat,
+   *  null/omitted = match the plan's inflation rate. */
+  growthRatePct: z.number().nullable().default(null),
   /** True = taken from your paycheck before take-home (no cash outflow). */
   payrollDeducted: z.boolean().default(false),
   /**
@@ -88,8 +89,9 @@ export const contributionScheduleSegmentSchema = z.object({
   startDate: isoDateSchema,
   amount: z.number().positive(),
   frequency: recurrenceFrequencySchema,
-  /** Nominal (actual) annual growth of this segment's contribution amount; 0 = flat. */
-  growthRatePct: z.number().default(0),
+  /** Nominal (actual) annual growth of this segment's contribution amount; 0 = flat,
+   *  null/omitted = match the plan's inflation rate. */
+  growthRatePct: z.number().nullable().default(null),
   payrollDeducted: z.boolean().default(false),
   /** null/omitted = runs until the next segment's startDate, or indefinitely for the last segment. */
   endDate: isoDateSchema.nullable().optional(),
@@ -115,8 +117,16 @@ export const accountObjectSchema = z
     category: accountCategorySchema,
     ownerId: idSchema.nullable(),
     startingBalance: z.number(),
-    /** Annual rate, nominal (already includes inflation). */
-    growthRatePct: z.number(),
+    /**
+     * Today's cost basis for a taxable_investment account -- what you've
+     * actually paid in (contributions) versus embedded unrealized gains.
+     * Omitted = assume the whole starting balance is basis (no embedded
+     * gains), the engine's historical behavior. Only read for accounts whose
+     * effective tax treatment is "taxable".
+     */
+    startingCostBasis: z.number().nonnegative().optional(),
+    /** Annual rate, nominal (already includes inflation). null/omitted = match the plan's inflation rate. */
+    growthRatePct: z.number().nullable().default(null),
     /** Visible and editable, but the engine skips it entirely: no growth, no
      *  cashflows, no effect on net worth, KPIs, or subtotals. For money you
      *  don't want counted as part of the plan (e.g. a kid's UTMA) while
@@ -133,6 +143,13 @@ export const accountObjectSchema = z
     taxTreatment: taxTreatmentSchema.default("n/a"),
     /** Only meaningful when class='tax_deferred' and ownerId is set. */
     subjectToRMD: z.boolean().default(false),
+    /**
+     * Skip the 10% early-withdrawal penalty on tax-deferred withdrawals
+     * before the owner turns 59½ -- for money accessible penalty-free via a
+     * 72(t) SEPP plan, the rule of 55, or another exception. Default false
+     * (the penalty applies).
+     */
+    noEarlyWithdrawalPenalty: z.boolean().optional(),
     /** This account doesn't exist/count before this date -- startingBalance is
      *  its value as of this date, not the plan start. Omitted = plan start
      *  (every account's implicit behavior before this field existed). Lets a

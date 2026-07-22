@@ -21,8 +21,9 @@ export const incomeSourceSchema = z.object({
   startDate: isoDateSchema,
   /** null = continues to horizon unless adjusted below. */
   endDate: isoDateSchema.nullable(),
-  /** Nominal (actual) annual growth rate -- already includes inflation. 0 = flat in nominal terms. */
-  growthRatePct: z.number().default(0),
+  /** Nominal (actual) annual growth rate -- already includes inflation.
+   *  0 = flat in nominal terms; null/omitted = match the plan's inflation rate. */
+  growthRatePct: z.number().nullable().default(null),
   /** Repeat every N years (e.g. selling something on a cycle); overrides frequency. */
   intervalYears: z.number().int().positive().optional(),
   /** null = posts automatically to Extra Savings; set = explicit override (e.g. a windfall landing straight in a brokerage). */

@@ -17,6 +17,14 @@ export interface EngineAccount extends Account {
    * off whatever was left on the mortgage.
    */
   soldDate?: ISODate;
+  /**
+   * Present (on the real_estate account only) when its sell_home event uses
+   * the computed-proceeds mode: at the sale month the engine credits
+   * simulated value × (1 − sellingCostsPct) − remaining linked-mortgage
+   * balance to proceedsAccountId (null = the spending hub), instead of the
+   * event's fixed netProceeds figure.
+   */
+  saleInfo?: { sellingCostsPct: number; proceedsAccountId: Id | null };
 }
 
 export type PostingCategory =

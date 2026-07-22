@@ -1,7 +1,12 @@
 import { accountObjectSchema, categoryForClass } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
+import { moneyStrToNumber, percentStrToFraction } from "@/lib/inputFormat";
 
+/** All rate fields are PERCENT-unit strings ("3" = 3%/yr, "0.5" = 0.5%/yr);
+ *  all money fields are lenient money strings ("450,000"). */
 export interface ExistingHomeInput {
+  /** Display name for the home account; blank = "Home". */
+  name?: string;
   homeValue: string;
   homeGrowthRatePct: string;
   propertyTaxRatePct: string;
@@ -15,14 +20,15 @@ export interface ExistingHomeInput {
 }
 
 export const EXISTING_HOME_DEFAULTS: ExistingHomeInput = {
+  name: "",
   homeValue: "",
-  homeGrowthRatePct: "0.03",
+  homeGrowthRatePct: "3",
   propertyTaxRatePct: "",
   homeInsuranceRatePct: "",
   maintenanceRatePct: "",
   hasMortgage: false,
   mortgageBalance: "",
-  mortgageRate: "0.065",
+  mortgageRate: "6.5",
   mortgageYearsLeft: "25",
   mortgageExtraPrincipal: "",
 };
@@ -44,26 +50,29 @@ export function addExistingHome(
   input: ExistingHomeInput,
   planStartDate: string
 ): { ok: true } | { ok: false; error: string } {
-  const value = Number(input.homeValue);
+  const value = moneyStrToNumber(input.homeValue);
   if (!value || value <= 0) {
     return { ok: false, error: "Enter the home's estimated value." };
   }
 
   const { addAccount, updateAccount } = usePlanStore.getState();
+  // Blank appreciation = matches the plan's inflation rate (null), the
+  // app-wide convention for every growth-rate input.
+  const growthRatePct = percentStrToFraction(input.homeGrowthRatePct);
 
   const realEstateCandidate = {
-    name: "Home",
+    name: input.name?.trim() || "Home",
     class: "real_estate" as const,
     category: categoryForClass("real_estate"),
     ownerId: null,
     startingBalance: value,
-    growthRatePct: Number(input.homeGrowthRatePct) || 0,
-    propertyGrowthRatePct: Number(input.homeGrowthRatePct) || 0,
+    growthRatePct,
+    propertyGrowthRatePct: growthRatePct ?? undefined,
     taxTreatment: "n/a" as const,
     subjectToRMD: false,
-    propertyTaxRatePct: input.propertyTaxRatePct.trim() !== "" ? Number(input.propertyTaxRatePct) : undefined,
-    homeInsuranceRatePct: input.homeInsuranceRatePct.trim() !== "" ? Number(input.homeInsuranceRatePct) : undefined,
-    maintenanceRatePct: input.maintenanceRatePct.trim() !== "" ? Number(input.maintenanceRatePct) : undefined,
+    propertyTaxRatePct: percentStrToFraction(input.propertyTaxRatePct) ?? undefined,
+    homeInsuranceRatePct: percentStrToFraction(input.homeInsuranceRatePct) ?? undefined,
+    maintenanceRatePct: percentStrToFraction(input.maintenanceRatePct) ?? undefined,
   };
   const reResult = accountObjectSchema.omit({ id: true }).safeParse(realEstateCandidate);
   if (!reResult.success) {
@@ -77,8 +86,8 @@ export function addExistingHome(
   }
 
   if (input.hasMortgage) {
-    const balance = Number(input.mortgageBalance);
-    const rate = Number(input.mortgageRate);
+    const balance = moneyStrToNumber(input.mortgageBalance);
+    const rate = percentStrToFraction(input.mortgageRate) ?? 0;
     const years = Number(input.mortgageYearsLeft);
     if (!balance || balance <= 0 || !years || years <= 0) {
       return { ok: false, error: "Enter the mortgage's remaining balance and years left." };
@@ -97,8 +106,7 @@ export function addExistingHome(
         originationDate: planStartDate,
         annualInterestRatePct: rate,
         termMonths: Math.round(years * 12),
-        extraPrincipalMonthly:
-          input.mortgageExtraPrincipal.trim() !== "" ? Number(input.mortgageExtraPrincipal) : undefined,
+        extraPrincipalMonthly: moneyStrToNumber(input.mortgageExtraPrincipal) ?? undefined,
         linkedAssetId: realEstateAccount.id,
       },
     };
@@ -128,7 +136,7 @@ export function updateExistingHome(
   input: ExistingHomeInput,
   planStartDate: string
 ): { ok: true } | { ok: false; error: string } {
-  const value = Number(input.homeValue);
+  const value = moneyStrToNumber(input.homeValue);
   if (!value || value <= 0) {
     return { ok: false, error: "Enter the home's estimated value." };
   }
@@ -151,8 +159,8 @@ export function updateExistingHome(
   let linkedLiabilityId = realEstateAccount.linkedLiabilityId;
 
   if (input.hasMortgage) {
-    const balance = Number(input.mortgageBalance);
-    const rate = Number(input.mortgageRate);
+    const balance = moneyStrToNumber(input.mortgageBalance);
+    const rate = percentStrToFraction(input.mortgageRate) ?? 0;
     const years = Number(input.mortgageYearsLeft);
     if (!balance || balance <= 0 || !years || years <= 0) {
       return { ok: false, error: "Enter the mortgage's remaining balance and years left." };
@@ -171,8 +179,7 @@ export function updateExistingHome(
         originationDate: existingMortgage?.loanTerms?.originationDate ?? planStartDate,
         annualInterestRatePct: rate,
         termMonths: Math.round(years * 12),
-        extraPrincipalMonthly:
-          input.mortgageExtraPrincipal.trim() !== "" ? Number(input.mortgageExtraPrincipal) : undefined,
+        extraPrincipalMonthly: moneyStrToNumber(input.mortgageExtraPrincipal) ?? undefined,
         linkedAssetId: accountId,
       },
     };
@@ -194,21 +201,23 @@ export function updateExistingHome(
     linkedLiabilityId = undefined;
   }
 
+  const growthRatePct = percentStrToFraction(input.homeGrowthRatePct);
   const realEstateCandidate = {
-    name: realEstateAccount.name,
+    // The form's Name field is honored on save (it used to be silently ignored).
+    name: input.name?.trim() || realEstateAccount.name,
     class: "real_estate" as const,
     category: categoryForClass("real_estate"),
     ownerId: realEstateAccount.ownerId,
     startingBalance: value,
-    growthRatePct: Number(input.homeGrowthRatePct) || 0,
-    propertyGrowthRatePct: Number(input.homeGrowthRatePct) || 0,
+    growthRatePct,
+    propertyGrowthRatePct: growthRatePct ?? undefined,
     taxTreatment: realEstateAccount.taxTreatment,
     subjectToRMD: false,
     isExcluded: realEstateAccount.isExcluded,
     linkedLiabilityId,
-    propertyTaxRatePct: input.propertyTaxRatePct.trim() !== "" ? Number(input.propertyTaxRatePct) : undefined,
-    homeInsuranceRatePct: input.homeInsuranceRatePct.trim() !== "" ? Number(input.homeInsuranceRatePct) : undefined,
-    maintenanceRatePct: input.maintenanceRatePct.trim() !== "" ? Number(input.maintenanceRatePct) : undefined,
+    propertyTaxRatePct: percentStrToFraction(input.propertyTaxRatePct) ?? undefined,
+    homeInsuranceRatePct: percentStrToFraction(input.homeInsuranceRatePct) ?? undefined,
+    maintenanceRatePct: percentStrToFraction(input.maintenanceRatePct) ?? undefined,
   };
   const reResult = accountObjectSchema.omit({ id: true }).safeParse(realEstateCandidate);
   if (!reResult.success) return { ok: false, error: reResult.error.issues[0]?.message ?? "That doesn't look right." };

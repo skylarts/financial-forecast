@@ -50,6 +50,10 @@ export function todaysDollarsAmount(
     inflationRatePct
   );
   const sinceStart = elapsedYears(itemStartDate, occurrenceDate);
-  const ownYears = stepOwnGrowthAnnually ? Math.floor(sinceStart) : sinceStart;
+  // Stepped growth (Social Security COLA) applies once per CALENDAR year --
+  // benefits adjust each January, not on the benefit's own start anniversary.
+  const ownYears = stepOwnGrowthAnnually
+    ? Math.max(0, Number(occurrenceDate.slice(0, 4)) - Number(itemStartDate.slice(0, 4)))
+    : sinceStart;
   return growthAdjustedAmount(nominalAtStart, ownYears, ownGrowthRatePct);
 }

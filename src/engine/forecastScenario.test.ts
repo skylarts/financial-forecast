@@ -1234,10 +1234,16 @@ describe("forecastScenario -- social security COLA", () => {
     const y2041 = r.years.find((y) => y.year === 2041)!;
     // The $3,000/mo is entered in today's dollars, so its REAL (deflated) value
     // in the first year is ~12 * $3,000 = $36,000 -- not the nominal amount.
-    const real2040 = y2040.cashFlow.totalIncome / y2040.inflationDeflator;
-    const real2041 = y2041.cashFlow.totalIncome / y2041.inflationDeflator;
-    expect(real2040).toBeCloseTo(36_000, -3); // ~$36k in today's dollars
-    expect(real2041).toBeCloseTo(36_000, -3); // stays flat in real terms
+    // Flows deflate with the mid-year flow deflator (income arrives all year),
+    // not the year-end balance deflator.
+    const real2040 = y2040.cashFlow.totalIncome / y2040.flowInflationDeflator;
+    const real2041 = y2041.cashFlow.totalIncome / y2041.flowInflationDeflator;
+    // Within ~2%: the benefit's nominal value is set at its start date, so by
+    // the mid-year point the flow deflator measures at, it has decayed about
+    // half a year in real terms -- a timing convention, not an error.
+    expect(real2040 / 36_000).toBeGreaterThan(0.975);
+    expect(real2040 / 36_000).toBeLessThan(1.025);
+    expect(real2041 / real2040).toBeCloseTo(1, 2); // stays flat in real terms year-over-year
     // Nominally the benefit has been inflated to future dollars by ~14 years of
     // COLA, so it lands well above the entered $36,000.
     expect(y2040.cashFlow.totalIncome).toBeGreaterThan(50_000);
@@ -1268,8 +1274,11 @@ describe("forecastScenario -- today's dollars for future-dated baseline income &
     });
     const r = forecastScenario(scenario);
     const y2040 = r.years.find((y) => y.year === 2040)!;
-    const real2040 = y2040.cashFlow.totalIncome / y2040.inflationDeflator;
-    expect(real2040).toBeCloseTo(60_000, -3); // $5,000/mo in today's dollars
+    const real2040 = y2040.cashFlow.totalIncome / y2040.flowInflationDeflator;
+    // Within ~2% of $60k in today's dollars (a flat-nominal item decays ~half
+    // a year in real terms by the mid-year flow-deflator point).
+    expect(real2040 / 60_000).toBeGreaterThan(0.975);
+    expect(real2040 / 60_000).toBeLessThan(1.025);
     expect(y2040.cashFlow.totalIncome).toBeGreaterThan(80_000); // nominal is inflated well above that
   });
 
