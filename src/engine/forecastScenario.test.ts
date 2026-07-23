@@ -1033,6 +1033,19 @@ describe("forecastScenario -- cash flow statement reconciles exactly", () => {
     const result = forecastScenario(mockScenario);
     const inheritanceYear = result.years.find((y) => y.year === 2035)!;
     expect(inheritanceYear.cashFlow.otherAccountActivity).toBeLessThan(-1000);
+    // The breakdown carries a labeled negative line for the direct deposit.
+    const directItem = inheritanceYear.cashFlow.otherActivityByItem.find((i) => i.id.endsWith(":direct"))!;
+    expect(directItem).toBeDefined();
+    expect(directItem.amount).toBeLessThan(-1000);
+    expect(directItem.accountId).not.toBeNull();
+  });
+
+  it("otherActivityByItem sums exactly to otherAccountActivity, every year", () => {
+    const result = forecastScenario(mockScenario);
+    for (const year of result.years) {
+      const sum = year.cashFlow.otherActivityByItem.reduce((s, i) => s + i.amount, 0);
+      expect(sum, `year ${year.year}`).toBeCloseTo(year.cashFlow.otherAccountActivity, 2);
+    }
   });
 
   it("reconciles a scenario with a hub-to-hub custom_transfer and a down payment sourced from the hub", () => {
@@ -1084,6 +1097,11 @@ describe("forecastScenario -- cash flow statement reconciles exactly", () => {
     // Both outflows left checking directly: -$10k transfer, -$40k down payment.
     expect(cf.otherAccountActivity).toBeCloseTo(-50_000, 0);
     expect(cf.netCashFlow).toBeCloseTo(-50_000, 0);
+    // Each flow shows up as its own labeled line: the transfer and the down payment.
+    const labels = cf.otherActivityByItem.map((i) => i.label);
+    expect(labels).toContain("Move to savings");
+    expect(labels.some((l) => l.startsWith("Down payment") || l.startsWith("Home purchase"))).toBe(true);
+    expect(cf.otherActivityByItem.reduce((s, i) => s + i.amount, 0)).toBeCloseTo(cf.otherAccountActivity, 2);
   });
 });
 

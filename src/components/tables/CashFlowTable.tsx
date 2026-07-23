@@ -126,6 +126,11 @@ export function CashFlowTable({
     return unionItems(years.map((y) => y.cashFlow.contributionsByItem)).map((it) => ({ ...it, fromPaycheck: fromPay.get(it.id) ?? false }));
   }, [years]);
   const surplusItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.surplusByAccount)), [years]);
+  const otherActivityMaps = useMemo(
+    () => years.map((y) => new Map(y.cashFlow.otherActivityByItem.map((i) => [i.id, i.amount]))),
+    [years]
+  );
+  const otherActivityItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.otherActivityByItem), "date"), [years]);
 
   // Expenses grouped by source: a life event's one-time + recurring costs
   // collapse under one expandable row (ids share the event-id prefix, e.g.
@@ -507,12 +512,54 @@ export function CashFlowTable({
                 {cells((yi) => years[yi].cashFlow.cashInterest)}
               </tr>
             )}
-            {hasOtherActivity &&
-              reconcileRow(
-                "Other account activity",
-                (yi) => years[yi].cashFlow.otherAccountActivity,
-                "One-off flows that touched cash directly: a home purchase down payment, home-sale proceeds, a custom transfer to/from the hub, net of income deposited straight into an investment."
-              )}
+            {hasOtherActivity && (
+              <>
+                <tr className="text-dim hover:bg-accent/15">
+                  <td className="py-2 pl-2">
+                    <span className="inline-flex items-center gap-1">
+                      <ToggleLabel
+                        label="Other account activity"
+                        expanded={isOpen("otherActivity")}
+                        onToggle={() => toggle("otherActivity")}
+                      />
+                      <InfoTooltip text="One-off flows that touched cash directly: a home purchase down payment, home-sale proceeds, a custom transfer to/from the hub, net of income deposited straight into an investment. Expand to see each flow." />
+                    </span>
+                  </td>
+                  {years.map((y, yi) => {
+                    const v = d(years[yi].cashFlow.otherAccountActivity, yi);
+                    return (
+                      <td key={y.year} className="py-2 pr-3 text-right tabular-nums">
+                        {Math.abs(v) < 0.5 ? (
+                          <span className="text-dim">—</span>
+                        ) : (
+                          <span className={v < 0 ? "text-negative" : ""}>{formatMoney(v)}</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  {totalCell(totalOf((yi) => years[yi].cashFlow.otherAccountActivity), { signed: true })}
+                </tr>
+                {isOpen("otherActivity") &&
+                  otherActivityItems.map((item) => (
+                    <tr key={item.id} className="text-dim hover:bg-accent/15">
+                      <td className="py-2 pl-10">{item.label}</td>
+                      {years.map((y, yi) => {
+                        const v = d(otherActivityMaps[yi].get(item.id) ?? 0, yi);
+                        return (
+                          <td key={y.year} className="py-2 pr-3 text-right tabular-nums">
+                            {Math.abs(v) < 0.5 ? (
+                              <span className="text-dim">—</span>
+                            ) : (
+                              <span className={v < 0 ? "text-negative" : ""}>{formatMoney(v)}</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                      {totalCell(totalOf((yi) => otherActivityMaps[yi].get(item.id) ?? 0), { signed: true })}
+                    </tr>
+                  ))}
+              </>
+            )}
             {/* Net change in cash -- the reconciling bottom line, measured
                 directly from the actual simulated cash balance. Withdrawals
                 above are shown GROSS, so to tie out by hand subtract the
