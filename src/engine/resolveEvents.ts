@@ -297,6 +297,21 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       if (amount === 0) continue;
       const accountId = src.depositAccountId ?? primarySpendingAccountId;
       if (!accountId) continue;
+      // Gross scales with the same inflation/growth/adjustment factors as
+      // take-home, preserving whatever gross-to-net ratio the user implied
+      // by entering both -- see Posting.grossAmount.
+      const grossAmount =
+        src.grossAmount != null
+          ? todaysDollarsAmount(
+              src.grossAmount,
+              settings.startDate,
+              src.startDate,
+              occ,
+              settings.inflationRatePct,
+              src.growthRatePct ?? settings.inflationRatePct,
+              src.category === "social_security"
+            ) * activeMultiplier(windows, occ)
+          : undefined;
       pushPosting({
         date: occ,
         yearMonth: occ.slice(0, 7),
@@ -305,6 +320,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         category: "income",
         label: src.name,
         sourceId: src.id,
+        ...(grossAmount != null ? { grossAmount } : {}),
       });
     }
   }

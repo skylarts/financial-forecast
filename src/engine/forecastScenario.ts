@@ -91,6 +91,14 @@ interface YearAccumulator {
   grossSocialSecurity: number;
   /** Gross (pre-tax) pension income received this year -- fully ordinary-taxable, no partial-inclusion rule. */
   grossPension: number;
+  /**
+   * Gross (Box-1-style) salary this year, from income sources that opted in
+   * via IncomeSource.grossAmount -- 0 for any source that didn't. Used only
+   * to place withdrawals/pension/SS/capital-gains in the correct tax bracket
+   * during working years (salary itself is never taxed by this engine; see
+   * the federal-tax block's stacking math).
+   */
+  grossSalary: number;
 }
 
 function freshAccumulator(accountIds: Id[]): YearAccumulator {
@@ -118,6 +126,7 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
     capitalGainsRealized: 0,
     grossSocialSecurity: 0,
     grossPension: 0,
+    grossSalary: 0,
   };
 }
 
@@ -626,6 +635,15 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // year's converged rate; the exact bracket-computed bill overrides
         // this at year-end regardless (see federalTaxTotal below).
         const incomeSrc = incomeSourceById.get(posting.sourceId);
+        // Salary is entered take-home, but a source can optionally also
+        // carry a gross figure (see IncomeSource.grossAmount) so it can be
+        // stacked under withdrawals/capital-gains for bracket placement --
+        // no withholding is simulated against it (unlike SS/pension below),
+        // since its own tax is assumed already reflected in the take-home
+        // amount actually deposited.
+        if (posting.amount > 0 && incomeSrc?.category === "salary" && posting.grossAmount != null) {
+          acc.grossSalary += posting.grossAmount;
+        }
         if (posting.amount > 0 && (incomeSrc?.category === "social_security" || incomeSrc?.category === "pension")) {
           const rates = ratesForYear(currentYear);
           const taxableFraction = incomeSrc.category === "social_security" ? rates.ssTaxableFraction : 1;
@@ -1006,32 +1024,52 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const grossOrdinaryWithdrawals = withdrawalsByAccount
         .filter((w) => w.taxTreatment === "tax_deferred")
         .reduce((s, w) => s + w.gross, 0);
+      // Any gross salary opted in via IncomeSource.grossAmount (0 otherwise,
+      // the historical behavior) -- included in the SS-taxability test and
+      // bracket placement below, but never itself taxed by this engine.
+      const grossSalary = acc.grossSalary;
       const taxableSocialSecurityAmount = taxableSocialSecurity(
         acc.grossSocialSecurity,
-        grossOrdinaryWithdrawals + acc.grossPension,
+        grossOrdinaryWithdrawals + acc.grossPension + grossSalary,
         settings.filingStatus
       );
+      // Denominator for the tax_deferred/pension/SS component split below --
+      // deliberately excludes salary, since federalOrdinaryTax (computed
+      // further down) is already the INCREMENTAL tax due to just these three
+      // sources, stacked on top of salary's own bracket position.
       const grossOrdinaryIncome = grossOrdinaryWithdrawals + acc.grossPension + taxableSocialSecurityAmount;
       const standardDeduction = standardDeductionForYear(
         scenario.household.people,
         settings.filingStatus,
         currentYear,
         settings.inflationRatePct,
-        grossOrdinaryIncome
+        grossOrdinaryIncome + grossSalary
       );
-      const ordinaryTaxableIncome = Math.max(0, grossOrdinaryIncome - standardDeduction);
+      // ordinaryTaxableIncome is the FULL taxable base (salary + withdrawals
+      // + pension + taxable SS) -- this is what capital gains and other
+      // ordinary income genuinely stack on top of in the real tax code, and
+      // what the next iteration's estimated withholding rate should reflect
+      // (see projectScenario's convergence loop, which reads this field).
+      const ordinaryTaxableIncome = Math.max(0, grossOrdinaryIncome + grossSalary - standardDeduction);
+      // salaryTaxableIncome is salary's own slice of that base (deduction
+      // applied to salary first) -- subtracted below so salary's own tax,
+      // already assumed paid via take-home withholding, is never charged
+      // again by this engine; only the INCREMENT due to withdrawals/pension/
+      // SS/capital-gains is.
+      const salaryTaxableIncome = Math.max(0, grossSalary - standardDeduction);
       const { ordinary: ordinaryBrackets, ltcg: ltcgBrackets } = bracketsForYear(
         currentYear,
         settings.filingStatus,
         settings.inflationRatePct
       );
-      const federalOrdinaryTax = progressiveTax(ordinaryTaxableIncome, ordinaryBrackets);
+      const federalOrdinaryTax =
+        progressiveTax(ordinaryTaxableIncome, ordinaryBrackets) - progressiveTax(salaryTaxableIncome, ordinaryBrackets);
       const { tax: federalLtcgTax } = stackedLtcgTax(ordinaryTaxableIncome, acc.capitalGainsRealized, ltcgBrackets);
       // The flat add-on (state/local, or anything else not modeled) applies
-      // to the same combined base; 0 by default (e.g. correct as-is in a
-      // no-income-tax state).
+      // to the same incremental (non-salary) base as federalOrdinaryTax; 0 by
+      // default (e.g. correct as-is in a no-income-tax state).
       const additionalTax =
-        (ordinaryTaxableIncome + acc.capitalGainsRealized) * settings.additionalFlatTaxRatePct;
+        (ordinaryTaxableIncome - salaryTaxableIncome + acc.capitalGainsRealized) * settings.additionalFlatTaxRatePct;
       // The 10% early-withdrawal penalty is a flat excise on the withdrawn
       // amount, not bracket-dependent -- the amount charged during the
       // monthly loop IS the exact figure, so it joins the exact bill as-is.
