@@ -29,6 +29,19 @@ export interface CashFlowLineItem {
   startDate: ISODate | null;
 }
 
+/**
+ * One signed contributor to the "Other account activity" reconciling line --
+ * a down payment sourced from cash, home-sale proceeds landing on the hub, a
+ * custom transfer touching the hub, or income deposited straight into a
+ * non-hub account (negative: it counted in totalIncome but never reached
+ * cash). Amounts are signed by their effect on cash; they sum exactly to
+ * CashFlowYearRow.otherAccountActivity.
+ */
+export interface OtherActivityLineItem extends CashFlowLineItem {
+  /** The non-hub counterparty account for this flow, when known (e.g. the home sold, the brokerage a windfall landed in); null for flows whose other leg isn't a single account. */
+  accountId: Id | null;
+}
+
 /** A contribution line, tagged by how it's funded for cash-flow treatment. */
 export interface ContributionLineItem extends CashFlowLineItem {
   /** Payroll-deducted contributions are excluded from take-home, so they don't reduce cash flow. */
@@ -115,6 +128,8 @@ export interface CashFlowYearRow {
    * straight into a brokerage). Zero in the common case.
    */
   otherAccountActivity: number;
+  /** Itemized breakdown of otherAccountActivity -- each contributing flow, labeled, signed by its effect on cash; sums exactly to otherAccountActivity. */
+  otherActivityByItem: OtherActivityLineItem[];
   /** Total balance across every class="cash" account (Extra Savings, checking, an emergency fund, etc.), not just the spending hub -- a broader, display-only figure than netCashFlow/cashInterest above, which stay scoped to the hub for an exact reconcile. */
   endingCashBalance: number;
   /** Cash outflow from after-tax contributions (money saved into accounts). */

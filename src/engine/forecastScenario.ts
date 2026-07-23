@@ -58,6 +58,13 @@ interface YearAccumulator {
    * otherwise captured by income/expense/contribution/withdrawal tracking.
    */
   hubTransferNet: number;
+  /**
+   * Signed per-flow contributions to the "Other account activity" line --
+   * every increment to hubTransferNet and every subtraction via
+   * directIncomeToOtherAccounts, keyed by a stable per-flow id. Sums exactly
+   * to hubTransferNet - directIncomeToOtherAccounts.
+   */
+  otherActivityByItem: Map<Id, number>;
   /** Taxes paid on RMDs and shortfall withdrawals (cash leaving the household). */
   taxesPaid: number;
   /** Portion of taxesPaid that was withheld from SS/pension deposits landing ON the hub (needed for the hub-scoped reconcile). */
@@ -97,6 +104,7 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
     directExpenseFromAccounts: 0,
     directIncomeToOtherAccounts: 0,
     hubTransferNet: 0,
+    otherActivityByItem: new Map(),
     taxesPaid: 0,
     incomeWithheldFromHub: 0,
     earlyWithdrawalPenalties: 0,
@@ -292,6 +300,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // Whether each contribution line is payroll-deducted (excluded from cash
   // flow) vs funded from take-home, keyed by sourceId.
   const contributionFromPaycheck = new Map<Id, boolean>();
+  // Counterparty account for each "Other account activity" line (the home
+  // sold, the brokerage a windfall landed in), keyed by the same per-flow id
+  // as acc.otherActivityByItem; null when the other leg isn't a single
+  // known account. Stable across the whole run, like itemLabels.
+  const otherActivityAccountId = new Map<Id, Id | null>();
 
   let currentYear = yearOf(settings.startDate);
   // The month being simulated -- advanced at the top of the loop so the
@@ -300,6 +313,17 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   let currentMonth: ISODate = settings.startDate;
   let acc = freshAccumulator(accountIds);
   const yearStartBalances = new Map<Id, number>(balances);
+
+  // Record one signed contribution to the "Other account activity" line.
+  // Called at EVERY site that touches hubTransferNet or
+  // directIncomeToOtherAccounts, with the same signed amount that flows into
+  // the scalar -- so the items always sum exactly to the total.
+  const recordOtherActivity = (id: Id, label: string, counterpartyId: Id | null, amount: number, date: ISODate): void => {
+    addTo(acc.otherActivityByItem, id, amount);
+    itemLabels.set(id, label);
+    markFirstDate(id, date);
+    if (!otherActivityAccountId.has(id)) otherActivityAccountId.set(id, counterpartyId);
+  };
 
   const personById = new Map(scenario.household.people.map((p) => [p.id, p]));
   const EARLY_WITHDRAWAL_PENALTY_RATE = 0.1;
@@ -482,7 +506,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         }
         // Asset-for-asset swap (home equity -> cash): reconcile like any
         // other transfer leg landing on the hub directly.
-        if (hubIds.has(targetId)) acc.hubTransferNet += proceeds;
+        if (hubIds.has(targetId)) {
+          acc.hubTransferNet += proceeds;
+          recordOtherActivity(`${account.id}:sale`, `Home sale: ${account.name}`, account.id, proceeds, month);
+        }
         ledger.push({
           date: month,
           kind: "home_sale",
@@ -551,7 +578,16 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         if (liabilityExcessToHub > 0 && primarySpendingAccountId && primarySpendingAccountId !== posting.accountId) {
           balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) + liabilityExcessToHub);
           acc.rollforward.get(primarySpendingAccountId)!.deposits += liabilityExcessToHub;
-          if (hubIds.has(primarySpendingAccountId)) acc.hubTransferNet += liabilityExcessToHub;
+          if (hubIds.has(primarySpendingAccountId)) {
+            acc.hubTransferNet += liabilityExcessToHub;
+            recordOtherActivity(
+              `${posting.sourceId}:excess`,
+              `${posting.label} (excess over payoff, returned to cash)`,
+              posting.accountId,
+              liabilityExcessToHub,
+              posting.date
+            );
+          }
         }
       } else {
         balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) + posting.amount);
@@ -570,7 +606,19 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // itemized list, but never reached cash on hand -- track separately
         // so it doesn't inflate the reconciled Net. (Any liability-paydown
         // excess bounced back to the hub DID reach cash, so it's not direct.)
-        if (!hubIds.has(posting.accountId)) acc.directIncomeToOtherAccounts += posting.amount - liabilityExcessToHub;
+        if (!hubIds.has(posting.accountId)) {
+          const direct = posting.amount - liabilityExcessToHub;
+          acc.directIncomeToOtherAccounts += direct;
+          // Negative: this income counted in totalIncome above but never
+          // reached cash, so it subtracts back out of the reconciliation.
+          recordOtherActivity(
+            `${posting.sourceId}:direct`,
+            `${posting.label} (deposited to ${targetAccount?.name ?? "another account"})`,
+            posting.accountId,
+            -direct,
+            posting.date
+          );
+        }
 
         // Social Security and pension income are entered GROSS (unlike every
         // other income category, which is take-home) so their real
@@ -617,6 +665,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // income/expense/contribution tracking, so it needs its own bucket to
         // reconcile Net exactly.
         acc.hubTransferNet += posting.amount;
+        // Label already carries the flow's identity ("Down payment: Buy a
+        // home", "Home sale: ...", a custom transfer's name); the other leg
+        // of a custom transfer isn't on this posting, so no counterparty.
+        recordOtherActivity(posting.sourceId, posting.label, null, posting.amount, posting.date);
       }
       // contribution_out: balance + rollforward already handled above.
       // A non-hub-touching transfer leg needs no extra bookkeeping here --
@@ -1105,6 +1157,19 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // that bypassed the hub entirely. Zero in the common case where income
       // lands on and expenses pay from the hub with no direct hub transfers.
       const otherAccountActivity = acc.hubTransferNet - acc.directIncomeToOtherAccounts;
+      // Itemized breakdown of that scalar -- same signed amounts recorded at
+      // each accumulation site, so the items sum exactly to the total (only
+      // sub-cent noise is filtered). Sorted by magnitude, biggest first.
+      const otherActivityByItem = [...acc.otherActivityByItem.entries()]
+        .filter(([, amount]) => Math.abs(amount) > 0.005)
+        .map(([id, amount]) => ({
+          id,
+          label: itemLabels.get(id) ?? id,
+          amount,
+          startDate: itemFirstDate.get(id) ?? null,
+          accountId: otherActivityAccountId.get(id) ?? null,
+        }))
+        .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
       // Ground truth: the hub's actual measured balance change this year.
       // Always exactly right, regardless of which mechanism moved the money.
       const netCashFlow = hubEndingBalance - hubCashStart;
@@ -1123,6 +1188,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         incomeTaxWithheldFromCash: acc.incomeWithheldFromHub,
         cashInterest: hubCashInterest,
         otherAccountActivity,
+        otherActivityByItem,
         endingCashBalance,
         afterTaxContributionTotal: acc.afterTaxContributions,
         incomeByItem: toLineItems(acc.incomeByItem),
