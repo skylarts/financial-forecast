@@ -91,8 +91,8 @@ export function CashFlowTable({
   accounts: Account[];
   dollarMode: DollarMode;
 }) {
-  void accounts; // account metadata now travels on each WithdrawalLineItem
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Taxes section starts expanded; everything else starts collapsed.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["taxes"]));
   const toggle = (key: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -127,6 +127,58 @@ export function CashFlowTable({
   }, [years]);
   const surplusItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.surplusByAccount)), [years]);
 
+  // Expenses grouped by source: a life event's one-time + recurring costs
+  // collapse under one expandable row (ids share the event-id prefix, e.g.
+  // "evt1:onetime" / "evt1:childcare"), and a home's mortgage payment +
+  // ownership costs (property tax, insurance, maintenance) collapse under
+  // the home's name (linked via the real-estate account's linkedLiabilityId).
+  // Items that don't belong to a multi-item group render as plain rows.
+  const expenseGroups = useMemo(() => {
+    // itemId -> forced group key for home-related items.
+    const homeGroupOf = new Map<string, string>();
+    const homeLabels = new Map<string, string>();
+    for (const a of accounts) {
+      if (a.class !== "real_estate") continue;
+      const key = `home:${a.id}`;
+      homeLabels.set(key, a.name);
+      homeGroupOf.set(`${a.id}:ownership_costs`, key);
+      if (a.linkedLiabilityId) homeGroupOf.set(a.linkedLiabilityId, key);
+    }
+    // Bucket every expense item, preserving expenseItems' (date) order.
+    const buckets = new Map<string, { label: string | null; items: { id: string; label: string }[] }>();
+    const order: string[] = [];
+    for (const it of expenseItems) {
+      const home = homeGroupOf.get(it.id);
+      const colon = it.id.indexOf(":");
+      const key = home ?? (colon > 0 ? `evt:${it.id.slice(0, colon)}` : `solo:${it.id}`);
+      if (!buckets.has(key)) {
+        buckets.set(key, { label: home ? homeLabels.get(home) ?? null : null, items: [] });
+        order.push(key);
+      }
+      buckets.get(key)!.items.push(it);
+    }
+    return order.map((key) => {
+      const b = buckets.get(key)!;
+      if (b.items.length < 2) return { key, label: b.items[0].label, items: b.items, grouped: false };
+      // Event group label = the shared event name after ": " in child labels
+      // ("Childcare: Have a kid" -> "Have a kid"); children then show just
+      // their own part ("Childcare"). Homes keep their account name + full
+      // child labels.
+      let label = b.label;
+      let items = b.items;
+      if (!label) {
+        const suffix = b.items[0].label.includes(": ") ? b.items[0].label.slice(b.items[0].label.indexOf(": ") + 2) : null;
+        if (suffix && b.items.every((it) => it.label.endsWith(`: ${suffix}`) || it.label === suffix)) {
+          label = suffix;
+          items = b.items.map((it) => ({ ...it, label: it.label === suffix ? it.label : it.label.slice(0, it.label.length - suffix.length - 2) }));
+        } else {
+          label = b.items[0].label;
+        }
+      }
+      return { key, label, items, grouped: true };
+    });
+  }, [expenseItems, accounts]);
+
   // Federal tax breakdown -- shown as negative (a deduction), same sign convention as the summary row above it.
   const federalTaxComponentMaps = useMemo(
     () => years.map((y) => new Map(y.cashFlow.federalTaxByComponent.map((c) => [c.key, -c.amount]))),
@@ -146,6 +198,16 @@ export function CashFlowTable({
     );
   }, [years]);
 
+  // Estimated withholding taken at the source from taxable/tax-deferred
+  // withdrawals -- shown as an informational drill-down under Federal Tax,
+  // alongside the benefit withholding and true-up (it's already netted out
+  // of the gross withdrawal amounts shown in the Withdrawals section above).
+  const withholdingItems = useMemo(() => {
+    const items: { id: string; label: string }[] = [];
+    for (const g of withdrawalGroups) for (const a of g.accounts) items.push({ id: a.id, label: a.label });
+    return items.filter((it) => years.some((_y, yi) => (wdTaxMaps[yi].get(it.id) ?? 0) > 0.5));
+  }, [withdrawalGroups, years, wdTaxMaps]);
+
   const hasWithdrawals = withdrawalGroups.length > 0;
   const hasSaved = years.some((y) => y.cashFlow.afterTaxContributionTotal + y.cashFlow.surplusRouted > 0.005);
   const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
@@ -153,6 +215,7 @@ export function CashFlowTable({
   const hasSettlement = years.some((y) => Math.abs(y.cashFlow.taxSettlement) > 0.5);
   const hasOtherActivity = years.some((y) => Math.abs(y.cashFlow.otherAccountActivity) > 0.5);
   const hasFederalTax = years.some((y) => y.cashFlow.federalTaxTotal > 0.5);
+  const hasWithdrawalWithholding = withholdingItems.length > 0;
 
   if (years.length === 0) {
     return (
@@ -303,9 +366,34 @@ export function CashFlowTable({
             {sectionHeader("income", "Income", (yi) => years[yi].cashFlow.totalIncome)}
             {isOpen("income") && (incomeItems.length ? itemRows(incomeItems, incomeMaps) : emptyRow("No income in this range."))}
 
-            {/* Expenses */}
+            {/* Expenses -- grouped by life event / home, expandable to the
+                underlying one-time + recurring pieces. */}
             {sectionHeader("expenses", "Expenses", (yi) => years[yi].cashFlow.totalExpenses)}
-            {isOpen("expenses") && (expenseItems.length ? itemRows(expenseItems, expenseMaps) : emptyRow("No expenses in this range."))}
+            {isOpen("expenses") &&
+              (expenseGroups.length
+                ? expenseGroups.map((g) =>
+                    g.grouped ? (
+                      <Fragment key={g.key}>
+                        <tr className="hover:bg-accent/15">
+                          <td className="py-2 pl-6 font-medium">
+                            <ToggleLabel
+                              label={g.label}
+                              expanded={isOpen(`exp:${g.key}`)}
+                              onToggle={() => toggle(`exp:${g.key}`)}
+                            />
+                          </td>
+                          {cells((yi) => g.items.reduce((s, it) => s + (expenseMaps[yi].get(it.id) ?? 0), 0))}
+                        </tr>
+                        {isOpen(`exp:${g.key}`) && itemRows(g.items, expenseMaps, "pl-12")}
+                      </Fragment>
+                    ) : (
+                      <tr key={g.key} className="text-dim hover:bg-accent/15">
+                        <td className="py-2 pl-10">{g.label}</td>
+                        {cells((yi) => expenseMaps[yi].get(g.items[0].id) ?? 0)}
+                      </tr>
+                    )
+                  )
+                : emptyRow("No expenses in this range."))}
 
             {/* Operating surplus / (shortfall) */}
             {summaryRow("Operating surplus / (shortfall)", (yi) => years[yi].cashFlow.operatingCashFlow, {
@@ -313,20 +401,21 @@ export function CashFlowTable({
               hint: "Income minus expenses. When it goes negative (typically once income drops in retirement), Withdrawals below pull from your accounts to cover it.",
             })}
 
-            {/* Withdrawals -- header shows the NET amount that actually reached
-                cash (what the reconciliation needs); the drill-down below shows
-                each source account GROSS with its estimated withholding. */}
+            {/* Withdrawals -- header and every level show the GROSS amount
+                pulled from the account (including tax withheld at the source);
+                each account expands into its estimated withholding and the net
+                amount that actually reached cash. */}
             {sectionHeader(
               "withdrawals",
-              "Withdrawals (net to cash)",
-              (yi) => years[yi].cashFlow.withdrawalsToCashNet,
-              "Money pulled from your accounts that actually reached your spending: planned drawdowns and RMDs, net of tax withheld at the source. Expand to see each account's GROSS withdrawal (net + estimated withholding) -- so the expanded rows intentionally total more than this line. A transfer between your own accounts also appears in the breakdown for visibility."
+              "Withdrawals",
+              (yi) => withdrawalGroups.reduce((s, g) => s + g.accounts.reduce((t, a) => t + (wdGrossMaps[yi].get(a.id) ?? 0), 0), 0),
+              "Total pulled from your accounts, INCLUDING tax withheld at the source: planned drawdowns and RMDs. Expand any account to split its withdrawal into estimated withholding (sent to the IRS) and the net amount that reached your spending. A transfer between your own accounts also appears here for visibility."
             )}
             {isOpen("withdrawals") &&
               (hasWithdrawals
                 ? withdrawalGroups.map((g) => (
                     <Fragment key={g.key}>
-                      <tr className="text-dim hover:bg-accent/15">
+                      <tr className="hover:bg-accent/15">
                         <td className="py-2 pl-6 font-medium">
                           <ToggleLabel
                             label={g.label}
@@ -337,50 +426,48 @@ export function CashFlowTable({
                         {cells((yi) => g.accounts.reduce((s, a) => s + (wdGrossMaps[yi].get(a.id) ?? 0), 0))}
                       </tr>
                       {isOpen(`wd:${g.key}`) &&
-                      g.accounts.map((a) => (
-                        <Fragment key={a.id}>
-                          <tr className="text-dim hover:bg-accent/15">
-                            <td className="py-2 pl-12">{a.label}</td>
-                            {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
-                          </tr>
-                          {years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5) && (
-                            <tr className="text-negative/80 hover:bg-accent/15">
-                              <td className="py-1 pl-16 text-xs italic">estimated withholding</td>
-                              {years.map((y, yi) => {
-                                const v = d(wdTaxMaps[yi].get(a.id) ?? 0, yi);
-                                return (
-                                  <td key={y.year} className="py-1 pr-3 text-right text-xs tabular-nums">
-                                    {Math.abs(v) < 0.5 ? <span className="text-dim">—</span> : formatMoney(v)}
-                                  </td>
-                                );
-                              })}
-                              <td className={`${totalCellClass} text-xs`}>
-                                {formatMoney(totalOf((yi) => wdTaxMaps[yi].get(a.id) ?? 0))}
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      ))}
+                        g.accounts.map((a) => {
+                          const hasTax = years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
+                          return (
+                            <Fragment key={a.id}>
+                              <tr className="text-dim hover:bg-accent/15">
+                                <td className="py-2 pl-12">
+                                  {hasTax ? (
+                                    <ToggleLabel
+                                      label={a.label}
+                                      expanded={isOpen(`wd:acct:${a.id}`)}
+                                      onToggle={() => toggle(`wd:acct:${a.id}`)}
+                                    />
+                                  ) : (
+                                    a.label
+                                  )}
+                                </td>
+                                {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
+                              </tr>
+                              {hasTax && isOpen(`wd:acct:${a.id}`) && (
+                                <>
+                                  <tr className="text-dim hover:bg-accent/15">
+                                    <td className="py-2 pl-[4.5rem] text-xs italic">Estimated withholding</td>
+                                    {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
+                                  </tr>
+                                  <tr className="text-dim hover:bg-accent/15">
+                                    <td className="py-2 pl-[4.5rem] text-xs italic">Net withdrawal</td>
+                                    {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
+                                  </tr>
+                                </>
+                              )}
+                            </Fragment>
+                          );
+                        })}
                     </Fragment>
                   ))
                 : emptyRow("No withdrawals in this range."))}
 
-            {/* Cash-side tax rows: withholding taken from benefit deposits, and
-                the December true-up that settles withholding onto the exact
-                bracket bill. Together with the net Withdrawals line above,
-                these make the visible rows sum exactly to Net change in cash. */}
-            {hasBenefitWithholding &&
-              reconcileRow(
-                "Tax withheld on benefits",
-                (yi) => -years[yi].cashFlow.incomeTaxWithheldFromCash,
-                "Estimated tax withheld from Social Security / pension deposits before they reach your cash (both are entered gross)."
-              )}
-            {hasSettlement &&
-              reconcileRow(
-                "Tax true-up (year-end settlement)",
-                (yi) => years[yi].cashFlow.taxSettlement,
-                "Each December the estimated withholding is settled against the exact bracket-computed bill -- positive is a refund back into cash, negative is extra tax owed. After this, the year's actual cash tax equals the Federal tax line below exactly."
-              )}
+            {/* Cash-side tax rows -- withholding on benefit deposits and the
+                December true-up -- are shown under Federal Tax below, not
+                here, so all tax estimates/actuals/true-up live in one place.
+                They still count toward Net change in cash below; that row is
+                measured from the actual simulated balance, not summed. */}
 
             {/* Saved to accounts */}
             {hasSaved &&
@@ -426,12 +513,13 @@ export function CashFlowTable({
                 (yi) => years[yi].cashFlow.otherAccountActivity,
                 "One-off flows that touched cash directly: a home purchase down payment, home-sale proceeds, a custom transfer to/from the hub, net of income deposited straight into an investment."
               )}
-            {/* Net change in cash -- the reconciling bottom line. Always exactly
-                equals every row above summed, because it's measured directly
-                from the actual simulated cash balance, not derived from them. */}
+            {/* Net change in cash -- the reconciling bottom line, measured
+                directly from the actual simulated cash balance. Withdrawals
+                above are shown GROSS, so to tie out by hand subtract the
+                estimated withholdings shown in the Taxes section. */}
             {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, {
               strong: true,
-              hint: "The measured change in Extra Savings' balance this year -- exactly the sum of the rows above: operating result, net withdrawals, tax rows, saving, interest, and other activity. Lands near $0 in a year where you draw just what you need.",
+              hint: "The measured change in Extra Savings' balance this year. Withdrawals above are shown gross (including withholding), so to tie out by hand: operating result + withdrawals - estimated withholdings + true-up + saving + interest + other activity. Lands near $0 in a year where you draw just what you need.",
             })}
             {summaryRow("Ending cash on hand", (yi) => years[yi].cashFlow.endingCashBalance, {
               totalIsMeaningful: false,
@@ -439,42 +527,86 @@ export function CashFlowTable({
               hint: "Your total balance across all cash accounts, not just Extra Savings -- a broader figure than the reconciliation above. Not summed in the Total column since it's a balance, not a flow.",
             })}
 
-            {/* Federal tax -- informational: the exact bracket-computed bill for
-                the year. Thanks to the true-up row above, this IS the cash tax
-                the household actually paid for the year; it's shown separately
-                (not part of the reconciliation sum) because most of it was
-                withheld at the source accounts, not from cash. */}
-            {hasFederalTax && (
+            {/* Federal tax -- informational: everything from withholding
+                estimates through the exact bracket-computed bill to the
+                year-end true-up lives here together. Thanks to the true-up
+                row, "Federal tax (actual bill)" IS the cash tax the household
+                actually paid for the year; the section as a whole is shown
+                separately from the reconciliation above because most of it
+                was withheld at the source accounts, not from cash. */}
+            {(hasFederalTax || hasBenefitWithholding || hasWithdrawalWithholding || hasSettlement) && (
               <>
                 <tr className="border-t-2 border-border bg-background/40">
                   <td className="py-2.5 pl-2 font-bold" colSpan={col}>
                     <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
-                      Taxes (informational)
+                      <ToggleLabel label="Taxes (informational)" expanded={isOpen("taxes")} onToggle={() => toggle("taxes")} />
                       <InfoTooltip text="Not part of the cash reconciliation above -- most tax is withheld inside the source accounts (it shows up in each account's gross withdrawal), with the year-end true-up settling the difference into cash." />
                     </span>
                   </td>
                 </tr>
-                <tr className="border-t border-border">
-                  <td className="py-2.5 pl-2 font-bold">
-                    <span className="inline-flex items-center gap-1">
-                      <ToggleLabel label="Federal tax (actual bill)" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
-                      <InfoTooltip text="The exact bill for the year from real IRS brackets on actual realized income -- and, after the year-end true-up, exactly what the household actually paid. Expand to see which income sources it came from." />
-                    </span>
-                  </td>
-                  {years.map((y, yi) => {
-                    const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
-                    return (
-                      <td key={y.year} className="py-2 pr-3 text-right font-semibold tabular-nums">
-                        <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
+                {isOpen("taxes") && (
+                  <>
+                    {/* 1. The actual bracket-computed bill, by income component. */}
+                    <tr className="border-t border-border">
+                      <td className="py-2.5 pl-2 font-bold">
+                        <span className="inline-flex items-center gap-1">
+                          <ToggleLabel label="Federal tax (actual bill)" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
+                          <InfoTooltip text="The exact bill for the year from real IRS brackets on actual realized income -- and, after the year-end true-up, exactly what the household actually paid. Expand to see which income sources it came from. Tax is computed on the household's joint income, so it can't be split per person." />
+                        </span>
                       </td>
-                    );
-                  })}
-                  {totalCell(totalOf((yi) => -years[yi].cashFlow.federalTaxTotal), { signed: true })}
-                </tr>
-                {isOpen("federalTax") &&
-                  (federalTaxComponentItems.length
-                    ? itemRows(federalTaxComponentItems, federalTaxComponentMaps)
-                    : emptyRow("No federal tax in this range."))}
+                      {years.map((y, yi) => {
+                        const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
+                        return (
+                          <td key={y.year} className="py-2 pr-3 text-right font-semibold tabular-nums">
+                            <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
+                          </td>
+                        );
+                      })}
+                      {totalCell(totalOf((yi) => -years[yi].cashFlow.federalTaxTotal), { signed: true })}
+                    </tr>
+                    {isOpen("federalTax") &&
+                      (federalTaxComponentItems.length
+                        ? itemRows(federalTaxComponentItems, federalTaxComponentMaps)
+                        : emptyRow("No federal tax in this range."))}
+
+                    {/* 2. Everything withheld during the year: per-account
+                        withholding on withdrawals + withholding on benefit
+                        deposits. */}
+                    {(hasWithdrawalWithholding || hasBenefitWithholding) && (
+                      <>
+                        {sectionHeader(
+                          "withholdings",
+                          "Estimated withholdings (total withheld)",
+                          (yi) =>
+                            -withholdingItems.reduce((s, it) => s + (wdTaxMaps[yi].get(it.id) ?? 0), 0) -
+                            years[yi].cashFlow.incomeTaxWithheldFromCash,
+                          "All estimated tax withheld during the year: at the source on account withdrawals, and from Social Security / pension deposits before they reach cash. Expand to see it by source."
+                        )}
+                        {isOpen("withholdings") && (
+                          <>
+                            {itemRows(
+                              withholdingItems.map((it) => ({ ...it, label: `${it.label} est. withholding` })),
+                              years.map((_y, yi) => new Map(withholdingItems.map((it) => [it.id, -(wdTaxMaps[yi].get(it.id) ?? 0)])))
+                            )}
+                            {hasBenefitWithholding &&
+                              itemRows(
+                                [{ id: "benefits", label: "Social Security / pension est. withholding" }],
+                                years.map((_y, yi) => new Map([["benefits", -years[yi].cashFlow.incomeTaxWithheldFromCash]]))
+                              )}
+                          </>
+                        )}
+                      </>
+                    )}
+
+                    {/* 3. December settlement of withheld vs. actual. */}
+                    {hasSettlement &&
+                      reconcileRow(
+                        "Tax true-up (year-end settlement)",
+                        (yi) => years[yi].cashFlow.taxSettlement,
+                        "Each December the estimated withholding is settled against the exact bracket-computed bill -- positive is a refund back into cash, negative is extra tax owed. After this, the year's total withheld plus this settlement equals the Federal tax (actual bill) line above exactly."
+                      )}
+                  </>
+                )}
               </>
             )}
           </tbody>
