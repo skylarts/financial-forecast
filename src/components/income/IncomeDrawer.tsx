@@ -41,7 +41,8 @@ interface FormValues {
   growthRatePct: string;
   intervalYears: string;
   depositAccountId: string;
-  category: IncomeCategory;
+  /** Blank until the user picks one -- everything below is hidden until then. */
+  category: IncomeCategory | "";
   isExcluded: boolean;
 }
 
@@ -57,7 +58,7 @@ function toFormValues(income?: IncomeSource): FormValues {
     growthRatePct: fractionToPercentStr(income?.growthRatePct),
     intervalYears: income?.intervalYears?.toString() ?? "",
     depositAccountId: income?.depositAccountId ?? "",
-    category: income?.category ?? "salary",
+    category: income?.category ?? "",
     isExcluded: income?.isExcluded ?? false,
   };
 }
@@ -84,7 +85,7 @@ export function IncomeDrawer({
   // purely a convenience that fills in Start Date from the owner's birthday.
   const [claimingAge, setClaimingAge] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(
-    !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.intervalYears != null)
+    !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
   );
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
@@ -105,7 +106,7 @@ export function IncomeDrawer({
     setClaimingAge("");
     setError(null);
     setAdvancedOpen(
-      !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.intervalYears != null)
+      !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
     );
   }, [income, open, reset]);
 
@@ -119,6 +120,10 @@ export function IncomeDrawer({
   };
 
   const onSubmit = (values: FormValues) => {
+    if (!values.category) {
+      setError("Select a category.");
+      return;
+    }
     const candidate = {
       name: values.name.trim(),
       ownerId: values.ownerId || null,
@@ -160,9 +165,11 @@ export function IncomeDrawer({
                 if (e.target.value === "social_security") setValue("frequency", "monthly");
               },
             })}
-            options={CATEGORY_OPTIONS}
+            options={income ? CATEGORY_OPTIONS : [{ value: "", label: "Select a category..." }, ...CATEGORY_OPTIONS]}
           />
         </Field>
+        {category !== "" && (
+        <>
         <Field label="Owner">
           <SelectInput
             reg={register("ownerId")}
@@ -204,6 +211,14 @@ export function IncomeDrawer({
         {category !== "social_security" && (
           <Field label="Frequency">
             <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+          </Field>
+        )}
+        {category !== "social_security" && !isOneTime && (
+          <Field
+            label="Or repeat every N years (optional)"
+            hint="For a cyclical windfall (e.g. a bonus every few years). Overrides Frequency above."
+          >
+            <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 10" />
           </Field>
         )}
         <Field label={isOneTime ? "Date" : "Start Date"}>
@@ -248,14 +263,6 @@ export function IncomeDrawer({
         {advancedOpen && (
           <div className="flex flex-col gap-3 border-l border-border pl-3">
             {!isOneTime && (
-              <Field
-                label="Or repeat every N years (optional)"
-                hint="For a cyclical windfall (e.g. a bonus every few years). Overrides Frequency above."
-              >
-                <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 10" />
-              </Field>
-            )}
-            {!isOneTime && (
               <AdjustmentsEditor
                 adjustments={adjustments}
                 onChange={setAdjustments}
@@ -267,6 +274,8 @@ export function IncomeDrawer({
               label="Excluded (kept visible for reference, no effect on the projection)"
             />
           </div>
+        )}
+        </>
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">

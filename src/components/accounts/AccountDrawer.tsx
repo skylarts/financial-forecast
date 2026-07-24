@@ -32,17 +32,17 @@ const EXTRA_CLASS_LABELS: Partial<Record<AccountClass, string>> = {
 };
 
 /** Mirrors engine's effectiveTaxTreatment: explicit taxTreatment wins, else infer from class. */
-function isEffectivelyTaxDeferred(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
+function isEffectivelyTaxDeferred(cls: AccountClass | "", taxTreatment: TaxTreatment): boolean {
   if (taxTreatment !== "n/a") return taxTreatment === "tax_deferred";
   return cls === "tax_deferred";
 }
 
-function isEffectivelyTaxable(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
+function isEffectivelyTaxable(cls: AccountClass | "", taxTreatment: TaxTreatment): boolean {
   if (taxTreatment !== "n/a") return taxTreatment === "taxable";
   return cls === "taxable_investment";
 }
 
-function isEffectivelyTaxFree(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
+function isEffectivelyTaxFree(cls: AccountClass | "", taxTreatment: TaxTreatment): boolean {
   if (taxTreatment !== "n/a") return taxTreatment === "tax_free";
   return cls === "tax_free";
 }
@@ -69,7 +69,8 @@ const FUNDING_OPTIONS: { value: string; label: string }[] = [
 
 interface FormValues {
   name: string;
-  class: AccountClass;
+  /** Blank until the user picks a type -- everything below is hidden until then. */
+  class: AccountClass | "";
   ownerId: string;
   /** Money string ("250,000"). */
   startingBalance: string;
@@ -137,7 +138,7 @@ interface ContribRow {
 function toFormValues(account?: Account): FormValues {
   return {
     name: account?.name ?? "",
-    class: account?.class ?? "cash",
+    class: account?.class ?? "",
     ownerId: account?.ownerId ?? "",
     startingBalance: account ? moneyToStr(account.startingBalance) : "0",
     growthRatePct: fractionToPercentStr(account?.growthRatePct),
@@ -219,7 +220,7 @@ export function AccountDrawer({
   // Tracks the class the cash-default effect below last saw, so it can tell
   // an actual transition (switched INTO or OUT OF Cash) apart from just
   // re-running. Reset to null whenever the drawer (re)opens, below.
-  const prevClassRef = useRef<AccountClass | null>(null);
+  const prevClassRef = useRef<AccountClass | "">("");
 
   useEffect(() => {
     reset(toFormValues(account));
@@ -227,7 +228,7 @@ export function AccountDrawer({
     setContribRows(toContribRows(account));
     setLoanDraft(toLoanDraft(account));
     setError(null);
-    prevClassRef.current = null;
+    prevClassRef.current = "";
     // Auto-expand Advanced when editing an account that already has
     // something set there, so it's never silently hidden. RMD/cost
     // basis/penalty/contributions live in the main flow now (see below), so
@@ -274,10 +275,13 @@ export function AccountDrawer({
   }, [account, open, selectedClass, getValues, setValue]);
 
   const classOptions = (() => {
-    const opts = [...CLASS_OPTIONS];
+    const opts: { value: AccountClass | ""; label: string }[] = [...CLASS_OPTIONS];
     if (account && !opts.some((o) => o.value === account.class)) {
       opts.unshift({ value: account.class, label: EXTRA_CLASS_LABELS[account.class] ?? account.class });
     }
+    // Only a brand-new account starts with nothing picked -- editing always
+    // has a real class already, so there's nothing to prompt for.
+    if (!account) opts.unshift({ value: "", label: "Select an account type..." });
     return opts;
   })();
 
@@ -309,6 +313,10 @@ export function AccountDrawer({
   const removeContribRow = (key: string) => setContribRows((rows) => rows.filter((r) => r.key !== key));
 
   const onSubmit = (values: FormValues) => {
+    if (!values.class) {
+      setError("Select an account type.");
+      return;
+    }
     const cls = values.class;
     const startingBalance = moneyStrToNumber(values.startingBalance) ?? 0;
 
@@ -542,6 +550,8 @@ export function AccountDrawer({
         <Field label="Account Type">
           <SelectInput reg={register("class")} options={classOptions} />
         </Field>
+        {selectedClass !== "" && (
+        <>
         <Field label="Starting Balance">
           <MoneyInput reg={register("startingBalance")} placeholder="e.g. 25,000" />
         </Field>
@@ -693,6 +703,8 @@ export function AccountDrawer({
               label="Excluded (kept visible for reference, no effect on the projection)"
             />
           </div>
+        )}
+        </>
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">
