@@ -652,6 +652,7 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
             open={accountDrawerOpen}
             onClose={() => setAccountDrawerOpen(false)}
             people={scenario.household.people}
+            accounts={scenario.accounts}
           />
           <IncomeDrawer
             open={incomeDrawerOpen}

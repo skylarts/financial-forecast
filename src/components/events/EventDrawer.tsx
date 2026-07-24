@@ -9,22 +9,29 @@ import {
   haveAKidEventSchema,
   customTransferEventSchema,
 } from "@/domain";
-import { addMonths, elapsedYears } from "@/engine/dateMath";
+import { addMonths, birthdayAtAge, elapsedYears } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
+import { IncomeDrawer } from "@/components/income/IncomeDrawer";
+import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 
 // income_change / expense_change and windfall are not separate event types
 // here -- a temporary raise/pause/cut lives directly on the income or
-// expense it affects, and a one-time or recurring inflow/outflow is just an
-// Income or Expense entry. Social Security is the same story: it's a plain
-// Income entry with category "social_security" (that category is what
-// triggers the once-per-year COLA compounding in the engine), entered via
-// "+ Income" on the Timeline tab, not here.
-const EVENT_TEMPLATES: { type: EventType; label: string; hint: string }[] = [
+// expense it affects. Social Security is the same story: it's a plain Income
+// entry with category "social_security" (that category is what triggers the
+// once-per-year COLA compounding in the engine). Both Income and Expense are
+// still their own data model (IncomeSource / ExpenseBaseline, not a
+// ScenarioEvent) -- picking either tile below just hands off rendering to
+// their own drawer, same as buy_home hands off to HomeDrawer.
+type TemplateType = EventType | "income" | "expense";
+
+const EVENT_TEMPLATES: { type: TemplateType; label: string; hint: string }[] = [
+  { type: "income", label: "Income", hint: "Salary, Social Security, pension, rental, or a one-time payment" },
+  { type: "expense", label: "Expense", hint: "A recurring or one-time cost" },
   { type: "retire", label: "Retire", hint: "Stop a person's salary income at a given date" },
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
   { type: "sell_home", label: "Sell a home", hint: "Sell a home you own -- retires its mortgage and credits net proceeds" },
@@ -164,11 +171,6 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
   }
 }
 
-/** The date `person` turns `age`, using their birthday's month/day. */
-function birthdayAtAge(person: Person, age: number): string {
-  return addMonths(person.birthDate, Math.round(age * 12));
-}
-
 export function EventDrawer({
   open,
   onClose,
@@ -188,7 +190,7 @@ export function EventDrawer({
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
-  const [selectedType, setSelectedType] = useState<EventType | null>(event?.type ?? null);
+  const [selectedType, setSelectedType] = useState<TemplateType | null>(event?.type ?? null);
   const [error, setError] = useState<string | null>(null);
   const [retirementExpenseAdjustments, setRetirementExpenseAdjustments] = useState<TemporaryAdjustment[]>(
     event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []
@@ -214,8 +216,9 @@ export function EventDrawer({
   const sellMode = watch("sellMode");
   const retirePersonId = watch("personId");
 
-  // buy_home is handled entirely by HomeDrawer (see the early return below),
-  // so it never reaches this form.
+  // buy_home, income, and expense are each handled entirely by their own
+  // drawer (see the early returns below), so none of them ever reach the
+  // generic form further down.
   if (selectedType === "buy_home") {
     const buyEvent = event?.type === "buy_home" ? event : undefined;
     const linkedAccount = buyEvent ? accounts.find((a) => a.id === buyEvent.realEstateAccountId) : undefined;
@@ -223,13 +226,19 @@ export function EventDrawer({
       <HomeDrawer open={open} onClose={onClose} account={linkedAccount} event={buyEvent} accounts={accounts} initialMode="buy" />
     );
   }
+  if (selectedType === "income") {
+    return <IncomeDrawer open={open} onClose={onClose} income={undefined} people={people} accounts={accounts} />;
+  }
+  if (selectedType === "expense") {
+    return <ExpenseDrawer open={open} onClose={onClose} expense={undefined} accounts={accounts} />;
+  }
 
   /** Typing a retirement age fills the start date with that person's birthday at that age. */
   const syncRetireDateFromAge = (ageStr: string) => {
     const age = Number(ageStr);
     const person = people.find((p) => p.id === (retirePersonId || people[0]?.id));
     if (person && Number.isFinite(age) && age > 0) {
-      setValue("startDate", birthdayAtAge(person, age));
+      setValue("startDate", birthdayAtAge(person.birthDate, age));
     }
   };
 
@@ -399,7 +408,7 @@ export function EventDrawer({
             <>
               {realEstateOptions.length === 0 ? (
                 <p className="text-sm text-dim">
-                  No homes to sell yet -- add one first via &ldquo;Add a Home You Already Own&rdquo; on the Accounts tab.
+                  No homes to sell yet -- add one first via &ldquo;Add Account&rdquo; → Home on the Accounts tab.
                 </p>
               ) : (
                 <Field label="Which Home">

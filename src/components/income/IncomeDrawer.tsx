@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { incomeSourceSchema } from "@/domain";
+import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, inputClass } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
@@ -40,7 +41,8 @@ interface FormValues {
   growthRatePct: string;
   intervalYears: string;
   depositAccountId: string;
-  category: IncomeCategory;
+  /** Blank until the user picks one -- everything below is hidden until then. */
+  category: IncomeCategory | "";
   isExcluded: boolean;
 }
 
@@ -56,7 +58,7 @@ function toFormValues(income?: IncomeSource): FormValues {
     growthRatePct: fractionToPercentStr(income?.growthRatePct),
     intervalYears: income?.intervalYears?.toString() ?? "",
     depositAccountId: income?.depositAccountId ?? "",
-    category: income?.category ?? "salary",
+    category: income?.category ?? "",
     isExcluded: income?.isExcluded ?? false,
   };
 }
@@ -79,27 +81,49 @@ export function IncomeDrawer({
   const removeIncomeSource = usePlanStore((s) => s.removeIncomeSource);
   const [error, setError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(income?.adjustments ?? []);
+  // Not persisted -- there's no claimingAge field on IncomeSource, this is
+  // purely a convenience that fills in Start Date from the owner's birthday.
+  const [claimingAge, setClaimingAge] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(
     !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
   );
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
-  const { register, handleSubmit, watch, reset } = useForm<FormValues>({
+  const { register, handleSubmit, watch, reset, setValue } = useForm<FormValues>({
     defaultValues: toFormValues(income),
   });
   const category = watch("category");
+  const ownerId = watch("ownerId");
+  const frequency = watch("frequency");
+  const isOneTime = frequency === "one_time";
 
   // Re-sync the form whenever the drawer opens on a different income item --
   // without this, a reused drawer instance shows the previous item's values.
   useEffect(() => {
     reset(toFormValues(income));
     setAdjustments(income?.adjustments ?? []);
+    setClaimingAge("");
     setError(null);
-    setAdvancedOpen(!!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true));
+    setAdvancedOpen(
+      !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
+    );
   }, [income, open, reset]);
 
+  /** Typing a claiming age fills the start date with that owner's birthday at that age. */
+  const syncStartDateFromAge = (ageStr: string) => {
+    const age = Number(ageStr);
+    const owner = people.find((p) => p.id === ownerId) ?? people[0];
+    if (owner && Number.isFinite(age) && age > 0) {
+      setValue("startDate", birthdayAtAge(owner.birthDate, age));
+    }
+  };
+
   const onSubmit = (values: FormValues) => {
+    if (!values.category) {
+      setError("Select a category.");
+      return;
+    }
     const candidate = {
       name: values.name.trim(),
       ownerId: values.ownerId || null,
@@ -107,7 +131,7 @@ export function IncomeDrawer({
       grossAmount: values.category === "salary" ? (moneyStrToNumber(values.grossAmount) ?? undefined) : undefined,
       frequency: values.frequency,
       startDate: values.startDate,
-      endDate: values.endDate || null,
+      endDate: values.frequency === "one_time" ? null : values.endDate || null,
       growthRatePct: percentStrToFraction(values.growthRatePct),
       intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       depositAccountId: values.depositAccountId === "" ? null : values.depositAccountId,
@@ -134,6 +158,18 @@ export function IncomeDrawer({
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Alex Salary" />
         </Field>
+        <Field label="Category">
+          <SelectInput
+            reg={register("category", {
+              onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+                if (e.target.value === "social_security") setValue("frequency", "monthly");
+              },
+            })}
+            options={income ? CATEGORY_OPTIONS : [{ value: "", label: "Select a category..." }, ...CATEGORY_OPTIONS]}
+          />
+        </Field>
+        {category !== "" && (
+        <>
         <Field label="Owner">
           <SelectInput
             reg={register("ownerId")}
@@ -158,15 +194,41 @@ export function IncomeDrawer({
             <MoneyInput reg={register("grossAmount")} placeholder="e.g. 9,200" />
           </Field>
         )}
-        <Field label="Frequency">
-          <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+        {category === "social_security" && (
+          <Field label="Claiming Age (optional)" hint="Typing an age fills the date below with the owner's birthday at that age -- adjust the exact date freely afterward.">
+            <input
+              className={inputClass}
+              value={claimingAge}
+              onChange={(e) => {
+                setClaimingAge(e.target.value);
+                syncStartDateFromAge(e.target.value);
+              }}
+              type="number"
+              placeholder="e.g. 67"
+            />
+          </Field>
+        )}
+        {category !== "social_security" && (
+          <Field label="Frequency">
+            <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+          </Field>
+        )}
+        {category !== "social_security" && !isOneTime && (
+          <Field
+            label="Or repeat every N years (optional)"
+            hint="For a cyclical windfall (e.g. a bonus every few years). Overrides Frequency above."
+          >
+            <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 10" />
+          </Field>
+        )}
+        <Field label={isOneTime ? "Date" : "Start Date"}>
+          <TextInput reg={register("startDate", { required: true })} type="date" />
         </Field>
-        <Field label="Or repeat every N years (optional)">
-          <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 10" />
-        </Field>
-        <Field label="Category">
-          <SelectInput reg={register("category")} options={CATEGORY_OPTIONS} />
-        </Field>
+        {!isOneTime && (
+          <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
+            <TextInput reg={register("endDate")} type="date" />
+          </Field>
+        )}
         <Field label="Deposit Account">
           <SelectInput
             reg={register("depositAccountId")}
@@ -176,22 +238,18 @@ export function IncomeDrawer({
             ]}
           />
         </Field>
-        <Field label="Start Date">
-          <TextInput reg={register("startDate", { required: true })} type="date" />
-        </Field>
-        <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
-          <TextInput reg={register("endDate")} type="date" />
-        </Field>
-        <Field
-          label="Annual Growth Rate"
-          hint={
-            category === "social_security"
-              ? `Percent per year, e.g. 2.5 for a 2.5% COLA -- actual raises, including inflation. Social Security steps once each January, not continuously. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the benefit flat in today's dollars.`
-              : `Percent per year, e.g. 5 for 5% -- actual raises, including inflation. Blank = matches your inflation assumption (${inflationPctLabel}%); 0 = flat in nominal terms (shrinks in real terms).`
-          }
-        >
-          <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
-        </Field>
+        {!isOneTime && (
+          <Field
+            label="Annual Growth Rate"
+            hint={
+              category === "social_security"
+                ? `Percent per year, e.g. 2.5 for a 2.5% COLA -- actual raises, including inflation. Social Security steps once each January, not continuously. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the benefit flat in today's dollars.`
+                : `Percent per year, e.g. 5 for 5% -- actual raises, including inflation. Blank = matches your inflation assumption (${inflationPctLabel}%); 0 = flat in nominal terms (shrinks in real terms).`
+            }
+          >
+            <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
+          </Field>
+        )}
 
         <button
           type="button"
@@ -204,16 +262,20 @@ export function IncomeDrawer({
 
         {advancedOpen && (
           <div className="flex flex-col gap-3 border-l border-border pl-3">
-            <AdjustmentsEditor
-              adjustments={adjustments}
-              onChange={setAdjustments}
-              helpText="A temporary raise, pause, or cut over a date range (e.g. a career break: multiplier 0)."
-            />
+            {!isOneTime && (
+              <AdjustmentsEditor
+                adjustments={adjustments}
+                onChange={setAdjustments}
+                helpText="A temporary raise, pause, or cut over a date range (e.g. a career break: multiplier 0)."
+              />
+            )}
             <CheckboxInput
               reg={register("isExcluded")}
               label="Excluded (kept visible for reference, no effect on the projection)"
             />
           </div>
+        )}
+        </>
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">

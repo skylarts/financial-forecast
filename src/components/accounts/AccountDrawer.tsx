@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { nanoid } from "nanoid";
 import type { Account, AccountClass, Person, RecurrenceFrequency, TaxTreatment } from "@/domain";
@@ -9,9 +9,11 @@ import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, InfoTooltip, inputClass, labelClass } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
+import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 
 const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
   { value: "cash", label: "Cash" },
+  { value: "real_estate", label: "Home" },
   { value: "taxable_investment", label: "Taxable Investment" },
   { value: "tax_deferred", label: "Tax-deferred (Traditional 401k/IRA)" },
   { value: "tax_free", label: "Tax-free (Roth 401k/IRA)" },
@@ -30,14 +32,19 @@ const EXTRA_CLASS_LABELS: Partial<Record<AccountClass, string>> = {
 };
 
 /** Mirrors engine's effectiveTaxTreatment: explicit taxTreatment wins, else infer from class. */
-function isEffectivelyTaxDeferred(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
+function isEffectivelyTaxDeferred(cls: AccountClass | "", taxTreatment: TaxTreatment): boolean {
   if (taxTreatment !== "n/a") return taxTreatment === "tax_deferred";
   return cls === "tax_deferred";
 }
 
-function isEffectivelyTaxable(cls: AccountClass, taxTreatment: TaxTreatment): boolean {
+function isEffectivelyTaxable(cls: AccountClass | "", taxTreatment: TaxTreatment): boolean {
   if (taxTreatment !== "n/a") return taxTreatment === "taxable";
   return cls === "taxable_investment";
+}
+
+function isEffectivelyTaxFree(cls: AccountClass | "", taxTreatment: TaxTreatment): boolean {
+  if (taxTreatment !== "n/a") return taxTreatment === "tax_free";
+  return cls === "tax_free";
 }
 
 const TAX_TREATMENT_OPTIONS: { value: TaxTreatment; label: string }[] = [
@@ -62,7 +69,8 @@ const FUNDING_OPTIONS: { value: string; label: string }[] = [
 
 interface FormValues {
   name: string;
-  class: AccountClass;
+  /** Blank until the user picks a type -- everything below is hidden until then. */
+  class: AccountClass | "";
   ownerId: string;
   /** Money string ("250,000"). */
   startingBalance: string;
@@ -86,6 +94,8 @@ interface LoanDraft {
   termYears: string;
   /** Money string; blank = computed by standard amortization. */
   monthlyPayment: string;
+  /** Money string; blank = no extra principal. Paid on top of the scheduled payment each month. */
+  extraPrincipalMonthly: string;
 }
 
 function toLoanDraft(account?: Account): LoanDraft {
@@ -94,6 +104,7 @@ function toLoanDraft(account?: Account): LoanDraft {
     annualInterestRatePct: lt ? fractionToPercentStr(lt.annualInterestRatePct) : "7",
     termYears: lt ? Math.round(lt.termMonths / 12).toString() : "5",
     monthlyPayment: lt?.monthlyPayment != null ? moneyToStr(lt.monthlyPayment) : "",
+    extraPrincipalMonthly: lt?.extraPrincipalMonthly != null ? moneyToStr(lt.extraPrincipalMonthly) : "",
   };
 }
 
@@ -127,7 +138,7 @@ interface ContribRow {
 function toFormValues(account?: Account): FormValues {
   return {
     name: account?.name ?? "",
-    class: account?.class ?? "cash",
+    class: account?.class ?? "",
     ownerId: account?.ownerId ?? "",
     startingBalance: account ? moneyToStr(account.startingBalance) : "0",
     growthRatePct: fractionToPercentStr(account?.growthRatePct),
@@ -183,11 +194,14 @@ export function AccountDrawer({
   onClose,
   account,
   people,
+  accounts,
 }: {
   open: boolean;
   onClose: () => void;
   account?: Account;
   people: Person[];
+  /** For the Home type's delegation to HomeDrawer. */
+  accounts: Account[];
 }) {
   const addAccount = usePlanStore((s) => s.addAccount);
   const updateAccount = usePlanStore((s) => s.updateAccount);
@@ -200,9 +214,13 @@ export function AccountDrawer({
   const [contribRows, setContribRows] = useState<ContribRow[]>(() => toContribRows(account));
   const [loanDraft, setLoanDraft] = useState<LoanDraft>(() => toLoanDraft(account));
 
-  const { register, handleSubmit, reset, watch } = useForm<FormValues>({
+  const { register, handleSubmit, reset, watch, setValue, getValues } = useForm<FormValues>({
     defaultValues: toFormValues(account),
   });
+  // Tracks the class the cash-default effect below last saw, so it can tell
+  // an actual transition (switched INTO or OUT OF Cash) apart from just
+  // re-running. Reset to null whenever the drawer (re)opens, below.
+  const prevClassRef = useRef<AccountClass | "">("");
 
   useEffect(() => {
     reset(toFormValues(account));
@@ -210,17 +228,14 @@ export function AccountDrawer({
     setContribRows(toContribRows(account));
     setLoanDraft(toLoanDraft(account));
     setError(null);
+    prevClassRef.current = "";
     // Auto-expand Advanced when editing an account that already has
-    // something set there, so it's never silently hidden.
+    // something set there, so it's never silently hidden. RMD/cost
+    // basis/penalty/contributions live in the main flow now (see below), so
+    // this only needs to watch what's actually still tucked in Advanced.
     setAdvancedOpen(
       !!account &&
-        (account.subjectToRMD ||
-          account.isExcluded === true ||
-          account.taxTreatment !== "n/a" ||
-          account.startingCostBasis != null ||
-          account.noEarlyWithdrawalPenalty === true ||
-          !!account.contribution ||
-          !!account.contributionSchedule?.length)
+        (account.isExcluded === true || account.taxTreatment !== "n/a" || (account.growthRateSchedule?.length ?? 0) > 0)
     );
   }, [account, open, reset]);
 
@@ -228,18 +243,54 @@ export function AccountDrawer({
   const selectedTaxTreatment = watch("taxTreatment");
   const showRmdCheckbox = isEffectivelyTaxDeferred(selectedClass, selectedTaxTreatment);
   const showCostBasis = isEffectivelyTaxable(selectedClass, selectedTaxTreatment);
+  const showContributions =
+    isEffectivelyTaxable(selectedClass, selectedTaxTreatment) ||
+    isEffectivelyTaxDeferred(selectedClass, selectedTaxTreatment) ||
+    isEffectivelyTaxFree(selectedClass, selectedTaxTreatment);
   const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
   // Amortized classes (and, defensively, an unlinked mortgage edited here).
   const isAmortized = selectedClass === "loan" || selectedClass === "credit_card" || selectedClass === "mortgage";
 
+  // Most checking/savings accounts earn ~0%, unlike everything else here
+  // (where blank = "matches inflation" is the sensible default) -- prefill 0
+  // the moment a brand-new account is set to Cash, so it doesn't silently
+  // grow at the inflation rate, and clear it back out when switching away
+  // from Cash. Reads live via getValues() rather than the `selectedClass`
+  // closure above, which can be one render stale right after the reset
+  // effect runs (both fire in the same commit, in declaration order). Also
+  // keyed on `open` (not just `selectedClass`) -- the reset effect above
+  // resets the field back to blank every time the drawer opens even when
+  // the class value itself doesn't change (still "cash" from last time), so
+  // this needs its own reason to re-check on that same transition.
+  useEffect(() => {
+    if (account) return;
+    const cls = getValues("class");
+    const prevClass = prevClassRef.current;
+    if (cls === prevClass) return;
+    const current = getValues("growthRatePct");
+    if (cls === "cash" && current === "") setValue("growthRatePct", "0");
+    else if (prevClass === "cash" && current === "0") setValue("growthRatePct", "");
+    prevClassRef.current = cls;
+  }, [account, open, selectedClass, getValues, setValue]);
+
   const classOptions = (() => {
-    const opts = [...CLASS_OPTIONS];
+    const opts: { value: AccountClass | ""; label: string }[] = [...CLASS_OPTIONS];
     if (account && !opts.some((o) => o.value === account.class)) {
       opts.unshift({ value: account.class, label: EXTRA_CLASS_LABELS[account.class] ?? account.class });
     }
+    // Only a brand-new account starts with nothing picked -- editing always
+    // has a real class already, so there's nothing to prompt for.
+    if (!account) opts.unshift({ value: "", label: "Select an account type..." });
     return opts;
   })();
+
+  // Home is handled entirely by HomeDrawer (existing-home mode) -- once a
+  // brand-new account's type is set to Home, hand off rendering the same way
+  // Add Event's "Buy a home" template delegates to HomeDrawer.
+  if (!account && selectedClass === "real_estate") {
+    return <HomeDrawer open={open} onClose={onClose} account={undefined} accounts={accounts} initialMode="existing" />;
+  }
 
   const addGrowthRow = () => setGrowthRows((rows) => [...rows, { key: nanoid(), startDate: "", ratePct: "" }]);
   const updateGrowthRow = (key: string, patch: Partial<GrowthRow>) =>
@@ -262,6 +313,10 @@ export function AccountDrawer({
   const removeContribRow = (key: string) => setContribRows((rows) => rows.filter((r) => r.key !== key));
 
   const onSubmit = (values: FormValues) => {
+    if (!values.class) {
+      setError("Select an account type.");
+      return;
+    }
     const cls = values.class;
     const startingBalance = moneyStrToNumber(values.startingBalance) ?? 0;
 
@@ -330,6 +385,7 @@ export function AccountDrawer({
         annualInterestRatePct,
         termMonths,
         monthlyPayment,
+        extraPrincipalMonthly: moneyStrToNumber(loanDraft.extraPrincipalMonthly) ?? undefined,
       };
     }
 
@@ -373,6 +429,117 @@ export function AccountDrawer({
     onClose();
   };
 
+  const contributionsBlock = (
+    <div className="rounded-md border border-border p-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">Recurring Contributions</div>
+      {contribRows.length === 0 && (
+        <p className="text-xs text-dim">
+          None yet. Add one to grow this account each period; add more to change the amount over time.
+        </p>
+      )}
+
+      {contribRows.map((row, i) => (
+        <div key={row.key} className="mb-2 flex flex-col gap-2 rounded-md border border-border p-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-dim">
+              {i === 0 ? "Contribution" : "Contribution change"}
+            </span>
+            <button
+              type="button"
+              onClick={() => removeContribRow(row.key)}
+              className="text-xs text-negative hover:underline"
+            >
+              Remove
+            </button>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className={labelClass}>
+              Starts on{i === 0 ? " (blank = plan start)" : ""}
+              <input
+                className={inputClass}
+                type="date"
+                value={row.startDate}
+                onChange={(e) => updateContribRow(row.key, { startDate: e.target.value })}
+              />
+            </label>
+            <label className={labelClass}>
+              Amount (per occurrence)
+              <MoneyInput
+                value={row.amount}
+                placeholder="e.g. 1,500"
+                onChange={(e) => updateContribRow(row.key, { amount: e.target.value })}
+              />
+            </label>
+            <label className={labelClass}>
+              Frequency
+              <select
+                className={inputClass}
+                value={row.frequency}
+                onChange={(e) => updateContribRow(row.key, { frequency: e.target.value as RecurrenceFrequency })}
+              >
+                {FREQUENCY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className={labelClass}>
+              <span className="inline-flex items-center gap-1">
+                Growth rate (per year)
+                <InfoTooltip text={`How the contribution amount itself rises over time. Blank = matches inflation (${inflationPctLabel}%); 0 = stays flat.`} />
+              </span>
+              <PercentInput
+                value={row.growthRatePct}
+                placeholder={`blank = inflation`}
+                onChange={(e) => updateContribRow(row.key, { growthRatePct: e.target.value })}
+              />
+            </label>
+            <label className={labelClass}>
+              <span className="inline-flex items-center gap-1">
+                Funded from
+                <InfoTooltip text="Paycheck deduction (e.g. 401k) grows this account without reducing take-home cash -- enter income net of it. Take-home pay (e.g. Roth IRA, brokerage) is drawn from your spending account each period." />
+              </span>
+              <select
+                className={inputClass}
+                value={row.funding}
+                onChange={(e) => updateContribRow(row.key, { funding: e.target.value })}
+              >
+                {FUNDING_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className={labelClass}>
+              <span className="inline-flex items-center gap-1">
+                Ends on (optional)
+                <InfoTooltip text="Leave blank to stop automatically when this account's owner retires. Each change takes over when the next one starts." />
+              </span>
+              <input
+                className={inputClass}
+                type="date"
+                value={row.endDate}
+                onChange={(e) => updateContribRow(row.key, { endDate: e.target.value })}
+              />
+            </label>
+          </div>
+        </div>
+      ))}
+
+      <button
+        type="button"
+        onClick={addContribRow}
+        className="mt-1 rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
+      >
+        {contribRows.length === 0 ? "+ Add contribution" : "+ Add contribution change"}
+      </button>
+    </div>
+  );
+
   return (
     <Drawer open={open} onClose={onClose} title={account ? "Edit Account" : "Add Account"}>
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3">
@@ -380,9 +547,11 @@ export function AccountDrawer({
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Joint Checking" />
         </Field>
-        <Field label="Class">
+        <Field label="Account Type">
           <SelectInput reg={register("class")} options={classOptions} />
         </Field>
+        {selectedClass !== "" && (
+        <>
         <Field label="Starting Balance">
           <MoneyInput reg={register("startingBalance")} placeholder="e.g. 25,000" />
         </Field>
@@ -423,6 +592,17 @@ export function AccountDrawer({
                   onChange={(e) => setLoanDraft((d) => ({ ...d, monthlyPayment: e.target.value }))}
                 />
               </label>
+              <label className={labelClass}>
+                <span className="inline-flex items-center gap-1">
+                  Extra principal / month (optional)
+                  <InfoTooltip text="Paid on top of the scheduled payment -- shortens the term and pays the loan off early, same as a mortgage's extra principal." />
+                </span>
+                <MoneyInput
+                  value={loanDraft.extraPrincipalMonthly}
+                  placeholder="e.g. 100"
+                  onChange={(e) => setLoanDraft((d) => ({ ...d, extraPrincipalMonthly: e.target.value }))}
+                />
+              </label>
             </div>
           </div>
         )}
@@ -430,45 +610,14 @@ export function AccountDrawer({
           <Field
             label="Annual Growth Rate"
             hint={
-              `Percent per year, e.g. 7 for 7%. Use a nominal rate (the rate you'd actually see reported, already including inflation). Leave blank to match your inflation assumption (currently ${inflationPctLabel}%).` +
-              (growthRows.length > 0 ? " Applies until the first scheduled change below." : "")
+              selectedClass === "cash"
+                ? "Percent per year. Most checking/savings accounts earn close to 0% -- leave at 0, or enter a rate if this is a high-yield savings account."
+                : `Percent per year, e.g. 7 for 7%. Use a nominal rate (the rate you'd actually see reported, already including inflation). Leave blank to match your inflation assumption (currently ${inflationPctLabel}%).` +
+                  (growthRows.length > 0 ? " Applies until the first scheduled change below." : "")
             }
           >
-            <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
+            <PercentInput reg={register("growthRatePct")} placeholder={selectedClass === "cash" ? "0" : `blank = inflation (${inflationPctLabel}%)`} />
           </Field>
-        )}
-        {!isAmortized && growthRows.map((row) => (
-          <div key={row.key} className="flex items-end gap-2 rounded-md border border-border p-2">
-            <label className={labelClass}>
-              Starting
-              <input
-                className={inputClass}
-                type="date"
-                value={row.startDate}
-                onChange={(e) => updateGrowthRow(row.key, { startDate: e.target.value })}
-              />
-            </label>
-            <label className={labelClass}>
-              New rate
-              <PercentInput
-                value={row.ratePct}
-                placeholder="e.g. 5"
-                onChange={(e) => updateGrowthRow(row.key, { ratePct: e.target.value })}
-              />
-            </label>
-            <button type="button" onClick={() => removeGrowthRow(row.key)} className="pb-1.5 text-xs text-negative hover:underline">
-              Remove
-            </button>
-          </div>
-        ))}
-        {!isAmortized && (
-          <button
-            type="button"
-            onClick={addGrowthRow}
-            className="self-start rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
-          >
-            + Add growth-rate change
-          </button>
         )}
         <Field label="Owner">
           <SelectInput
@@ -476,6 +625,24 @@ export function AccountDrawer({
             options={[{ value: "", label: "Joint / none" }, ...people.map((p) => ({ value: p.id, label: p.name }))]}
           />
         </Field>
+        {showCostBasis && (
+          <Field
+            label="Cost Basis Today (optional)"
+            hint="What you've actually contributed to this account -- the rest of the balance is unrealized gains that get taxed when sold. Leave blank if the whole balance is basis (no embedded gains)."
+          >
+            <MoneyInput reg={register("startingCostBasis")} placeholder="blank = whole balance" />
+          </Field>
+        )}
+        {showRmdCheckbox && (
+          <>
+            <CheckboxInput reg={register("subjectToRMD")} label="Subject to RMDs (at 73, or 75 if born 1960+)" />
+            <CheckboxInput
+              reg={register("noEarlyWithdrawalPenalty")}
+              label="No 10% early-withdrawal penalty (e.g. 457(b) governmental plans, 72(t) SEPP, rule of 55)"
+            />
+          </>
+        )}
+        {showContributions && contributionsBlock}
 
         <button
           type="button"
@@ -491,138 +658,53 @@ export function AccountDrawer({
             <Field label="Tax Treatment (blank/N-A infers from class)">
               <SelectInput reg={register("taxTreatment")} options={TAX_TREATMENT_OPTIONS} />
             </Field>
-            {showCostBasis && (
-              <Field
-                label="Cost Basis Today (optional)"
-                hint="What you've actually contributed to this account -- the rest of the balance is unrealized gains that get taxed when sold. Leave blank if the whole balance is basis (no embedded gains)."
-              >
-                <MoneyInput reg={register("startingCostBasis")} placeholder="blank = whole balance" />
-              </Field>
-            )}
-            {showRmdCheckbox && (
-              <>
-                <CheckboxInput reg={register("subjectToRMD")} label="Subject to RMDs (at 73, or 75 if born 1960+)" />
-                <CheckboxInput
-                  reg={register("noEarlyWithdrawalPenalty")}
-                  label="No 10% early-withdrawal penalty (72(t) SEPP / rule of 55)"
-                />
-              </>
-            )}
 
-            <div className="rounded-md border border-border p-3">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">Recurring Contributions</div>
-              {contribRows.length === 0 && (
-                <p className="text-xs text-dim">
-                  None yet. Add one to grow this account each period; add more to change the amount over time.
-                </p>
-              )}
-
-              {contribRows.map((row, i) => (
-                <div key={row.key} className="mb-2 flex flex-col gap-2 rounded-md border border-border p-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-dim">
-                      {i === 0 ? "Contribution" : "Contribution change"}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeContribRow(row.key)}
-                      className="text-xs text-negative hover:underline"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-2">
+            {!isAmortized && (
+              <div className="flex flex-col gap-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-dim">Scheduled growth-rate changes</div>
+                {growthRows.map((row) => (
+                  <div key={row.key} className="flex items-end gap-2 rounded-md border border-border p-2">
                     <label className={labelClass}>
-                      Starts on{i === 0 ? " (blank = plan start)" : ""}
+                      Starting
                       <input
                         className={inputClass}
                         type="date"
                         value={row.startDate}
-                        onChange={(e) => updateContribRow(row.key, { startDate: e.target.value })}
+                        onChange={(e) => updateGrowthRow(row.key, { startDate: e.target.value })}
                       />
                     </label>
                     <label className={labelClass}>
-                      Amount (per occurrence)
-                      <MoneyInput
-                        value={row.amount}
-                        placeholder="e.g. 1,500"
-                        onChange={(e) => updateContribRow(row.key, { amount: e.target.value })}
-                      />
-                    </label>
-                    <label className={labelClass}>
-                      Frequency
-                      <select
-                        className={inputClass}
-                        value={row.frequency}
-                        onChange={(e) => updateContribRow(row.key, { frequency: e.target.value as RecurrenceFrequency })}
-                      >
-                        {FREQUENCY_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <label className={labelClass}>
-                      <span className="inline-flex items-center gap-1">
-                        Growth rate (per year)
-                        <InfoTooltip text={`How the contribution amount itself rises over time. Blank = matches inflation (${inflationPctLabel}%); 0 = stays flat.`} />
-                      </span>
+                      New rate
                       <PercentInput
-                        value={row.growthRatePct}
-                        placeholder={`blank = inflation`}
-                        onChange={(e) => updateContribRow(row.key, { growthRatePct: e.target.value })}
+                        value={row.ratePct}
+                        placeholder="e.g. 5"
+                        onChange={(e) => updateGrowthRow(row.key, { ratePct: e.target.value })}
                       />
                     </label>
-                    <label className={labelClass}>
-                      <span className="inline-flex items-center gap-1">
-                        Funded from
-                        <InfoTooltip text="Paycheck deduction (e.g. 401k) grows this account without reducing take-home cash -- enter income net of it. Take-home pay (e.g. Roth IRA, brokerage) is drawn from your spending account each period." />
-                      </span>
-                      <select
-                        className={inputClass}
-                        value={row.funding}
-                        onChange={(e) => updateContribRow(row.key, { funding: e.target.value })}
-                      >
-                        {FUNDING_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className={labelClass}>
-                      <span className="inline-flex items-center gap-1">
-                        Ends on (optional)
-                        <InfoTooltip text="Leave blank to stop automatically when this account's owner retires. Each change takes over when the next one starts." />
-                      </span>
-                      <input
-                        className={inputClass}
-                        type="date"
-                        value={row.endDate}
-                        onChange={(e) => updateContribRow(row.key, { endDate: e.target.value })}
-                      />
-                    </label>
+                    <button type="button" onClick={() => removeGrowthRow(row.key)} className="pb-1.5 text-xs text-negative hover:underline">
+                      Remove
+                    </button>
                   </div>
-                </div>
-              ))}
+                ))}
+                <button
+                  type="button"
+                  onClick={addGrowthRow}
+                  className="self-start rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
+                >
+                  + Add growth-rate change
+                </button>
+              </div>
+            )}
 
-              <button
-                type="button"
-                onClick={addContribRow}
-                className="mt-1 rounded-md border border-border px-2 py-1 text-xs text-dim hover:text-foreground"
-              >
-                {contribRows.length === 0 ? "+ Add contribution" : "+ Add contribution change"}
-              </button>
-            </div>
+            {!showContributions && !isAmortized && contributionsBlock}
 
             <CheckboxInput
               reg={register("isExcluded")}
               label="Excluded (kept visible for reference, no effect on the projection)"
             />
           </div>
+        )}
+        </>
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">

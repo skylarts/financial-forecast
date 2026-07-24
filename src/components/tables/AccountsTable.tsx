@@ -250,13 +250,6 @@ export function AccountsTable({
       <div className="flex justify-end gap-2">
         <button
           type="button"
-          onClick={() => setHomeDrawer({ open: true, account: undefined })}
-          className="rounded-md border border-border px-3 py-1.5 text-sm font-semibold text-foreground hover:border-accent"
-        >
-          + Add a Home You Already Own
-        </button>
-        <button
-          type="button"
           onClick={() => {
             setDrawerAccount(undefined);
             setDrawerOpen(true);
@@ -323,7 +316,7 @@ export function AccountsTable({
           so a $0 balance there is normal.
         </p>
       </div>
-      <AccountDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} account={drawerAccount} people={people} />
+      <AccountDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} account={drawerAccount} people={people} accounts={accounts} />
       <HomeDrawer
         open={homeDrawer.open}
         onClose={() => setHomeDrawer({ open: false })}

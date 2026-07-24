@@ -174,24 +174,10 @@ export function TimelineTab({
       <div className="flex justify-end gap-2">
         <button
           type="button"
-          onClick={() => setIncomeDrawer({ open: true, item: undefined })}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white"
-        >
-          + Income
-        </button>
-        <button
-          type="button"
-          onClick={() => setExpenseDrawer({ open: true, item: undefined })}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white"
-        >
-          + Expense
-        </button>
-        <button
-          type="button"
           onClick={() => setEventDrawer({ open: true, item: undefined })}
           className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white"
         >
-          + Event
+          + Add Event
         </button>
       </div>
 

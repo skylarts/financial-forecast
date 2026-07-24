@@ -31,6 +31,11 @@ export function elapsedYears(from: ISODate, to: ISODate): number {
   return (toMs - fromMs) / (1000 * 60 * 60 * 24 * 365.25);
 }
 
+/** The date a person born on `birthDate` turns `age` (fractional ages round to the nearest month). */
+export function birthdayAtAge(birthDate: ISODate, age: number): ISODate {
+  return addMonths(birthDate, Math.round(age * 12));
+}
+
 export function yearOf(date: ISODate): number {
   return Number(date.slice(0, 4));
 }

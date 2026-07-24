@@ -39,7 +39,8 @@ interface FormValues {
   growthRatePct: string;
   intervalYears: string;
   paymentAccountId: string;
-  category: ExpenseCategory;
+  /** Blank until the user picks one -- everything below is hidden until then. */
+  category: ExpenseCategory | "";
   isExcluded: boolean;
 }
 
@@ -53,7 +54,7 @@ function toFormValues(expense?: ExpenseBaseline): FormValues {
     growthRatePct: fractionToPercentStr(expense?.growthRatePct),
     intervalYears: expense?.intervalYears?.toString() ?? "",
     paymentAccountId: expense?.paymentAccountId ?? "",
-    category: expense?.category ?? "other",
+    category: expense?.category ?? "",
     isExcluded: expense?.isExcluded ?? false,
   };
 }
@@ -80,9 +81,11 @@ export function ExpenseDrawer({
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
-  const { register, handleSubmit, reset } = useForm<FormValues>({
+  const { register, handleSubmit, watch, reset } = useForm<FormValues>({
     defaultValues: toFormValues(expense),
   });
+  const category = watch("category");
+  const isOneTime = watch("frequency") === "one_time";
 
   // Re-sync the form whenever the drawer opens on a different expense --
   // without this, a reused drawer instance shows the previous item's values.
@@ -90,16 +93,22 @@ export function ExpenseDrawer({
     reset(toFormValues(expense));
     setAdjustments(expense?.adjustments ?? []);
     setError(null);
-    setAdvancedOpen(!!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true));
+    setAdvancedOpen(
+      !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
+    );
   }, [expense, open, reset]);
 
   const onSubmit = (values: FormValues) => {
+    if (!values.category) {
+      setError("Select a category.");
+      return;
+    }
     const candidate = {
       name: values.name.trim(),
       amount: moneyStrToNumber(values.amount) ?? 0,
       frequency: values.frequency,
       startDate: values.startDate,
-      endDate: values.endDate || null,
+      endDate: values.frequency === "one_time" ? null : values.endDate || null,
       growthRatePct: percentStrToFraction(values.growthRatePct),
       intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       paymentAccountId: values.paymentAccountId === "" ? null : values.paymentAccountId,
@@ -126,21 +135,36 @@ export function ExpenseDrawer({
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Rent" />
         </Field>
+        <Field label="Category">
+          <SelectInput
+            reg={register("category")}
+            options={expense ? CATEGORY_OPTIONS : [{ value: "", label: "Select a category..." }, ...CATEGORY_OPTIONS]}
+          />
+        </Field>
+        {category !== "" && (
+        <>
         <Field label="Amount" hint="Per occurrence, today's dollars.">
           <MoneyInput reg={register("amount", { required: true })} placeholder="e.g. 6,500" />
         </Field>
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
         </Field>
-        <Field
-          label="Or repeat every N years (optional)"
-          hint="For a repeat purchase like a car every few years. Overrides the Frequency above."
-        >
-          <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
+        {!isOneTime && (
+          <Field
+            label="Or repeat every N years (optional)"
+            hint="For a repeat purchase like a car every few years. Overrides the Frequency above."
+          >
+            <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
+          </Field>
+        )}
+        <Field label={isOneTime ? "Date" : "Start Date"}>
+          <TextInput reg={register("startDate", { required: true })} type="date" />
         </Field>
-        <Field label="Category">
-          <SelectInput reg={register("category")} options={CATEGORY_OPTIONS} />
-        </Field>
+        {!isOneTime && (
+          <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
+            <TextInput reg={register("endDate")} type="date" />
+          </Field>
+        )}
         <Field label="Payment Account">
           <SelectInput
             reg={register("paymentAccountId")}
@@ -150,18 +174,14 @@ export function ExpenseDrawer({
             ]}
           />
         </Field>
-        <Field label="Start Date">
-          <TextInput reg={register("startDate", { required: true })} type="date" />
-        </Field>
-        <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
-          <TextInput reg={register("endDate")} type="date" />
-        </Field>
-        <Field
-          label="Annual Growth Rate"
-          hint={`Percent per year, e.g. 3 for 3%. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the expense flat in today's dollars -- the right default for most living expenses. 0 = flat in nominal terms (quietly shrinks in real terms over decades).`}
-        >
-          <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
-        </Field>
+        {!isOneTime && (
+          <Field
+            label="Annual Growth Rate"
+            hint={`Percent per year, e.g. 3 for 3%. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the expense flat in today's dollars -- the right default for most living expenses. 0 = flat in nominal terms (quietly shrinks in real terms over decades).`}
+          >
+            <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
+          </Field>
+        )}
 
         <button
           type="button"
@@ -174,16 +194,20 @@ export function ExpenseDrawer({
 
         {advancedOpen && (
           <div className="flex flex-col gap-3 border-l border-border pl-3">
-            <AdjustmentsEditor
-              adjustments={adjustments}
-              onChange={setAdjustments}
-              helpText="A temporary scale-up or scale-down over a date range (e.g. a rent hike: multiplier 1.2)."
-            />
+            {!isOneTime && (
+              <AdjustmentsEditor
+                adjustments={adjustments}
+                onChange={setAdjustments}
+                helpText="A temporary scale-up or scale-down over a date range (e.g. a rent hike: multiplier 1.2)."
+              />
+            )}
             <CheckboxInput
               reg={register("isExcluded")}
               label="Excluded (kept visible for reference, no effect on the projection)"
             />
           </div>
+        )}
+        </>
         )}
 
         <div className="mt-2 flex items-center justify-between gap-2">
