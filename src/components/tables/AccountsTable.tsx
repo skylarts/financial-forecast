@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { createContext, Fragment, useContext, useState } from "react";
 import type { Account, BuyHomeEvent, Id, Person, ScenarioEvent, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ASSET_CLASS_GROUPS, LIABILITY_CLASS_GROUPS, type AccountClassGroup } from "@/lib/labels";
@@ -16,7 +16,26 @@ function balanceOf(year: YearSnapshot, accountId: Id): number {
   return year.accountBalances[accountId] ?? 0;
 }
 
+// Tracks which year-column is currently hovered so the whole column (its
+// header included) can be highlighted alongside the row the mouse is over --
+// row highlighting itself is plain CSS (:hover on the <tr>), but a column
+// highlight has to span cells in many different rows, so it needs shared
+// state instead.
+const ColHoverContext = createContext<{ col: number | null; setCol: (c: number | null) => void }>({
+  col: null,
+  setCol: () => {},
+});
+
+function colHoverProps(index: number, col: number | null, setCol: (c: number | null) => void) {
+  return {
+    onMouseEnter: () => setCol(index),
+    onMouseLeave: () => setCol(null),
+    className: col === index ? "bg-accent/10" : "",
+  };
+}
+
 function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: YearSnapshot[]; mode: DollarMode }) {
+  const { col, setCol } = useContext(ColHoverContext);
   const fields: { label: string; get: (y: YearSnapshot) => number }[] = [
     { label: "Starting balance", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.startingBalance ?? 0 },
     { label: "Inflation adjustment", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.inflationAdjustment ?? 0 },
@@ -28,13 +47,16 @@ function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: Yea
   return (
     <>
       {fields.map((f) => (
-        <tr key={f.label} className="bg-background/30 text-xs text-dim hover:bg-accent/15">
+        <tr key={f.label} className="border-t border-border/40 bg-background/30 text-xs text-dim hover:bg-accent/15">
           <td className="py-1.5 pl-14">{f.label}</td>
-          {years.map((y) => (
-            <td key={y.year} className="py-1.5 pr-2 text-right">
-              {formatMoney(deflate(f.get(y), y, mode))}
-            </td>
-          ))}
+          {years.map((y, i) => {
+            const hover = colHoverProps(i, col, setCol);
+            return (
+              <td key={y.year} className={`py-1.5 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+                {formatMoney(deflate(f.get(y), y, mode))}
+              </td>
+            );
+          })}
         </tr>
       ))}
     </>
@@ -43,7 +65,14 @@ function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: Yea
 
 function ToggleLabel({ label, expanded, onToggle }: { label: string; expanded: boolean; onToggle: () => void }) {
   return (
-    <button type="button" onClick={onToggle} className="flex items-center gap-1 text-left">
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      className="flex items-center gap-1 text-left"
+    >
       <span className="inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
       {label}
     </button>
@@ -64,10 +93,11 @@ function AccountRow({
   mode: DollarMode;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { col, setCol } = useContext(ColHoverContext);
   return (
     <>
-      <tr className="hover:bg-accent/15">
-        <td className="cursor-pointer py-2 pl-10" onClick={() => setExpanded((v) => !v)}>
+      <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => setExpanded((v) => !v)}>
+        <td className="py-2 pl-10">
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}
           {account.isExtraSavings && (
@@ -90,11 +120,14 @@ function AccountRow({
             </button>
           )}
         </td>
-        {years.map((y) => (
-          <td key={y.year} className="py-2 pr-2 text-right" onClick={() => setExpanded((v) => !v)}>
-            {formatMoney(deflate(balanceOf(y, account.id), y, mode))}
-          </td>
-        ))}
+        {years.map((y, i) => {
+          const hover = colHoverProps(i, col, setCol);
+          return (
+            <td key={y.year} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+              {formatMoney(deflate(balanceOf(y, account.id), y, mode))}
+            </td>
+          );
+        })}
       </tr>
       {expanded && <RollforwardRows accountId={account.id} years={years} mode={mode} />}
     </>
@@ -147,32 +180,40 @@ function Section({
   const sectionTotal = (year: YearSnapshot) =>
     groups.reduce((sum, g) => sum + includedBalance(year, g.accounts), 0);
 
+  const { col, setCol } = useContext(ColHoverContext);
+
   return (
     <>
-      <tr className="border-t border-border">
+      <tr className="cursor-pointer border-t border-border hover:bg-accent/15" onClick={() => setSectionOpen((v) => !v)}>
         <td className="py-2.5 pl-2 font-semibold">
           <ToggleLabel label={title} expanded={sectionOpen} onToggle={() => setSectionOpen((v) => !v)} />
         </td>
-        {years.map((y) => (
-          <td key={y.year} className="py-2.5 pr-2 text-right font-semibold">
-            {formatMoney(deflate(sectionTotal(y), y, mode))}
-          </td>
-        ))}
+        {years.map((y, i) => {
+          const hover = colHoverProps(i, col, setCol);
+          return (
+            <td key={y.year} className={`py-2.5 pr-2 text-right font-semibold ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+              {formatMoney(deflate(sectionTotal(y), y, mode))}
+            </td>
+          );
+        })}
       </tr>
       {sectionOpen &&
         groups.map((g) => {
           const groupOpen = openGroups.has(g.label);
           return (
             <Fragment key={g.label}>
-              <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+              <tr className="cursor-pointer border-t border-border/40 text-dim hover:bg-accent/15" onClick={() => toggleGroup(g.label)}>
                 <td className="py-2 pl-6">
                   <ToggleLabel label={g.label} expanded={groupOpen} onToggle={() => toggleGroup(g.label)} />
                 </td>
-                {years.map((y) => (
-                  <td key={y.year} className="py-2 pr-2 text-right">
-                    {formatMoney(deflate(includedBalance(y, g.accounts), y, mode))}
-                  </td>
-                ))}
+                {years.map((y, i) => {
+                  const hover = colHoverProps(i, col, setCol);
+                  return (
+                    <td key={y.year} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+                      {formatMoney(deflate(includedBalance(y, g.accounts), y, mode))}
+                    </td>
+                  );
+                })}
               </tr>
               {groupOpen &&
                 g.accounts.map((a) => (
@@ -210,6 +251,7 @@ export function AccountsTable({
   const [drawerAccount, setDrawerAccount] = useState<Account | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [homeDrawer, setHomeDrawer] = useState<{ open: boolean; account?: Account }>({ open: false });
+  const [hoveredCol, setHoveredCol] = useState<number | null>(null);
 
   /** A real_estate account edited via the pencil: HomeDrawer itself, along
    *  with its linked buy_home event (if this home was bought rather than
@@ -268,12 +310,18 @@ export function AccountsTable({
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <div className="max-h-[85vh] overflow-auto">
-        <table className="w-full text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <ColHoverContext.Provider value={{ col: hoveredCol, setCol: setHoveredCol }}>
+        <table className="w-full text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-accent/15 [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
               <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel py-2.5 pl-2 font-medium">Account</th>
-              {years.map((y) => (
-                <th key={y.year} className="py-2.5 pr-2 text-right font-medium">
+              {years.map((y, i) => (
+                <th
+                  key={y.year}
+                  className={`py-2.5 pr-2 text-right font-medium ${hoveredCol === i ? "bg-accent/10 text-foreground" : ""}`}
+                  onMouseEnter={() => setHoveredCol(i)}
+                  onMouseLeave={() => setHoveredCol(null)}
+                >
                   {y.year}
                 </th>
               ))}
@@ -282,8 +330,13 @@ export function AccountsTable({
           <tbody>
             <tr className="border-b border-border">
               <td className="py-2.5 pl-2 font-bold">Net Worth</td>
-              {years.map((y) => (
-                <td key={y.year} className="py-2.5 pr-2 text-right font-bold">
+              {years.map((y, i) => (
+                <td
+                  key={y.year}
+                  className={`py-2.5 pr-2 text-right font-bold ${hoveredCol === i ? "bg-accent/10" : ""}`}
+                  onMouseEnter={() => setHoveredCol(i)}
+                  onMouseLeave={() => setHoveredCol(null)}
+                >
                   {formatMoney(netWorthOf(y))}
                 </td>
               ))}
@@ -316,6 +369,7 @@ export function AccountsTable({
             />
           </tbody>
         </table>
+        </ColHoverContext.Provider>
         </div>
         <p className="border-t border-border px-2 py-2 text-xs text-dim">
           Click an account to see its year-by-year rollforward. A home&rsquo;s mortgage is edited as part of

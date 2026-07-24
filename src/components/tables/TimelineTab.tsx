@@ -77,6 +77,7 @@ export function TimelineTab({
   const [expenseDrawer, setExpenseDrawer] = useState<{ open: boolean; item?: ExpenseBaseline }>({ open: false });
   const [eventDrawer, setEventDrawer] = useState<{ open: boolean; item?: ScenarioEvent }>({ open: false });
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedYears, setExpandedYears] = useState<Set<number>>(new Set());
   const [showSmallMovements, setShowSmallMovements] = useState(false);
 
   const toggleGroup = (key: string) => {
@@ -84,6 +85,14 @@ export function TimelineTab({
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      return next;
+    });
+  };
+  const toggleYear = (year: number) => {
+    setExpandedYears((prev) => {
+      const next = new Set(prev);
+      if (next.has(year)) next.delete(year);
+      else next.add(year);
       return next;
     });
   };
@@ -168,6 +177,26 @@ export function TimelineTab({
     : allLedgerGroups.filter((g) => Math.abs(g.totalAmount) >= SMALL_MOVEMENT_THRESHOLD);
   const hiddenGroupCount = allLedgerGroups.length - ledgerGroups.length;
   const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "an account";
+
+  // Nest ledger groups under their year -- one collapsible row per year
+  // (collapsed by default, like every other drill-down section on this tab),
+  // expanding into the existing kind/account groups, which themselves still
+  // expand into individual entries.
+  const yearGroups = (() => {
+    const byYear = new Map<number, typeof ledgerGroups>();
+    for (const g of ledgerGroups) {
+      const arr = byYear.get(g.year);
+      if (arr) arr.push(g);
+      else byYear.set(g.year, [g]);
+    }
+    return [...byYear.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([year, groups]) => ({
+        year,
+        groups,
+        total: groups.reduce((s, g) => s + g.totalAmount, 0),
+      }));
+  })();
 
   return (
     <div className="flex flex-col gap-4">
@@ -261,40 +290,61 @@ export function TimelineTab({
             </tr>
           </thead>
           <tbody>
-            {ledgerGroups.map((group) => {
-              const expanded = expandedGroups.has(group.key);
+            {yearGroups.map(({ year, groups, total }) => {
+              const yearExpanded = expandedYears.has(year);
               return (
-                <Fragment key={group.key}>
+                <Fragment key={year}>
                   <tr
-                    className="cursor-pointer border-t border-border hover:bg-background/40"
-                    onClick={() => toggleGroup(group.key)}
+                    className="cursor-pointer border-t border-border bg-background/40 hover:bg-background/60"
+                    onClick={() => toggleYear(year)}
                   >
-                    <td className="py-1.5 pl-2 text-dim">
-                      <span className="mr-1 inline-block w-3 text-xs text-dim">{expanded ? "▾" : "▸"}</span>
-                      {group.year}
-                    </td>
-                    <td className="py-1.5">
-                      <span className="rounded bg-positive/20 px-2 py-0.5 text-xs text-positive">
-                        {LEDGER_KIND_LABELS[group.kind]}
-                      </span>
+                    <td className="py-1.5 pl-2 font-medium text-dim">
+                      <span className="mr-1 inline-block w-3 text-xs text-dim">{yearExpanded ? "▾" : "▸"}</span>
+                      {year}
                     </td>
                     <td className="py-1.5 text-dim">
-                      {accountName(group.accountId)}
-                      {group.toAccountId ? ` → ${accountName(group.toAccountId)}` : ""}
-                      {" · "}
-                      {group.entries.length} payment{group.entries.length === 1 ? "" : "s"}
+                      {groups.length} item{groups.length === 1 ? "" : "s"}
                     </td>
-                    <td className="py-1.5 pr-2 text-right">{fmt(group.totalAmount)}</td>
+                    <td className="py-1.5" />
+                    <td className="py-1.5 pr-2 text-right font-medium">{fmt(total)}</td>
                   </tr>
-                  {expanded &&
-                    group.entries.map((entry, i) => (
-                      <tr key={`${group.key}-${i}`} className="border-t border-border/50 bg-background/20">
-                        <td className="py-1 pl-6 text-xs text-dim">{entry.date}</td>
-                        <td className="py-1" />
-                        <td className="py-1 text-xs text-dim">{entry.note}</td>
-                        <td className="py-1 pr-2 text-right text-xs text-dim">{fmt(entry.amount)}</td>
-                      </tr>
-                    ))}
+                  {yearExpanded &&
+                    groups.map((group) => {
+                      const expanded = expandedGroups.has(group.key);
+                      return (
+                        <Fragment key={group.key}>
+                          <tr
+                            className="cursor-pointer border-t border-border/50 hover:bg-background/40"
+                            onClick={() => toggleGroup(group.key)}
+                          >
+                            <td className="py-1.5 pl-6 text-dim">
+                              <span className="mr-1 inline-block w-3 text-xs text-dim">{expanded ? "▾" : "▸"}</span>
+                            </td>
+                            <td className="py-1.5">
+                              <span className="rounded bg-positive/20 px-2 py-0.5 text-xs text-positive">
+                                {LEDGER_KIND_LABELS[group.kind]}
+                              </span>
+                            </td>
+                            <td className="py-1.5 text-dim">
+                              {accountName(group.accountId)}
+                              {group.toAccountId ? ` → ${accountName(group.toAccountId)}` : ""}
+                              {" · "}
+                              {group.entries.length} payment{group.entries.length === 1 ? "" : "s"}
+                            </td>
+                            <td className="py-1.5 pr-2 text-right">{fmt(group.totalAmount)}</td>
+                          </tr>
+                          {expanded &&
+                            group.entries.map((entry, i) => (
+                              <tr key={`${group.key}-${i}`} className="border-t border-border/50 bg-background/20">
+                                <td className="py-1 pl-10 text-xs text-dim">{entry.date}</td>
+                                <td className="py-1" />
+                                <td className="py-1 text-xs text-dim">{entry.note}</td>
+                                <td className="py-1 pr-2 text-right text-xs text-dim">{fmt(entry.amount)}</td>
+                              </tr>
+                            ))}
+                        </Fragment>
+                      );
+                    })}
                 </Fragment>
               );
             })}

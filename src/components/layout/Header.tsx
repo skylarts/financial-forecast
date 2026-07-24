@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Scenario } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useUiStore } from "@/store/useUiStore";
@@ -65,7 +65,8 @@ function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean
 
 type CreateMode = "duplicate" | "scratch";
 
-function NewScenarioControl({ scenario }: { scenario: Scenario }) {
+function NewScenarioControl({ scenario, inline }: { scenario: Scenario; inline?: boolean }) {
+  void inline; // reserved for callers that need a different layout inside a nested menu; button-in-menu works fine as-is today
   const scenarios = usePlanStore((s) => s.plan.scenarios);
   const duplicateScenario = usePlanStore((s) => s.duplicateScenario);
   const addBlankScenario = usePlanStore((s) => s.addBlankScenario);
@@ -158,6 +159,147 @@ function NewScenarioControl({ scenario }: { scenario: Scenario }) {
   );
 }
 
+// Once there are 3+ scenarios, a row of tabs gets cluttered -- collapse into
+// a dropdown showing just the active scenario, with the same rename/delete
+// and "+ New Scenario" affordances available inside the open menu.
+function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
+  const scenarios = usePlanStore((s) => s.plan.scenarios);
+  const setActiveScenarioId = usePlanStore((s) => s.setActiveScenarioId);
+  const renameScenario = usePlanStore((s) => s.renameScenario);
+  const deleteScenario = usePlanStore((s) => s.deleteScenario);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [menuOpen]);
+
+  const commitRename = () => {
+    if (renamingId && name.trim()) renameScenario(renamingId, name.trim());
+    setRenamingId(null);
+  };
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setMenuOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-md border border-border bg-panel px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent"
+      >
+        {scenario.name}
+        <span className="text-dim">▾</span>
+      </button>
+      {menuOpen && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-64 rounded-md border border-border bg-panel p-1 shadow-lg">
+          {scenarios.map((s) => (
+            <div key={s.id} className="group flex items-center gap-1 rounded px-1">
+              {renamingId === s.id ? (
+                <input
+                  autoFocus
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                  className="my-0.5 flex-1 rounded bg-accent px-2 py-1.5 text-sm text-white outline-none"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveScenarioId(s.id);
+                    setMenuOpen(false);
+                  }}
+                  onDoubleClick={() => {
+                    setName(s.name);
+                    setRenamingId(s.id);
+                  }}
+                  title="Double-click to rename"
+                  className={`flex-1 rounded px-2 py-1.5 text-left text-sm ${
+                    s.id === scenario.id ? "bg-accent/15 font-semibold text-foreground" : "text-dim hover:text-foreground"
+                  }`}
+                >
+                  {s.name}
+                </button>
+              )}
+              {scenarios.length > 1 && renamingId !== s.id && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete scenario "${s.name}"?`)) deleteScenario(s.id);
+                  }}
+                  className="hidden px-1 text-xs text-dim opacity-70 hover:opacity-100 group-hover:inline"
+                  title="Delete scenario"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          <div className="mt-1 border-t border-border pt-1">
+            <NewScenarioControl scenario={scenario} inline />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Rare/admin actions (Setup Guide, backup/import/export) tucked behind a
+// small overflow menu so the primary bar isn't dominated by low-frequency
+// buttons -- Assumptions and scenario switching stay front and center since
+// those get used constantly while building out a plan.
+function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="More"
+        className="rounded-md border border-border bg-panel px-2.5 py-1.5 text-sm text-dim hover:text-foreground"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-md border border-border bg-panel p-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              onOpenWizard();
+              setOpen(false);
+            }}
+            className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
+          >
+            🧭 Setup Guide
+          </button>
+          <div className="border-t border-border px-1 pt-1">
+            <BackupControls />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Header({ scenario }: { scenario: Scenario }) {
   const scenarios = usePlanStore((s) => s.plan.scenarios);
   const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
@@ -180,21 +322,16 @@ export function Header({ scenario }: { scenario: Scenario }) {
         {lastSavedAt > 0 && <span className="text-xs text-dim">Saved to this browser</span>}
       </div>
       <div className="flex items-center gap-3">
-        <nav className="flex items-center gap-1 rounded-lg border border-border bg-panel p-1">
-          {scenarios.map((s) => (
-            <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
-          ))}
-          <NewScenarioControl scenario={scenario} />
-        </nav>
-        <BackupControls />
-        <LoginButton />
-        <button
-          type="button"
-          onClick={openWizard}
-          className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
-        >
-          🧭 Setup Guide
-        </button>
+        {scenarios.length > 2 ? (
+          <ScenarioSwitcher scenario={scenario} />
+        ) : (
+          <nav className="flex items-center gap-1 rounded-lg border border-border bg-panel p-1">
+            {scenarios.map((s) => (
+              <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
+            ))}
+            <NewScenarioControl scenario={scenario} />
+          </nav>
+        )}
         <button
           type="button"
           id="assumptions-button"
@@ -203,6 +340,8 @@ export function Header({ scenario }: { scenario: Scenario }) {
         >
           ⚙ Assumptions
         </button>
+        <LoginButton />
+        <OverflowMenu onOpenWizard={openWizard} />
       </div>
       {/* key=scenario.id forces a full remount on scenario switch, so the
           drawer's local form state (settingsDraft, each PersonRow's draft)
