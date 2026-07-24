@@ -15,8 +15,22 @@ export const incomeSourceSchema = z.object({
   id: idSchema,
   name: z.string().min(1),
   ownerId: idSchema.nullable(),
-  /** Per-occurrence amount, in today's dollars at startDate. */
+  /** Per-occurrence amount, in today's dollars at startDate. For salary,
+   *  this is take-home pay (after tax withholding and pre-tax deductions --
+   *  the model's historical assumption). */
   amount: z.number(),
+  /**
+   * Optional per-occurrence GROSS amount (in today's dollars, same basis as
+   * `amount`) -- Box-1-style wages, after pre-tax deductions like a 401(k)
+   * but before income tax withholding. Only meaningful for category="salary".
+   * When set, it lets the engine stack capital gains and other-account
+   * withdrawals on top of your true tax bracket while still working, instead
+   * of assuming $0 other ordinary income during the accumulation years (see
+   * forecastScenario.ts's federal-tax block). Omitted = engine behavior is
+   * unchanged from before this field existed: salary contributes nothing to
+   * bracket placement.
+   */
+  grossAmount: z.number().optional(),
   frequency: recurrenceFrequencySchema,
   startDate: isoDateSchema,
   /** null = continues to horizon unless adjusted below. */

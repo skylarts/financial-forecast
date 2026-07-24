@@ -31,6 +31,8 @@ interface FormValues {
   ownerId: string;
   /** Money string ("7,500"). */
   amount: string;
+  /** Money string; blank = not provided (engine behaves as before this field existed). Salary only. */
+  grossAmount: string;
   frequency: RecurrenceFrequency;
   startDate: string;
   endDate: string;
@@ -47,6 +49,7 @@ function toFormValues(income?: IncomeSource): FormValues {
     name: income?.name ?? "",
     ownerId: income?.ownerId ?? "",
     amount: income ? moneyToStr(income.amount) : "",
+    grossAmount: income?.grossAmount != null ? moneyToStr(income.grossAmount) : "",
     frequency: income?.frequency ?? "monthly",
     startDate: income?.startDate ?? "",
     endDate: income?.endDate ?? "",
@@ -101,6 +104,7 @@ export function IncomeDrawer({
       name: values.name.trim(),
       ownerId: values.ownerId || null,
       amount: moneyStrToNumber(values.amount) ?? 0,
+      grossAmount: values.category === "salary" ? (moneyStrToNumber(values.grossAmount) ?? undefined) : undefined,
       frequency: values.frequency,
       startDate: values.startDate,
       endDate: values.endDate || null,
@@ -146,6 +150,14 @@ export function IncomeDrawer({
         >
           <MoneyInput reg={register("amount", { required: true })} placeholder="e.g. 7,500" />
         </Field>
+        {category === "salary" && (
+          <Field
+            label="Gross Income (optional)"
+            hint="Per occurrence, today's dollars, before income tax withholding but after pre-tax deductions like a 401(k) (your W-2 Box 1 wages). Only used to correctly tax capital gains and account withdrawals you take while still working -- without it, the model assumes you have no other taxable income during your working years, which can understate tax on a big taxable-account withdrawal or sale taken before you retire. Leave blank if you'd rather not bother -- take-home Amount above is unaffected either way."
+          >
+            <MoneyInput reg={register("grossAmount")} placeholder="e.g. 9,200" />
+          </Field>
+        )}
         <Field label="Frequency">
           <SelectInput reg={register("frequency")} options={FREQUENCIES} />
         </Field>

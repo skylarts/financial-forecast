@@ -1504,6 +1504,92 @@ describe("forecastScenario -- withdrawal taxes", () => {
     expect(year2.cashFlow.federalTaxTotal).toBeLessThan(500);
   });
 
+  it("stacks a taxable-account gain on top of gross salary when the income source opts in via grossAmount", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 100_000,
+      growthRatePct: 0.2,
+    });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, savings],
+      incomeSources: [
+        makeIncome({
+          depositAccountId: checking.id,
+          amount: 12_000,
+          grossAmount: 18_000, // high enough salary alone pushes past the $98,900 MFJ 0% LTCG threshold
+          category: "salary",
+        }),
+      ],
+      events: [
+        {
+          id: nanoid(),
+          type: "custom_transfer",
+          name: "Move to savings",
+          startDate: "2027-06-01",
+          amount: 60_000,
+          fromAccountId: brokerage.id,
+          toAccountId: savings.id,
+          frequency: "one_time",
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = projectScenario(scenario);
+    const year2 = result.years[1];
+
+    // Same $60k draw, same realized gain as the "sits entirely in the 0%
+    // bracket" test above -- but this time salary already fills the 0%
+    // bracket, so the gain stacks into the 15% bracket instead of $0 tax.
+    expect(year2.cashFlow.capitalGainsRealized).toBeGreaterThan(0);
+    expect(year2.cashFlow.capitalGainsRealized).toBeLessThan(60_000);
+    expect(year2.cashFlow.federalTaxTotal).toBeGreaterThan(1_000);
+    // Salary itself must not be taxed by this engine (it's assumed already
+    // reflected in take-home pay) -- only the capital-gains component should
+    // be nonzero; there's no withdrawal/pension/SS income in this scenario.
+    const nonGainsComponents = year2.cashFlow.federalTaxByComponent.filter((c) => c.key !== "capital_gains");
+    expect(nonGainsComponents).toHaveLength(0);
+  });
+
+  it("leaves federal tax unchanged from before grossAmount existed when a salary source omits it", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const brokerage = makeAccount({
+      class: "taxable_investment",
+      name: "Brokerage",
+      taxTreatment: "taxable",
+      startingBalance: 100_000,
+      growthRatePct: 0.2,
+    });
+    const savings = makeAccount({ class: "cash", name: "Savings", startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [checking, brokerage, savings],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 12_000, category: "salary" })],
+      events: [
+        {
+          id: nanoid(),
+          type: "custom_transfer",
+          name: "Move to savings",
+          startDate: "2027-06-01",
+          amount: 60_000,
+          fromAccountId: brokerage.id,
+          toAccountId: savings.id,
+          frequency: "one_time",
+        },
+      ],
+      startDate: "2026-01-01",
+      horizonEndDate: "2027-12-31",
+    });
+    const result = projectScenario(scenario);
+    const year2 = result.years[1];
+
+    // No grossAmount opted in -> same $0 tax as before this field existed.
+    expect(year2.cashFlow.federalTaxTotal).toBeLessThan(500);
+  });
+
   it("taxes an RMD using real progressive brackets -- $0 when it's below the standard deduction", () => {
     const personId = nanoid();
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });

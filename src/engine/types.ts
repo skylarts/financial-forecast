@@ -54,6 +54,14 @@ export interface Posting {
    * is computed in the same pass.
    */
   sourceId: Id;
+  /**
+   * Gross (Box-1-style) counterpart to `amount`, present only on a salary
+   * income posting whose source has `grossAmount` set -- scaled by the same
+   * inflation/growth/adjustment factors as `amount`. Used only for federal
+   * tax bracket placement (see YearAccumulator.grossSalary in
+   * forecastScenario.ts); never posted to any account balance.
+   */
+  grossAmount?: number;
 }
 
 export interface MortgageSpec {
