@@ -19,6 +19,7 @@ import { useUiStore } from "@/store/useUiStore";
 import { SetupWizardHost } from "@/components/wizard/SetupWizardHost";
 import { JoyConfetti } from "@/components/joy/JoyConfetti";
 import { JoyQuote } from "@/components/joy/JoyQuote";
+import { ThemeSync } from "@/components/layout/ThemeToggle";
 
 function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());
@@ -68,6 +69,7 @@ function HomeContent() {
 
   return (
     <div className="flex min-h-screen flex-1 flex-col">
+      <ThemeSync />
       {/* Celebrate once when joy mode is on and the plan reaches retirement. */}
       <JoyConfetti fire={isJoy && projection.kpis.retirementAge !== null} />
       <Header scenario={scenario} view={view} onViewChange={setView} />

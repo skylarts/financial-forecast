@@ -4,17 +4,31 @@ import { useEffect } from "react";
 import { useUiStore } from "@/store/useUiStore";
 
 /**
+ * Keeps <html data-theme> in sync with the store, independent of whether any
+ * particular toggle UI is mounted.
+ *
+ * This used to be a useEffect inside ThemeToggle itself, which was safe back
+ * when ThemeToggle was always rendered in the header. Once the toggle moved
+ * into the (collapsed-by-default) overflow menu, that effect stopped running
+ * until a user opened the menu at least once -- so a saved Joy-mode plan
+ * would load with the header already reading "Forecast ✨ Bright days ahead"
+ * while every token on the page was still rendering in dark. Mount this once,
+ * unconditionally, near the app root.
+ */
+export function ThemeSync() {
+  const theme = useUiStore((s) => s.theme);
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+  return null;
+}
+
+/**
  * Top-left theme switch: flips between the default dark theme and ☀️ joy mode.
- * Applies the choice by stamping data-theme on <html>, which the CSS variables
- * in globals.css key off, so the whole app re-skins at once.
  */
 export function ThemeToggle() {
   const theme = useUiStore((s) => s.theme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-  }, [theme]);
 
   const isJoy = theme === "joy";
   return (
