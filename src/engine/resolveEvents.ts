@@ -1,5 +1,5 @@
 import type { Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
-import { addDays, compareDates, elapsedYears } from "./dateMath";
+import { addDays, compareDates, elapsedYears, todayISO } from "./dateMath";
 import { expandOccurrences } from "./occurrences";
 import { growthAdjustedAmount, todaysDollarsAmount } from "./growth";
 import { buildTimeline } from "./timeline";
@@ -75,7 +75,9 @@ function pushOwnershipCosts(
 }
 
 export function resolveEvents(scenario: Scenario): ResolvedSchedule {
-  const { settings } = scenario;
+  // Same null-means-today resolution as forecastScenario.ts (this function
+  // is called both from there and, in tests, directly).
+  const settings = { ...scenario.settings, startDate: scenario.settings.startDate ?? todayISO() };
   const horizonEnd = settings.horizonEndDate;
   const events = scenario.events.filter((e) => !e.isExcluded);
 

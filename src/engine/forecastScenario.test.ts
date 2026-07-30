@@ -328,7 +328,7 @@ describe("forecastScenario -- buy_home", () => {
     // inflate from plan start to the purchase date, same factor for both.
     const inflationFactor = growthAdjustedAmount(
       1,
-      elapsedYears(mockScenario.settings.startDate, buyEvent.startDate),
+      elapsedYears(mockScenario.settings.startDate!, buyEvent.startDate),
       mockScenario.settings.inflationRatePct
     );
     const principal = (buyEvent.purchasePrice - buyEvent.downPaymentAmount) * inflationFactor;

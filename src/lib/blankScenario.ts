@@ -16,7 +16,9 @@ export function makeBlankScenario(name: string) {
     expenses: [],
     events: [],
     settings: {
-      startDate: `${startYear}-01-01`,
+      // null = today, live -- a fresh scenario has no reason to be pinned
+      // to a fixed date (see forecastSettingsSchema.startDate).
+      startDate: null,
       horizonEndDate: `${startYear + 60}-12-31`,
       inflationRatePct: 0.03,
       moneyFlow: {

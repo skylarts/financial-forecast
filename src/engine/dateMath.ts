@@ -1,5 +1,12 @@
 import type { ISODate } from "@/domain";
 
+/** Today's date, 'YYYY-MM-DD' -- the resolved value of a null plan start
+ *  date (see forecastSettingsSchema.startDate) or any other "left blank
+ *  means now" field. */
+export function todayISO(): ISODate {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /** Add `months` calendar months, clamping the day to the target month's length. */
 export function addMonths(date: ISODate, months: number): ISODate {
   const [y, m, d] = date.split("-").map(Number);

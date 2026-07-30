@@ -8,6 +8,7 @@ import { accountObjectSchema, categoryForClass } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
 import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, InfoTooltip, inputClass, labelClass } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
+import { todayISO } from "@/engine/dateMath";
 import { usePlanStore } from "@/store/usePlanStore";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 
@@ -206,7 +207,7 @@ export function AccountDrawer({
   const addAccount = usePlanStore((s) => s.addAccount);
   const updateAccount = usePlanStore((s) => s.updateAccount);
   const removeAccount = usePlanStore((s) => s.removeAccount);
-  const planStartDate = usePlanStore((s) => s.activeScenario().settings.startDate);
+  const planStartDate = usePlanStore((s) => s.activeScenario().settings.startDate) ?? todayISO();
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);

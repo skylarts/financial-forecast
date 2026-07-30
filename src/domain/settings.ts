@@ -109,7 +109,14 @@ export const filingStatusSchema = z.enum(["single", "marriedFilingJointly"]);
 export type FilingStatus = z.infer<typeof filingStatusSchema>;
 
 export const forecastSettingsSchema = z.object({
-  startDate: isoDateSchema,
+  /**
+   * null = every account's starting balance is treated as of TODAY, live --
+   * recomputed on every load rather than frozen at whatever date the plan
+   * happened to be created. Set an explicit date only to override that (a
+   * past date to backdate the plan, or a future one to model "if I started
+   * this plan on X"). See the Start Date field's tooltip in AssumptionsDrawer.
+   */
+  startDate: isoDateSchema.nullable().default(null),
   /** Derived from the longest planningEndAge, or an explicit override. */
   horizonEndDate: isoDateSchema,
   /** Global default, e.g. 0.03 for 3%. */

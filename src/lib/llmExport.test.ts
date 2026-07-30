@@ -104,7 +104,7 @@ describe("buildLlmExport", () => {
     it("includes a year-by-year table covering the whole horizon", () => {
       expect(output).toContain("## Year-by-Year Projection");
       expect(output).toContain("| Year | Income | Expenses | Federal tax |");
-      const startYear = Number(mockScenario.settings.startDate.slice(0, 4));
+      const startYear = Number(mockScenario.settings.startDate!.slice(0, 4));
       const endYear = Number(mockScenario.settings.horizonEndDate.slice(0, 4));
       expect(output).toContain(`| ${startYear} |`);
       expect(output).toContain(`| ${endYear} |`);
