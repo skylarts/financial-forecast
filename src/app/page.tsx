@@ -7,7 +7,7 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { ViewBar } from "@/components/layout/ViewBar";
 import type { View } from "@/lib/views";
-import { KpiStrip } from "@/components/kpi/KpiStrip";
+import { OverviewBento } from "@/components/kpi/OverviewBento";
 import { NetWorthChart } from "@/components/chart/NetWorthChart";
 import { DetailTabs } from "@/components/tables/DetailTabs";
 import { WarningsBanner } from "@/components/layout/WarningsBanner";
@@ -96,40 +96,42 @@ function HomeContent() {
       </div>
 
       {view === "Overview" ? (
-        <main className="flex w-full flex-1 flex-col gap-4 px-6 py-4">
-          <KpiStrip
+        <main className="flex w-full flex-1 flex-col gap-3 px-6 py-4">
+          {isJoy && <JoyQuote />}
+          <OverviewBento
             kpis={projection.kpis}
             years={years}
+            accounts={projection.accounts}
             dollarMode={dollarMode}
             isFullRange={range[0] === minYear && range[1] === maxYear}
             compareKpis={hasCompare ? compareProjection.kpis : null}
-            compareYears={compareYears}
             compareName={hasCompare ? compareScenarioRaw!.name : null}
-          />
-          {isJoy && <JoyQuote />}
-          <NetWorthChart
-            accounts={projection.accounts}
-            editableAccounts={editableAccounts}
-            years={years}
-            dollarMode={dollarMode}
-            events={scenario.events}
-            incomeSources={scenario.incomeSources}
-            expenses={scenario.expenses}
-            people={scenario.household.people}
-            scenarioName={scenario.name}
-            compareOptions={compareOptions}
-            compareScenarioId={compareScenarioId}
-            compareScenario={
-              hasCompare
-                ? {
-                    name: compareScenarioRaw!.name,
-                    years: compareYears,
-                    events: compareScenarioRaw!.events,
-                    incomeSources: compareScenarioRaw!.incomeSources,
-                    expenses: compareScenarioRaw!.expenses,
-                    people: compareScenarioRaw!.household.people,
-                  }
-                : null
+            chart={
+              <NetWorthChart
+                accounts={projection.accounts}
+                editableAccounts={editableAccounts}
+                years={years}
+                dollarMode={dollarMode}
+                events={scenario.events}
+                incomeSources={scenario.incomeSources}
+                expenses={scenario.expenses}
+                people={scenario.household.people}
+                scenarioName={scenario.name}
+                compareOptions={compareOptions}
+                compareScenarioId={compareScenarioId}
+                compareScenario={
+                  hasCompare
+                    ? {
+                        name: compareScenarioRaw!.name,
+                        years: compareYears,
+                        events: compareScenarioRaw!.events,
+                        incomeSources: compareScenarioRaw!.incomeSources,
+                        expenses: compareScenarioRaw!.expenses,
+                        people: compareScenarioRaw!.household.people,
+                      }
+                    : null
+                }
+              />
             }
           />
         </main>

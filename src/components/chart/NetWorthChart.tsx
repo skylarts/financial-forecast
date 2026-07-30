@@ -11,7 +11,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import type { Account, AccountClass, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, YearSnapshot } from "@/domain";
+import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { useUiStore } from "@/store/useUiStore";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -19,6 +19,12 @@ import { buildChartMarkers, type ChartMarker } from "./chartMarkers";
 import { MARKER_TONE_CLASS } from "./eventIcons";
 import { MarkerLayoutReporter, type MarkerLayout } from "./MarkerLayoutReporter";
 import { Chip, Segmented } from "@/components/ui/controls";
+import {
+  ACCOUNT_CLASS_LABELS,
+  buildAccountColors,
+  displayAccounts,
+  groupAccountsByClass,
+} from "@/lib/accountColors";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { EventDrawer } from "@/components/events/EventDrawer";
@@ -29,33 +35,6 @@ const CLICK_MOVE_THRESHOLD = 4;
 
 const CHART_COLORS = ["#3fb8a4", "#5cb88f", "#db7a6e", "#c9a063", "#9c8cd6", "#4fa8c9", "#d98bb0", "#8fbf5f"];
 const JOY_CHART_COLORS = ["#ff7a59", "#f4a63b", "#2fb98d", "#3ec7cf", "#ff9d6f", "#e8555a", "#7bc47f", "#c874e8"];
-
-/** One base hue per account class, so "By Account" reads as a color family
- *  per class (e.g. every blue is cash) with individual accounts as shades
- *  of that hue rather than unrelated colors. */
-const ACCOUNT_CLASS_HUE: Record<AccountClass, number> = {
-  cash: 212,
-  taxable_investment: 152,
-  tax_free: 268,
-  tax_deferred: 32,
-  real_estate: 176,
-  other_asset: 48,
-  credit_card: 355,
-  loan: 15,
-  mortgage: 335,
-};
-
-/** Evenly spread lightness across a class's accounts so shades stay visually
- *  distinct even with several accounts in the same class; a single account
- *  gets a mid-range shade. Ranges differ per theme since dark backgrounds
- *  need brighter lines and the light joy theme needs darker ones. */
-function accountClassColor(hue: number, index: number, count: number, isJoy: boolean): string {
-  const saturation = isJoy ? 70 : 72;
-  const [minL, maxL] = isJoy ? [32, 56] : [42, 78];
-  const t = count <= 1 ? 0.5 : index / (count - 1);
-  const lightness = Math.round(maxL - t * (maxL - minL));
-  return `hsl(${hue} ${saturation}% ${lightness}%)`;
-}
 
 // Recharts needs concrete color strings, so mirror the two palettes here.
 // These must stay in sync with the theme tokens in globals.css.
@@ -69,49 +48,6 @@ type ViewMode = "net_worth" | "by_account";
 const ICON_SIZE = 22;
 const ICON_GAP = 4;
 const TOP_PAD = 6;
-
-/** Fixed grouping for "By Account" -- cash first (most liquid), then
- *  investment/retirement accounts by tax treatment, then other assets,
- *  then liabilities last. */
-const ACCOUNT_CLASS_ORDER: Record<AccountClass, number> = {
-  cash: 0,
-  taxable_investment: 1,
-  tax_free: 2,
-  tax_deferred: 3,
-  real_estate: 4,
-  other_asset: 5,
-  credit_card: 6,
-  loan: 7,
-  mortgage: 8,
-};
-
-function sortAccountsForDisplay(list: Account[]): Account[] {
-  return [...list].sort((a, b) => ACCOUNT_CLASS_ORDER[a.class] - ACCOUNT_CLASS_ORDER[b.class]);
-}
-
-const ACCOUNT_CLASS_LABELS: Record<AccountClass, string> = {
-  cash: "Cash",
-  taxable_investment: "Taxable",
-  tax_free: "Tax-Free",
-  tax_deferred: "Tax-Deferred",
-  real_estate: "Real Estate",
-  other_asset: "Other Assets",
-  credit_card: "Credit Cards",
-  loan: "Loans",
-  mortgage: "Mortgages",
-};
-
-/** Splits an already class-sorted account list into consecutive runs of the
- *  same class, for the grouped "By Account" legend. */
-function groupAccountsByClass(list: Account[]): { cls: AccountClass; accounts: Account[] }[] {
-  const groups: { cls: AccountClass; accounts: Account[] }[] = [];
-  for (const a of list) {
-    const last = groups[groups.length - 1];
-    if (last && last.cls === a.class) last.accounts.push(a);
-    else groups.push({ cls: a.class, accounts: [a] });
-  }
-  return groups;
-}
 
 interface DragState {
   key: string;
@@ -237,22 +173,11 @@ export function NetWorthChart({
     });
   }, []);
 
-  const accounts = useMemo(
-    () => sortAccountsForDisplay(allAccounts.filter((a) => !a.isExcluded)),
-    [allAccounts]
-  );
+  const accounts = useMemo(() => displayAccounts(allAccounts), [allAccounts]);
 
-  /** Per-account line/legend color -- a shade of its class's base hue. */
-  const accountColors = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const group of groupAccountsByClass(accounts)) {
-      const hue = ACCOUNT_CLASS_HUE[group.cls];
-      group.accounts.forEach((a, i) => {
-        map.set(a.id, accountClassColor(hue, i, group.accounts.length, isJoy));
-      });
-    }
-    return map;
-  }, [accounts, isJoy]);
+  /** Per-account line/legend color -- shared with the overview's account
+   *  snapshot so a given account is the same color in both places. */
+  const accountColors = useMemo(() => buildAccountColors(accounts, isJoy), [accounts, isJoy]);
 
   const compareByYear = useMemo(() => {
     if (!compareScenario) return null;
@@ -543,7 +468,7 @@ export function NetWorthChart({
   };
 
   return (
-    <div className="rounded-lg border border-border bg-panel p-4">
+    <div className="joy-lift flex h-full flex-col rounded-xl border border-border bg-panel p-4">
       {/* Dollar mode and scenario comparison moved to the persistent ViewBar
           (they apply to the tables too, which are now separate views); what
           stays here is chart-only: the series mode and its legend. */}
