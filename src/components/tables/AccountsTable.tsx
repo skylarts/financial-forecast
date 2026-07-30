@@ -352,7 +352,7 @@ export function AccountsTable({
                 panel color) so the gap actually reads as a gap, and its top
                 edge doubles as the lighter border capping the section above. */}
             <tr aria-hidden="true">
-              <td className="h-3 border-t border-dim/25 bg-background p-0" colSpan={years.length + 1} />
+              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={years.length + 1} />
             </tr>
             <Section
               title="Assets"
@@ -368,7 +368,7 @@ export function AccountsTable({
               mode={dollarMode}
             />
             <tr aria-hidden="true">
-              <td className="h-3 border-t border-dim/25 bg-background p-0" colSpan={years.length + 1} />
+              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={years.length + 1} />
             </tr>
             <Section
               title="Liabilities"

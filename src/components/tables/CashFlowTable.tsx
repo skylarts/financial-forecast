@@ -446,7 +446,7 @@ export function CashFlowTable({
   // doubles as the lighter border that caps off the section above.
   const spacerRow = (key: string) => (
     <tr key={key} aria-hidden="true">
-      <td className="h-3 border-t border-dim/25 bg-background p-0" colSpan={col} />
+      <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={col} />
     </tr>
   );
 
