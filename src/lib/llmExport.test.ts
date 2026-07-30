@@ -127,6 +127,115 @@ describe("buildLlmExport", () => {
     });
   });
 
+  describe("fields that are stored/engine-consumed but easy to forget in the export", () => {
+    it("flags an account with a future startDate as not-yet-existing", () => {
+      const home = mockScenario.accounts.find((a) => a.name === "Buy a home")!;
+      expect(output).toContain(`Doesn't exist until ${home.startDate}`);
+    });
+
+    it("reports an account's starting cost basis when set", () => {
+      const [first, ...rest] = mockScenario.accounts;
+      const withBasis = {
+        ...mockScenario,
+        accounts: [{ ...first, startingBalance: 40_000, startingCostBasis: 25_000 }, ...rest],
+      };
+      const out = buildLlmExport(withBasis);
+      expect(out).toContain("Starting cost basis");
+      expect(out).toContain("$25,000");
+    });
+
+    it("flags an account exempt from the early-withdrawal penalty", () => {
+      const [first, ...rest] = mockScenario.accounts;
+      const exempt = {
+        ...mockScenario,
+        accounts: [{ ...first, noEarlyWithdrawalPenalty: true }, ...rest],
+      };
+      const out = buildLlmExport(exempt);
+      expect(out).toContain("exempt from the 10% early-withdrawal penalty");
+    });
+
+    it("reports an income source's gross (Box-1-style) amount when set", () => {
+      const [first, ...rest] = mockScenario.incomeSources;
+      const withGross = {
+        ...mockScenario,
+        incomeSources: [{ ...first, grossAmount: 9_000 }, ...rest],
+      };
+      const out = buildLlmExport(withGross);
+      expect(out).toContain("Gross (Box-1-style) amount");
+      expect(out).toContain("$9,000");
+    });
+
+    it("explains that sellingCostsPct overrides a fixed netProceeds on sell_home", () => {
+      const home = mockScenario.accounts.find((a) => a.name === "Buy a home")!;
+      const withSale = {
+        ...mockScenario,
+        events: [
+          ...mockScenario.events,
+          {
+            id: "sell-home-test",
+            type: "sell_home" as const,
+            name: "Sell the home",
+            startDate: "2070-01-01",
+            realEstateAccountId: home.id,
+            netProceeds: 100_000,
+            sellingCostsPct: 0.06,
+            proceedsAccountId: null,
+          },
+        ],
+      };
+      const out = buildLlmExport(withSale);
+      expect(out).toContain("proceeds are **computed from the projection**");
+      expect(out).toContain("ignored while sellingCostsPct is set");
+    });
+
+    it("includes temporary adjustment windows on a retirement event's retirementExpense", () => {
+      const retireEvent = mockScenario.events.find((e) => e.type === "retire")!;
+      const withAdjustment = {
+        ...mockScenario,
+        events: mockScenario.events.map((e) =>
+          e.id === retireEvent.id
+            ? {
+                ...e,
+                retirementExpense: {
+                  amount: 12_000,
+                  growthRatePct: 0.03,
+                  paymentAccountId: null,
+                  endDate: null,
+                  adjustments: [
+                    { id: "adj-1", startDate: "2056-01-01", endDate: "2058-01-01", multiplier: 1.5, note: "extra travel" },
+                  ],
+                },
+              }
+            : e
+        ),
+      };
+      const out = buildLlmExport(withAdjustment);
+      expect(out).toContain("extra travel");
+    });
+
+    it("distinguishes an explicit 0% custom_transfer growth rate from an unset one (matches inflation)", () => {
+      const withTransfer = {
+        ...mockScenario,
+        events: [
+          ...mockScenario.events,
+          {
+            id: "transfer-test",
+            type: "custom_transfer" as const,
+            name: "Flat transfer",
+            startDate: "2030-01-01",
+            amount: 100,
+            fromAccountId: mockScenario.accounts[1].id,
+            toAccountId: mockScenario.accounts[2].id,
+            frequency: "monthly" as const,
+            growthRatePct: 0,
+          },
+        ],
+      };
+      const out = buildLlmExport(withTransfer);
+      expect(out).toContain("flat in nominal terms (0% growth)");
+    });
+  });
+
   it("still produces the inputs when the projection cannot be computed", () => {
     // A horizon that ends before it starts yields no months to simulate; the
     // export must degrade to inputs-only rather than throwing.
