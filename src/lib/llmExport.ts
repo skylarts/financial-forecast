@@ -217,8 +217,14 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push(section("Accounts"));
   for (const a of scenario.accounts as Account[]) {
     lines.push(
-      `- **${a.name}** (id: \`${a.id}\`) — class: ${a.class} (${a.category}), tax treatment: ${a.taxTreatment}, owner: ${personName(a.ownerId)}, starting balance: ${formatMoney(a.startingBalance)}, growth rate: ${a.growthRatePct == null ? "matches the plan's inflation rate" : `${fmtPct(a.growthRatePct)}/yr nominal`}${a.subjectToRMD ? ", subject to RMDs" : ""}${a.isExtraSavings ? " — **this is the mandatory Extra Savings account** (see Money Flow / Routing above)" : ""}${a.isExcluded ? " — **excluded from the plan** (engine skips it entirely)" : ""}`
+      `- **${a.name}** (id: \`${a.id}\`) — class: ${a.class} (${a.category}), tax treatment: ${a.taxTreatment}, owner: ${personName(a.ownerId)}, starting balance: ${formatMoney(a.startingBalance)}, growth rate: ${a.growthRatePct == null ? "matches the plan's inflation rate" : `${fmtPct(a.growthRatePct)}/yr nominal`}${a.subjectToRMD ? ", subject to RMDs" : ""}${a.noEarlyWithdrawalPenalty ? ", exempt from the 10% early-withdrawal penalty (72(t)/rule of 55)" : ""}${a.isExtraSavings ? " — **this is the mandatory Extra Savings account** (see Money Flow / Routing above)" : ""}${a.isExcluded ? " — **excluded from the plan** (engine skips it entirely)" : ""}`
     );
+    if (a.startDate) {
+      lines.push(`  - Doesn't exist until ${a.startDate} — starting balance above is its value as of that date, not plan start.`);
+    }
+    if (a.startingCostBasis != null) {
+      lines.push(`  - Starting cost basis: ${formatMoney(a.startingCostBasis)} (vs. starting balance of ${formatMoney(a.startingBalance)} — the difference is embedded unrealized gains).`);
+    }
     if (a.propertyGrowthRatePct !== undefined) {
       lines.push(`  - Property growth rate: ${fmtPct(a.propertyGrowthRatePct)}/yr (overrides the growth rate above).`);
     }
@@ -268,6 +274,11 @@ export function buildLlmExport(scenario: Scenario): string {
     lines.push(
       `- **${inc.name}** (id: \`${inc.id}\`, category: ${inc.category}) — ${fmtRecurrence(inc.amount, inc.frequency, inc.intervalYears)} ${gross ? "**gross (pre-tax)**" : "take-home (net of tax)"}, ${fmtGrowth(inc.growthRatePct)}, owner: ${personName(inc.ownerId)}, deposits to ${accountName(inc.depositAccountId)}, ${inc.startDate} → ${inc.endDate ?? "end of plan"}${inc.isExcluded ? " — **excluded**" : ""}`
     );
+    if (inc.grossAmount != null) {
+      lines.push(
+        `  - Gross (Box-1-style) amount: ${formatMoney(inc.grossAmount)} — used to stack withdrawals/gains on top of this person's true tax bracket while still working, instead of assuming $0 other ordinary income.`
+      );
+    }
     lines.push(...fmtAdjustments(inc.adjustments));
   }
 
@@ -299,6 +310,7 @@ export function buildLlmExport(scenario: Scenario): string {
             lines.push(
               `  - Retirement expense: ${formatMoney(ev.retirementExpense.amount)}/yr from ${accountName(ev.retirementExpense.paymentAccountId)}, ${fmtGrowth(ev.retirementExpense.growthRatePct)}${ev.retirementExpense.endDate ? ` through ${ev.retirementExpense.endDate}` : ""}.`
             );
+            lines.push(...fmtAdjustments(ev.retirementExpense.adjustments));
           }
           break;
         case "buy_home": {
@@ -323,7 +335,12 @@ export function buildLlmExport(scenario: Scenario): string {
         }
         case "sell_home":
           lines.push(
-            `  - Sells ${accountName(ev.realEstateAccountId)}, netting ${formatMoney(ev.netProceeds)} into ${accountName(ev.proceedsAccountId)} after any agent commission, closing costs, and mortgage payoff. That home's asset and mortgage are both fully retired (zeroed) this date -- not just stopped, unlike a buy_home event's "replace existing housing expenses".`
+            ev.sellingCostsPct != null
+              ? `  - Sells ${accountName(ev.realEstateAccountId)} into ${accountName(ev.proceedsAccountId)}: proceeds are **computed from the projection**, not fixed -- the home's simulated value at the sale month × (1 − ${fmtPct(ev.sellingCostsPct)} selling costs) − whatever's left on the linked mortgage. The netProceeds field (${formatMoney(ev.netProceeds)}) is ignored while sellingCostsPct is set.`
+              : `  - Sells ${accountName(ev.realEstateAccountId)}, netting ${formatMoney(ev.netProceeds)} into ${accountName(ev.proceedsAccountId)} after any agent commission, closing costs, and mortgage payoff.`
+          );
+          lines.push(
+            `  - That home's asset and mortgage are both fully retired (zeroed) this date -- not just stopped, unlike a buy_home event's "replace existing housing expenses".`
           );
           break;
         case "have_a_kid":
@@ -333,7 +350,7 @@ export function buildLlmExport(scenario: Scenario): string {
           break;
         case "custom_transfer":
           lines.push(
-            `  - ${fmtRecurrence(ev.amount, ev.frequency, ev.intervalYears)} from ${accountName(ev.fromAccountId)} to ${accountName(ev.toAccountId)}${ev.growthRatePct ? `, ${fmtGrowth(ev.growthRatePct)}` : ""}.`
+            `  - ${fmtRecurrence(ev.amount, ev.frequency, ev.intervalYears)} from ${accountName(ev.fromAccountId)} to ${accountName(ev.toAccountId)}, ${fmtGrowth(ev.growthRatePct)}.`
           );
           break;
       }
@@ -402,8 +419,8 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push("- **Household** — each person's birth date, retirement age, and planning end age (which sets the plan horizon).");
   lines.push("- **Settings** — plan start/end dates, inflation rate, filing status, whether RMDs are modeled, and the flat state/local tax add-on.");
   lines.push("- **Routing tab** — which accounts are spending hubs and their buffer amounts; the fill order, each stop's cap and cap growth rate, and the fill split mode; the drain order, each stop's date window, minimum-balance floor, and the drain split mode. Reordering the drain order is the highest-leverage tax change available.");
-  lines.push("- **Accounts** — name, class, tax treatment, owner, starting balance, growth rate (or a dated growth-rate schedule), RMD flag, loan terms, and the contribution (amount, frequency, growth, payroll-deducted flag, end date) or a multi-segment contribution schedule.");
-  lines.push("- **Income sources** — amount, frequency (or an every-N-years interval), nominal growth rate, owner, deposit account, start/end dates, category, and temporary adjustment windows.");
+  lines.push("- **Accounts** — name, class, tax treatment, owner, starting balance, starting cost basis, growth rate (or a dated growth-rate schedule), RMD flag, early-withdrawal-penalty exemption, an account start date (for a not-yet-existing account), loan terms, and the contribution (amount, frequency, growth, payroll-deducted flag, end date) or a multi-segment contribution schedule.");
+  lines.push("- **Income sources** — amount, an optional gross (Box-1-style) amount for bracket placement while working, frequency (or an every-N-years interval), nominal growth rate, owner, deposit account, start/end dates, category, and temporary adjustment windows.");
   lines.push("- **Expenses** — amount, frequency (or an every-N-years interval), nominal growth rate, payment account, start/end dates, category, and temporary adjustment windows.");
   lines.push("- **Events** — retire, buy a home, have a kid, and custom transfer, each with its own fields as shown above.");
   lines.push("- **`isExcluded`** — on any account, income source, expense, or event. Toggling this is the cleanest way to test one item's impact without deleting it.");
