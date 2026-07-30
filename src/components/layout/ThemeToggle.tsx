@@ -24,7 +24,8 @@ export function ThemeSync() {
 }
 
 /**
- * Top-left theme switch: flips between the default dark theme and ☀️ joy mode.
+ * Theme switch row for the overflow menu: flips between the default dark
+ * theme and ☀️ joy mode.
  */
 export function ThemeToggle() {
   const theme = useUiStore((s) => s.theme);
@@ -37,10 +38,13 @@ export function ThemeToggle() {
       onClick={toggleTheme}
       aria-pressed={isJoy}
       title={isJoy ? "Switch to dark mode" : "Switch to joy mode ☀️"}
-      className="flex items-center gap-1 rounded-full border border-border bg-panel px-2.5 py-1 text-sm transition-transform hover:scale-105 active:scale-95"
+      className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
     >
-      <span className="text-base leading-none">{isJoy ? "☀️" : "🖤"}</span>
-      <span className="text-xs font-medium text-dim">{isJoy ? "Joy" : "Dark"}</span>
+      <span>Theme</span>
+      <span className="flex items-center gap-1 text-xs font-medium">
+        <span className="text-base leading-none">{isJoy ? "☀️" : "🖤"}</span>
+        {isJoy ? "Joy" : "Dark"}
+      </span>
     </button>
   );
 }

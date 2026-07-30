@@ -577,21 +577,29 @@ export function NetWorthChart({
           fullscreen the chart covers the ViewBar, so it grows its own copy
           of the date-range and dollar-mode controls, driven by the same
           lifted state via onRangeChange/onDollarModeChange. */}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-dim">
-          {viewMode === "net_worth" ? "Net Worth Projection" : "Balance by Account"}
-          {compareName && <span className="ml-2 font-normal text-dim-2">vs {compareName}</span>}
-        </h2>
-        <div className="flex flex-wrap items-center gap-2">
-          {isFullscreen && (
-            <>
-              <FullscreenRangeControls
-                minYear={minYear}
-                maxYear={maxYear}
-                rangeStart={rangeStart}
-                rangeEnd={rangeEnd}
-                onRangeChange={onRangeChange}
-              />
+      <div className="mb-3 flex flex-col gap-2">
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+          <h2 className="text-sm font-semibold text-dim">
+            {viewMode === "net_worth" ? "Net Worth Projection" : "Balance by Account"}
+            {compareName && <span className="ml-2 font-normal text-dim-2">vs {compareName}</span>}
+          </h2>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Segmented
+              ariaLabel="Chart series"
+              size="sm"
+              options={[
+                { value: "net_worth" as const, label: "Net Worth" },
+                { value: "by_account" as const, label: "By Account" },
+              ]}
+              value={viewMode}
+              onChange={setViewMode}
+            />
+            {viewMode === "by_account" && (
+              <Chip onClick={toggleAllAccounts}>{allHidden ? "Show all" : "Hide all"}</Chip>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {isFullscreen && (
               <Segmented
                 ariaLabel="Show figures in future or today's dollars"
                 size="sm"
@@ -599,30 +607,29 @@ export function NetWorthChart({
                 value={dollarMode}
                 onChange={onDollarModeChange}
               />
-            </>
-          )}
-          {viewMode === "by_account" && (
-            <Chip onClick={toggleAllAccounts}>{allHidden ? "Show all" : "Hide all"}</Chip>
-          )}
-          <Segmented
-            ariaLabel="Chart series"
-            size="sm"
-            options={[
-              { value: "net_worth" as const, label: "Net Worth" },
-              { value: "by_account" as const, label: "By Account" },
-            ]}
-            value={viewMode}
-            onChange={setViewMode}
-          />
-          <button
-            type="button"
-            onClick={() => setIsFullscreen((v) => !v)}
-            title={isFullscreen ? "Minimize" : "Expand to full screen"}
-            className="rounded-md border border-border bg-panel-2 px-2 py-1 text-xs text-dim transition-colors hover:border-accent hover:text-foreground"
-          >
-            {isFullscreen ? "⤡ Minimize" : "⤢ Expand"}
-          </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setIsFullscreen((v) => !v)}
+              title={isFullscreen ? "Minimize" : "Expand to full screen"}
+              aria-label={isFullscreen ? "Minimize" : "Expand to full screen"}
+              className="flex items-center justify-center rounded-md border border-border bg-panel-2 px-2 py-1 text-sm text-dim transition-colors hover:border-accent hover:text-foreground"
+            >
+              {isFullscreen ? "⤡" : "⤢"}
+            </button>
+          </div>
         </div>
+        {isFullscreen && (
+          <div className="flex justify-start">
+            <FullscreenRangeControls
+              minYear={minYear}
+              maxYear={maxYear}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              onRangeChange={onRangeChange}
+            />
+          </div>
+        )}
       </div>
 
       <div ref={containerRef} className="relative" style={isFullscreen ? { height: "calc(100vh - 160px)" } : undefined}>

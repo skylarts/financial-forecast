@@ -164,7 +164,7 @@ function Section({
   onEdit: (account: Account) => void;
   mode: DollarMode;
 }) {
-  const [sectionOpen, setSectionOpen] = useState(true);
+  const [sectionOpen, setSectionOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const toggleGroup = (label: string) =>
     setOpenGroups((prev) => {
