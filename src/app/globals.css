@@ -111,6 +111,38 @@ body {
   color: var(--foreground);
 }
 
+/* ---------------------------------------------------------------------------
+   Overview bento grid.
+
+   Named areas rather than per-tile column spans: with spans, a tile whose
+   content is shorter than its neighbours reflows into a ragged row and the
+   account list collapses to a single line. The hero occupies the left two
+   rows with the stat tiles stacked beside it; the chart and account snapshot
+   share the lower band.
+
+   Rows are sized by content (auto) except the lower band, which gets a
+   min-height so the chart has room and the account list can scroll inside it.
+   --------------------------------------------------------------------------- */
+.bento {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 1fr;
+  grid-template-areas: "hero" "k1" "k2" "chart" "list";
+}
+
+@media (min-width: 1024px) {
+  .bento {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    /* The two stat rows are kept compact so the hero -- which spans both --
+       lands near 200px rather than stretching tall with a dead gap in it. */
+    grid-template-rows: minmax(94px, auto) minmax(94px, auto) minmax(380px, auto);
+    grid-template-areas:
+      "hero hero hero hero k1 k1"
+      "hero hero hero hero k2 k2"
+      "chart chart chart chart list list";
+  }
+}
+
 /* Dollar figures line up in columns everywhere in this app, so tabular
    figures are the default rather than an opt-in utility. */
 .tabular-nums,
