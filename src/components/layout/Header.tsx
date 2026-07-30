@@ -314,7 +314,7 @@ export function Header({ scenario }: { scenario: Scenario }) {
       <div className="flex items-center gap-3">
         <ThemeToggle />
         <div className="flex flex-col">
-          <h1 className="text-xl font-bold">{isJoy ? "Forecast ✨" : "Forecast"}</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{isJoy ? "Forecast ✨" : "Forecast"}</h1>
           {isJoy && (
             <span className="joy-tagline text-xs font-medium">Bright days ahead — let&apos;s grow your money ☀️</span>
           )}

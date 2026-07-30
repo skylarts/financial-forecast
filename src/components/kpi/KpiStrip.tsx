@@ -101,10 +101,10 @@ export function KpiStrip({
             {card.label}
           </div>
           {card.compareValue === null ? (
-            <div className="mt-1 text-2xl font-bold">{card.value}</div>
+            <div className="mt-1 text-3xl font-bold tracking-tight">{card.value}</div>
           ) : (
             <div className="mt-1 flex items-stretch gap-3">
-              <div className="text-2xl font-bold">{card.value}</div>
+              <div className="text-3xl font-bold tracking-tight">{card.value}</div>
               <div className="w-px shrink-0 bg-border" />
               <div>
                 <div className="text-sm font-medium text-dim">{card.compareValue}</div>

@@ -68,7 +68,7 @@ function HomeContent() {
       {/* Celebrate once when joy mode is on and the plan reaches retirement. */}
       <JoyConfetti fire={isJoy && projection.kpis.retirementAge !== null} />
       <Header scenario={scenario} />
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-6">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-6">
         <KpiStrip
           kpis={projection.kpis}
           years={years}
@@ -81,40 +81,42 @@ function HomeContent() {
         {isJoy && <JoyQuote />}
         <StalePlanBanner scenario={scenario} />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
-        <YearRangePicker
-          minYear={minYear}
-          maxYear={maxYear}
-          rangeStart={range[0]}
-          rangeEnd={range[1]}
-          onChange={(start, end) => setRange([start, end])}
-        />
-        <NetWorthChart
-          accounts={projection.accounts}
-          editableAccounts={editableAccounts}
-          years={years}
-          dollarMode={dollarMode}
-          onDollarModeChange={setDollarMode}
-          events={scenario.events}
-          incomeSources={scenario.incomeSources}
-          expenses={scenario.expenses}
-          people={scenario.household.people}
-          scenarioName={scenario.name}
-          compareOptions={compareOptions}
-          compareScenarioId={compareScenarioId}
-          onCompareChange={setCompareScenarioId}
-          compareScenario={
-            hasCompare
-              ? {
-                  name: compareScenarioRaw!.name,
-                  years: compareYears,
-                  events: compareScenarioRaw!.events,
-                  incomeSources: compareScenarioRaw!.incomeSources,
-                  expenses: compareScenarioRaw!.expenses,
-                  people: compareScenarioRaw!.household.people,
-                }
-              : null
-          }
-        />
+        <div className="flex flex-col gap-3">
+          <YearRangePicker
+            minYear={minYear}
+            maxYear={maxYear}
+            rangeStart={range[0]}
+            rangeEnd={range[1]}
+            onChange={(start, end) => setRange([start, end])}
+          />
+          <NetWorthChart
+            accounts={projection.accounts}
+            editableAccounts={editableAccounts}
+            years={years}
+            dollarMode={dollarMode}
+            onDollarModeChange={setDollarMode}
+            events={scenario.events}
+            incomeSources={scenario.incomeSources}
+            expenses={scenario.expenses}
+            people={scenario.household.people}
+            scenarioName={scenario.name}
+            compareOptions={compareOptions}
+            compareScenarioId={compareScenarioId}
+            onCompareChange={setCompareScenarioId}
+            compareScenario={
+              hasCompare
+                ? {
+                    name: compareScenarioRaw!.name,
+                    years: compareYears,
+                    events: compareScenarioRaw!.events,
+                    incomeSources: compareScenarioRaw!.incomeSources,
+                    expenses: compareScenarioRaw!.expenses,
+                    people: compareScenarioRaw!.household.people,
+                  }
+                : null
+            }
+          />
+        </div>
       </main>
       {/* Breaks out of <main>'s max-w-6xl so the tab section can use the
           full window width -- w-screen + centering offsets the parent's
