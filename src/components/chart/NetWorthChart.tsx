@@ -639,6 +639,10 @@ export function NetWorthChart({
               wrapperStyle={{ zIndex: 40 }}
               contentStyle={{ background: theme.tooltipBg, border: `1px solid ${theme.tooltipBorder}`, borderRadius: 8 }}
               labelStyle={{ color: theme.label }}
+              // "By Account" otherwise lists rows in <Line> mount order (our
+              // sorted-by-class order) rather than by size -- sort by value,
+              // largest first, so the tooltip reads like a ranked breakdown.
+              itemSorter={(item) => -(Number(item.value) || 0)}
               formatter={(value, name) => {
                 if (viewMode !== "net_worth") {
                   return [formatMoney(Number(value)), accounts.find((a) => a.id === name)?.name ?? String(name)];
