@@ -45,7 +45,7 @@ const SECTIONS: { label: string; steps: Step[] }[] = [
 const optionButtonClass =
   "rounded-md border border-border bg-background px-3 py-2 text-left text-sm hover:border-accent";
 const primaryButtonClass =
-  "rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50";
+  "rounded-md bg-pri px-4 py-2 text-sm font-semibold text-pri-fg disabled:opacity-50";
 const secondaryButtonClass = "rounded-md border border-border px-4 py-2 text-sm text-dim hover:text-foreground";
 
 function todayISO(): string {
@@ -261,7 +261,7 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
             </div>
             <div className="mt-1.5 h-1 w-40 overflow-hidden rounded-full bg-background">
               <div
-                className="h-full bg-accent transition-all"
+                className="h-full bg-pri transition-all"
                 style={{ width: `${((sectionIndex + 1) / SECTIONS.length) * 100}%` }}
               />
             </div>

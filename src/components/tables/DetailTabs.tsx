@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { DetailView } from "@/lib/views";
+import { Segmented } from "@/components/ui/controls";
 import type {
   Account,
   ExpenseBaseline,
@@ -19,8 +21,8 @@ import { CashFlowTable } from "./CashFlowTable";
 import { TimelineTab } from "./TimelineTab";
 import { MoneyFlowEditor } from "@/components/moneyflow/MoneyFlowEditor";
 
-const TABS = ["Timeline", "Accounts", "Routing", "Cash Flow"] as const;
-type Tab = (typeof TABS)[number];
+// Which detail view to render is now driven by the header tab set.
+type Tab = DetailView;
 
 export interface CompareTabData {
   name: string;
@@ -36,6 +38,7 @@ export interface CompareTabData {
 }
 
 export function DetailTabs({
+  active,
   accounts,
   years,
   timeline,
@@ -50,6 +53,7 @@ export function DetailTabs({
   scenarioName,
   compare,
 }: {
+  active: Tab;
   accounts: Account[];
   years: YearSnapshot[];
   timeline: TimelineRow[];
@@ -64,7 +68,6 @@ export function DetailTabs({
   scenarioName: string;
   compare: CompareTabData | null;
 }) {
-  const [active, setActive] = useState<Tab>("Cash Flow");
   const [viewingCompare, setViewingCompare] = useState(false);
   const showCompare = viewingCompare && compare !== null;
 
@@ -85,44 +88,23 @@ export function DetailTabs({
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1 rounded-lg border border-border bg-panel p-1 w-fit">
-          {TABS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActive(tab)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                active === tab ? "bg-accent text-white" : "text-dim hover:text-foreground"
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
+      {/* Which scenario's numbers this detail view is showing. Only appears
+          when a comparison is active; the view switcher itself is in the
+          header now. */}
+      {compare && (
+        <div className="mb-3 flex justify-end">
+          <Segmented
+            ariaLabel="Which scenario to show"
+            size="sm"
+            options={[
+              { value: "active", label: scenarioName },
+              { value: "compare", label: compare.name },
+            ]}
+            value={showCompare ? "compare" : "active"}
+            onChange={(v) => setViewingCompare(v === "compare")}
+          />
         </div>
-        {compare && (
-          <div className="flex items-center gap-1 rounded-lg border border-border bg-panel p-1 w-fit">
-            <button
-              type="button"
-              onClick={() => setViewingCompare(false)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                !showCompare ? "bg-accent text-white" : "text-dim hover:text-foreground"
-              }`}
-            >
-              {scenarioName}
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewingCompare(true)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                showCompare ? "bg-accent text-white" : "text-dim hover:text-foreground"
-              }`}
-            >
-              {compare.name}
-            </button>
-          </div>
-        )}
-      </div>
+      )}
       {active === "Accounts" && (
         <AccountsTable
           accounts={viewAccounts}

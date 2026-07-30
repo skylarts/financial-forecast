@@ -419,14 +419,14 @@ export function EventDrawer({
                 <button
                   type="button"
                   onClick={() => setValue("sellMode", "computed")}
-                  className={`flex-1 rounded px-3 py-1.5 font-medium ${sellMode === "computed" ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+                  className={`flex-1 rounded px-3 py-1.5 font-medium ${sellMode === "computed" ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
                 >
                   Estimate for me
                 </button>
                 <button
                   type="button"
                   onClick={() => setValue("sellMode", "fixed")}
-                  className={`flex-1 rounded px-3 py-1.5 font-medium ${sellMode === "fixed" ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+                  className={`flex-1 rounded px-3 py-1.5 font-medium ${sellMode === "fixed" ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
                 >
                   I know the net proceeds
                 </button>
@@ -527,7 +527,7 @@ export function EventDrawer({
               <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
                 Cancel
               </button>
-              <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white">
+              <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
                 {event ? "Save" : "Add Event"}
               </button>
             </div>

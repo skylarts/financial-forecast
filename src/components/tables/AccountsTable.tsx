@@ -296,7 +296,7 @@ export function AccountsTable({
             setDrawerAccount(undefined);
             setDrawerOpen(true);
           }}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white"
+          className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg"
         >
           + Add Account
         </button>

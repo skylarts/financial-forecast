@@ -148,14 +148,14 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 <button
                   type="button"
                   onClick={() => updateSplitStop(stop.id, { kind: "flat" })}
-                  className={`rounded px-2 py-0.5 ${stop.kind === "flat" ? "bg-accent text-white" : "text-dim"}`}
+                  className={`rounded px-2 py-0.5 ${stop.kind === "flat" ? "bg-pri text-pri-fg" : "text-dim"}`}
                 >
                   $
                 </button>
                 <button
                   type="button"
                   onClick={() => updateSplitStop(stop.id, { kind: "percent_of_remainder" })}
-                  className={`rounded px-2 py-0.5 ${stop.kind === "percent_of_remainder" ? "bg-accent text-white" : "text-dim"}`}
+                  className={`rounded px-2 py-0.5 ${stop.kind === "percent_of_remainder" ? "bg-pri text-pri-fg" : "text-dim"}`}
                 >
                   %
                 </button>

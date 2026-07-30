@@ -297,7 +297,7 @@ export function IncomeDrawer({
             <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
               Cancel
             </button>
-            <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white">
+            <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
               {income ? "Save" : "Add Income"}
             </button>
           </div>
