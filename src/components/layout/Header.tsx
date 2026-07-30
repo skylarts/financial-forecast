@@ -9,7 +9,7 @@ import { useAssumptionsStore } from "@/store/useAssumptionsStore";
 import { AssumptionsDrawer } from "@/components/assumptions/AssumptionsDrawer";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { BackupControls } from "@/components/layout/BackupControls";
-import { LoginButton } from "@/components/auth/LoginButton";
+import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
 
 function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean }) {
   const setActiveScenarioId = usePlanStore((s) => s.setActiveScenarioId);
@@ -281,18 +281,24 @@ function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-md border border-border bg-panel p-1 shadow-lg">
-          <button
-            type="button"
-            onClick={() => {
-              onOpenWizard();
-              setOpen(false);
-            }}
-            className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
-          >
-            🧭 Setup Guide
-          </button>
+          <AccountTopMenuItem onClose={() => setOpen(false)} />
+          <div className="border-t border-border pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                onOpenWizard();
+                setOpen(false);
+              }}
+              className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
+            >
+              🧭 Setup Guide
+            </button>
+          </div>
           <div className="border-t border-border px-1 pt-1">
             <BackupControls />
+          </div>
+          <div className="border-t border-border pt-1">
+            <SignOutMenuItem onClose={() => setOpen(false)} />
           </div>
         </div>
       )}
@@ -340,7 +346,6 @@ export function Header({ scenario }: { scenario: Scenario }) {
         >
           ⚙ Assumptions
         </button>
-        <LoginButton />
         <OverflowMenu onOpenWizard={openWizard} />
       </div>
       {/* key=scenario.id forces a full remount on scenario switch, so the

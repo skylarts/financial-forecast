@@ -116,13 +116,14 @@ export function BackupControls() {
   };
 
   return (
-    <div className="relative flex items-center gap-2" ref={menuRef}>
+    <div className="relative" ref={menuRef}>
       <button
         type="button"
         onClick={() => setMenuOpen((v) => !v)}
-        className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
+        className="flex w-full items-center justify-between rounded px-3 py-2 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
       >
-        Data ▾
+        Data
+        <span className="text-dim">▾</span>
       </button>
       {menuOpen && (
         <div className="absolute right-0 top-full z-10 mt-1 w-56 rounded-md border border-border bg-panel py-1 shadow-lg">
@@ -159,7 +160,7 @@ export function BackupControls() {
         </div>
       )}
       <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={handleImportFile} />
-      {message && <span className="text-xs text-dim">{message}</span>}
+      {message && <div className="px-3 pb-1 pt-1 text-xs text-dim">{message}</div>}
     </div>
   );
 }

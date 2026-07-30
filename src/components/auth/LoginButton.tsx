@@ -3,24 +3,20 @@
 import { useAuth } from "@/components/auth/AuthProvider";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 
-export function LoginButton() {
-  const { user, loading, signInWithGoogle, signOut } = useAuth();
+const menuItemClass =
+  "block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground";
+
+// Rendered at the top of the "..." menu: the signed-in email, or a "Sign in"
+// action when signed out. Pairs with SignOutMenuItem at the bottom.
+export function AccountTopMenuItem({ onClose }: { onClose: () => void }) {
+  const { user, loading, signInWithGoogle } = useAuth();
 
   if (!isSupabaseConfigured || loading) return null;
 
   if (user) {
     return (
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-dim" title={user.email ?? undefined}>
-          {user.email}
-        </span>
-        <button
-          type="button"
-          onClick={() => void signOut()}
-          className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
-        >
-          Sign out
-        </button>
+      <div className="px-3 py-2 text-sm text-dim" title={user.email ?? undefined}>
+        {user.email}
       </div>
     );
   }
@@ -28,11 +24,33 @@ export function LoginButton() {
   return (
     <button
       type="button"
-      onClick={() => void signInWithGoogle()}
+      onClick={() => {
+        void signInWithGoogle();
+        onClose();
+      }}
       title="Sign in to save your plan to the cloud and access it from other devices"
-      className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
+      className={menuItemClass}
     >
       Sign in with Google
+    </button>
+  );
+}
+
+export function SignOutMenuItem({ onClose }: { onClose: () => void }) {
+  const { user, loading, signOut } = useAuth();
+
+  if (!isSupabaseConfigured || loading || !user) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void signOut();
+        onClose();
+      }}
+      className={menuItemClass}
+    >
+      Sign out
     </button>
   );
 }
