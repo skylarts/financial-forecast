@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import type { Account, ProjectionResult, YearSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
-import { buildAccountColors, displayAccounts } from "@/lib/accountColors";
+import { ACCOUNT_CLASS_LABELS, buildAccountColors, displayAccounts, groupAccountsByClass } from "@/lib/accountColors";
 import { useUiStore } from "@/store/useUiStore";
 
 /**
@@ -136,9 +136,28 @@ export function OverviewBento({
         id: a.id,
         name: a.name,
         color: accountColors.get(a.id),
-        value: deflateBalance(snapshotYear.accountBalances[a.id] ?? 0, snapshotYear, dollarMode),
+        // Liability balances are stored as positive magnitudes -- flip the
+        // sign here so they read as negative (debt) in the account list.
+        value: deflateBalance(
+          (a.category === "liability" ? -1 : 1) * (snapshotYear.accountBalances[a.id] ?? 0),
+          snapshotYear,
+          dollarMode
+        ),
       }))
     : [];
+
+  const rowById = new Map(rows.map((r) => [r.id, r]));
+  const classSections = useMemo(
+    () =>
+      groupAccountsByClass(accounts)
+        .map((g) => ({
+          cls: g.cls,
+          label: ACCOUNT_CLASS_LABELS[g.cls],
+          accounts: g.accounts,
+        }))
+        .filter((g) => g.accounts.length > 0),
+    [accounts]
+  );
 
   // Grid areas live in globals.css (.bento) rather than as Tailwind arbitrary
   // values -- the underscore-escaped area syntax is unreadable and fails
@@ -244,22 +263,47 @@ export function OverviewBento({
           <Label>Accounts · {snapshotYear?.year ?? ""}</Label>
         </div>
         <ul className="min-h-0 flex-1 overflow-y-auto">
-          {rows.map((r) => (
-            <li
-              key={r.id}
-              className="flex items-center justify-between gap-3 border-b border-border-soft px-4 py-2 text-[12.5px] last:border-b-0"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <i
-                  aria-hidden
-                  className="block h-2 w-2 shrink-0 rounded-sm"
-                  style={{ background: r.color }}
-                />
-                <span className="truncate">{r.name}</span>
-              </span>
-              <span className="shrink-0 font-mono tabular-nums text-dim">{formatMoney(r.value)}</span>
-            </li>
-          ))}
+          {classSections.map((g) => {
+            const subtotal = g.accounts.reduce((s, a) => s + (rowById.get(a.id)?.value ?? 0), 0);
+            return (
+              <li key={g.cls} className="border-b border-border-soft last:border-b-0">
+                <div className="flex items-center justify-between gap-3 bg-panel-2/60 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-dim">
+                  <span>{g.label}</span>
+                  <span
+                    className={`font-mono tabular-nums ${subtotal < 0 ? "text-negative" : ""}`}
+                  >
+                    {formatMoney(subtotal)}
+                  </span>
+                </div>
+                <ul>
+                  {g.accounts.map((a) => {
+                    const r = rowById.get(a.id);
+                    if (!r) return null;
+                    return (
+                      <li
+                        key={r.id}
+                        className="flex items-center justify-between gap-3 px-4 py-2 text-[12.5px]"
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <i
+                            aria-hidden
+                            className="block h-2 w-2 shrink-0 rounded-sm"
+                            style={{ background: r.color }}
+                          />
+                          <span className="truncate">{r.name}</span>
+                        </span>
+                        <span
+                          className={`shrink-0 font-mono tabular-nums ${r.value < 0 ? "text-negative" : "text-dim"}`}
+                        >
+                          {formatMoney(r.value)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            );
+          })}
         </ul>
         <div className="mt-1 flex items-center justify-between border-t border-border bg-panel-2 px-4 py-2.5 text-[12.5px] font-bold">
           <span>Net worth</span>

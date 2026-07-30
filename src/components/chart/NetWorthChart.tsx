@@ -119,6 +119,7 @@ export function NetWorthChart({
   compareScenario: CompareScenarioData | null;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const theme = isJoy ? CHART_THEME.joy : CHART_THEME.dark;
@@ -468,7 +469,13 @@ export function NetWorthChart({
   };
 
   return (
-    <div className="joy-lift flex h-full flex-col rounded-xl border border-border bg-panel p-4">
+    <div
+      className={
+        isFullscreen
+          ? "joy-lift fixed inset-0 z-50 flex flex-col overflow-auto rounded-none border-0 bg-panel p-4"
+          : "joy-lift flex h-full flex-col rounded-xl border border-border bg-panel p-4"
+      }
+    >
       {/* Dollar mode and scenario comparison moved to the persistent ViewBar
           (they apply to the tables too, which are now separate views); what
           stays here is chart-only: the series mode and its legend. */}
@@ -491,11 +498,19 @@ export function NetWorthChart({
             value={viewMode}
             onChange={setViewMode}
           />
+          <button
+            type="button"
+            onClick={() => setIsFullscreen((v) => !v)}
+            title={isFullscreen ? "Minimize" : "Expand to full screen"}
+            className="rounded-md border border-border bg-panel-2 px-2 py-1 text-xs text-dim transition-colors hover:border-accent hover:text-foreground"
+          >
+            {isFullscreen ? "⤡ Minimize" : "⤢ Expand"}
+          </button>
         </div>
       </div>
 
-      <div ref={containerRef} className="relative">
-        <ResponsiveContainer width="100%" height={320}>
+      <div ref={containerRef} className="relative" style={isFullscreen ? { height: "calc(100vh - 160px)" } : undefined}>
+        <ResponsiveContainer width="100%" height={isFullscreen ? "100%" : 320}>
           <LineChart data={data} margin={{ top: chartTopMargin, right: isJoy ? 24 : 8, left: 8, bottom: 4 }}>
             <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
             <XAxis dataKey="year" stroke={theme.axis} tick={{ fontSize: 12 }} />
