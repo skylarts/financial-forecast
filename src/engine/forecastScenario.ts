@@ -193,6 +193,20 @@ function effectiveDrainFloor(stop: DrainStop, yearsSinceStart: number, inflation
  * (default) -- so a brokerage / traditional / Roth account is taxed correctly
  * even if the user never set the treatment field.
  */
+/**
+ * Whether the simulation has reached an account's creation month yet.
+ * `month` (the loop's cursor, from eachMonthStart) is always the 1st of a
+ * calendar month, but `effectiveStartDate` can land on any day -- comparing
+ * them as exact dates would treat the account as "not started" for its
+ * entire creation month whenever that date isn't the 1st (e.g. a plan start
+ * of "today" almost never is), silently dropping its starting balance.
+ * Compare by month instead, matching the month-level equality check
+ * (`isCreationMonth`) used right after this to actually seed the balance.
+ */
+function hasReachedStartMonth(month: ISODate, effectiveStartDate: ISODate): boolean {
+  return month.slice(0, 7) >= effectiveStartDate.slice(0, 7);
+}
+
 function effectiveTaxTreatment(account: EngineAccount): "taxable" | "tax_deferred" | "tax_free" | "n/a" {
   if (account.taxTreatment !== "n/a") return account.taxTreatment;
   switch (account.class) {
@@ -546,7 +560,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    entirely for excluded accounts, which stay frozen at their starting
     //    balance once set).
     for (const account of accounts) {
-      if (compareDates(month, account.effectiveStartDate) < 0) continue;
+      if (!hasReachedStartMonth(month, account.effectiveStartDate)) continue;
       const isCreationMonth = month.slice(0, 7) === account.effectiveStartDate.slice(0, 7);
       if (isCreationMonth) {
         // The opening balance is the account's starting balance for its first
@@ -573,7 +587,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     for (const posting of postingsByMonth.get(yearMonth) ?? []) {
       const targetAccount = accountById.get(posting.accountId);
       if (targetAccount?.isExcluded) continue;
-      if (compareDates(month, (targetAccount?.effectiveStartDate ?? month)) < 0) continue;
+      if (!hasReachedStartMonth(month, targetAccount?.effectiveStartDate ?? month)) continue;
       const bucket = acc.rollforward.get(posting.accountId);
       // Money sent TO a liability (a transfer aimed at a mortgage/loan, or
       // income directed at one) PAYS IT DOWN -- liability balances are
@@ -718,7 +732,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     for (const account of accounts) {
       if (account.isExcluded) continue;
       if (account.class !== "mortgage" && account.class !== "loan" && account.class !== "credit_card") continue;
-      if (compareDates(month, account.effectiveStartDate) < 0) continue;
+      if (!hasReachedStartMonth(month, account.effectiveStartDate)) continue;
       if (month.slice(0, 7) === account.effectiveStartDate.slice(0, 7)) continue; // originates this month, first payment next month
       const currentBalance = balances.get(account.id) ?? 0;
       if (currentBalance <= 0) continue; // already paid off -- no more payments due
@@ -787,7 +801,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // a Roth 401(k) is easy to mis-set as class="tax_deferred" (it's still
         // a "401k") while carrying taxTreatment="tax_free".
         if (effectiveTaxTreatment(account) === "tax_free") continue;
-        if (compareDates(month, account.effectiveStartDate) < 0) continue;
+        if (!hasReachedStartMonth(month, account.effectiveStartDate)) continue;
         const owner = scenario.household.people.find((p) => p.id === account.ownerId);
         if (!owner) continue;
         const age = ageOn(owner.birthDate, endOfYear(year));
