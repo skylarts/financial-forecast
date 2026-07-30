@@ -147,6 +147,10 @@ export function CashFlowTable({
     return unionItems(years.map((y) => y.cashFlow.contributionsByItem)).map((it) => ({ ...it, fromPaycheck: fromPay.get(it.id) ?? false }));
   }, [years]);
   const surplusItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.surplusByAccount)), [years]);
+  // Account ids that already have their own contribution row in "Saved to
+  // accounts" -- used below so an account that both sweeps surplus AND takes
+  // a scheduled contribution doesn't get the cross-reference net line twice.
+  const contribAccountIds = useMemo(() => new Set(contribItems.map((it) => it.id.replace(/:contribution$/, ""))), [contribItems]);
   const otherActivityMaps = useMemo(
     () => years.map((y) => new Map(y.cashFlow.otherActivityByItem.map((i) => [i.id, i.amount]))),
     [years]
@@ -234,6 +238,15 @@ export function CashFlowTable({
     return items.filter((it) => years.some((_y, yi) => (wdTaxMaps[yi].get(it.id) ?? 0) > 0.5));
   }, [withdrawalGroups, years, wdTaxMaps]);
 
+  // Cross-reference helpers so an account that both received savings AND had
+  // a withdrawal in the visible range can show a net line next to each gross
+  // figure, instead of the two only being findable in separate sections.
+  const savedOf = (accountId: string, yi: number) =>
+    (contribMaps[yi].get(`${accountId}:contribution`) ?? 0) + (surplusMaps[yi].get(accountId) ?? 0);
+  const withdrawnOf = (accountId: string, yi: number) => wdGrossMaps[yi].get(accountId) ?? 0;
+  const hasBothDirections = (accountId: string) =>
+    years.some((_y, yi) => withdrawnOf(accountId, yi) > 0.5) && years.some((_y, yi) => savedOf(accountId, yi) > 0.5);
+
   const hasWithdrawals = withdrawalGroups.length > 0;
   const hasSaved = years.some((y) => y.cashFlow.afterTaxContributionTotal + y.cashFlow.surplusRouted > 0.005);
   const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
@@ -292,6 +305,36 @@ export function CashFlowTable({
       })}
       {totalCell(totalOf(get))}
     </>
+  );
+
+  // Small signed figure for a cross-reference net line (see hasBothDirections
+  // above) -- same per-year + total columns as `cells`, but colored by sign
+  // and set smaller/italic since it's a footnote under the gross row, not a
+  // primary figure.
+  const netCells = (get: (yi: number) => number) => (
+    <>
+      {years.map((y, yi) => {
+        const v = d(get(yi), yi);
+        return (
+          <td key={y.year} className={`py-1.5 pr-3 text-right text-xs italic tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+            {Math.abs(v) < 0.5 ? <span className="text-dim">—</span> : <span className={v < 0 ? "text-negative" : "text-positive"}>{formatMoney(v)}</span>}
+          </td>
+        );
+      })}
+      <td className={`${totalCellClass} text-xs italic`}>
+        {(() => {
+          const t = totalOf(get);
+          return Math.abs(t) < 0.5 ? <span className="text-dim">—</span> : <span className={t < 0 ? "text-negative" : "text-positive"}>{formatMoney(t)}</span>;
+        })()}
+      </td>
+    </>
+  );
+
+  const netRow = (label: string, accountId: string, indent = "pl-12") => (
+    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+      <td className={`py-1.5 ${indent} text-xs italic`}>{label}</td>
+      {netCells((yi) => savedOf(accountId, yi) - withdrawnOf(accountId, yi))}
+    </tr>
   );
 
   const summaryRow = (
@@ -498,6 +541,7 @@ export function CashFlowTable({
                                   </tr>
                                 </>
                               )}
+                              {hasBothDirections(a.id) && netRow("Net for this account, incl. savings (below)", a.id)}
                             </Fragment>
                           );
                         })}
@@ -526,16 +570,33 @@ export function CashFlowTable({
                     {cells((yi) => years[yi].cashFlow.surplusRouted)}
                   </tr>
                 )}
-                {itemRows(surplusItems, surplusMaps, "pl-14")}
-                {contribItems.map((item) => (
-                  <tr key={item.id} className={`border-t border-border/40 hover:bg-accent/15 ${item.fromPaycheck ? "text-dim/60" : "text-dim"}`}>
-                    <td className="py-2 pl-10">
-                      {item.label}
-                      {item.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
-                    </td>
-                    {cells((yi) => contribMaps[yi].get(item.id) ?? 0)}
-                  </tr>
+                {surplusItems.map((item) => (
+                  <Fragment key={item.id}>
+                    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+                      <td className="py-2 pl-14">{item.label}</td>
+                      {cells((yi) => surplusMaps[yi].get(item.id) ?? 0)}
+                    </tr>
+                    {/* Skip the net line here if this account also has its own
+                        contribution row below -- that row shows it instead, so
+                        it isn't duplicated. */}
+                    {!contribAccountIds.has(item.id) && hasBothDirections(item.id) && netRow("Net for this account, incl. withdrawals (above)", item.id, "pl-14")}
+                  </Fragment>
                 ))}
+                {contribItems.map((item) => {
+                  const accountId = item.id.replace(/:contribution$/, "");
+                  return (
+                    <Fragment key={item.id}>
+                      <tr className={`border-t border-border/40 hover:bg-accent/15 ${item.fromPaycheck ? "text-dim/60" : "text-dim"}`}>
+                        <td className="py-2 pl-10">
+                          {item.label}
+                          {item.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
+                        </td>
+                        {cells((yi) => contribMaps[yi].get(item.id) ?? 0)}
+                      </tr>
+                      {hasBothDirections(accountId) && netRow("Net for this account, incl. withdrawals (above)", accountId, "pl-10")}
+                    </Fragment>
+                  );
+                })}
               </>
             )}
 

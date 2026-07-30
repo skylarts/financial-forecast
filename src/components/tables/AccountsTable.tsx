@@ -36,24 +36,37 @@ function colHoverProps(index: number, col: number | null, setCol: (c: number | n
 
 function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: YearSnapshot[]; mode: DollarMode }) {
   const { col, setCol } = useContext(ColHoverContext);
-  const fields: { label: string; get: (y: YearSnapshot) => number }[] = [
+  const fields: { label: string; get: (y: YearSnapshot) => number; strong?: boolean }[] = [
     { label: "Starting balance", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.startingBalance ?? 0 },
     { label: "Inflation adjustment", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.inflationAdjustment ?? 0 },
     { label: "Growth", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.growth ?? 0 },
     { label: "Deposits", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.deposits ?? 0 },
     { label: "Withdrawals", get: (y) => -(y.rollforwards.find((r) => r.accountId === accountId)?.withdrawals ?? 0) },
+    {
+      label: "Net deposits / withdrawals",
+      strong: true,
+      get: (y) => {
+        const r = y.rollforwards.find((r) => r.accountId === accountId);
+        return (r?.deposits ?? 0) - (r?.withdrawals ?? 0);
+      },
+    },
     { label: "Ending balance", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.endingBalance ?? 0 },
   ];
   return (
     <>
       {fields.map((f) => (
-        <tr key={f.label} className="border-t border-border/40 bg-background/30 text-xs text-dim hover:bg-accent/15">
+        <tr key={f.label} className={`border-t border-border/40 bg-background/30 text-xs hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
           <td className="py-1.5 pl-14">{f.label}</td>
           {years.map((y, i) => {
             const hover = colHoverProps(i, col, setCol);
+            const v = deflate(f.get(y), y, mode);
             return (
               <td key={y.year} className={`py-1.5 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
-                {formatMoney(deflate(f.get(y), y, mode))}
+                {f.strong ? (
+                  <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : ""}>{formatMoney(v)}</span>
+                ) : (
+                  formatMoney(v)
+                )}
               </td>
             );
           })}
