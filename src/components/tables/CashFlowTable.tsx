@@ -368,7 +368,7 @@ export function CashFlowTable({
     get: (yi: number) => number,
     opts?: { totalIsMeaningful?: boolean; strong?: boolean; hint?: string; balance?: boolean }
   ) => (
-    <tr className={`border-t border-border hover:bg-accent/15 ${opts?.strong ? "bg-background/40" : ""}`}>
+    <tr className={`border-t hover:bg-accent/15 ${opts?.strong ? "border-dim/25" : "border-border"}`}>
       <td className="py-2.5 pl-2 font-bold">
         <span className="inline-flex items-center gap-1">
           {label}
@@ -421,7 +421,7 @@ export function CashFlowTable({
   );
 
   const sectionHeader = (key: string, label: string, get: (yi: number) => number, hint?: string, opts?: { signed?: boolean }) => (
-    <tr className="cursor-pointer border-t border-border bg-background/40 hover:bg-accent/15" onClick={() => toggle(key)}>
+    <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={() => toggle(key)}>
       <td className="py-2.5 pl-2 font-semibold">
         <span className="inline-flex items-center gap-1">
           <ToggleLabel label={label} expanded={isOpen(key)} onToggle={() => toggle(key)} />
@@ -439,6 +439,16 @@ export function CashFlowTable({
         {cells((yi) => maps[yi].get(item.id) ?? 0)}
       </tr>
     ));
+
+  // Blank row dropped between major sections so they read as visually
+  // separated groups. Filled with the page background (not the table's own
+  // panel color) so the gap actually reads as a gap, and its top edge
+  // doubles as the lighter border that caps off the section above.
+  const spacerRow = (key: string) => (
+    <tr key={key} aria-hidden="true">
+      <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={col} />
+    </tr>
+  );
 
   const emptyRow = (text: string) => (
     <tr className="text-xs text-dim">
@@ -476,6 +486,7 @@ export function CashFlowTable({
 
             {/* Expenses -- grouped by life event / home, expandable to the
                 underlying one-time + recurring pieces. */}
+            {spacerRow("spacer:expenses")}
             {sectionHeader("expenses", "Expenses", (yi) => years[yi].cashFlow.totalExpenses)}
             {isOpen("expenses") &&
               (expenseGroups.length
@@ -504,6 +515,7 @@ export function CashFlowTable({
                 : emptyRow("No expenses in this range."))}
 
             {/* Operating surplus / (shortfall) */}
+            {spacerRow("spacer:operatingSurplus")}
             {summaryRow("Operating surplus / (shortfall)", (yi) => years[yi].cashFlow.operatingCashFlow, {
               strong: true,
               hint: "Income minus expenses. When it goes negative (typically once income drops in retirement), Withdrawals below pull from your accounts to cover it.",
@@ -518,6 +530,7 @@ export function CashFlowTable({
                 cash). Withdrawals are shown GROSS (including tax withheld at
                 the source); expand one to split it into estimated
                 withholding and the net amount that actually reached cash. */}
+            {spacerRow("spacer:accountActivity")}
             {sectionHeader(
               "accountActivity",
               "Account Activity",
@@ -614,6 +627,7 @@ export function CashFlowTable({
                 Activity's net is deposits minus GROSS withdrawals (including
                 withholding), so to tie out by hand subtract the estimated
                 withholdings shown in the Taxes section. */}
+            {spacerRow("spacer:netChangeInCash")}
             {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, {
               strong: true,
               hint: "The measured change in Extra Savings' balance this year. To tie out by hand: operating result - Account Activity (net) - estimated withholdings + true-up + interest + other activity. Lands near $0 in a year where you draw just what you need.",
@@ -633,14 +647,15 @@ export function CashFlowTable({
                 was withheld at the source accounts, not from cash. */}
             {(hasFederalTax || hasBenefitWithholding || hasWithdrawalWithholding || hasSettlement) && (
               <>
-                <tr className="cursor-pointer border-t-2 border-border bg-background/40 hover:bg-accent/15" onClick={() => toggle("taxes")}>
-                  <td className="!bg-background/40 py-2.5 pl-2 font-bold">
+                {spacerRow("spacer:taxes")}
+                <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={() => toggle("taxes")}>
+                  <td className="py-2.5 pl-2 font-bold">
                     <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
                       <ToggleLabel label="Taxes (informational)" expanded={isOpen("taxes")} onToggle={() => toggle("taxes")} />
                       <InfoTooltip text="Not part of the cash reconciliation above -- most tax is withheld inside the source accounts (it shows up in each account's gross withdrawal), with the year-end true-up settling the difference into cash." />
                     </span>
                   </td>
-                  {col > 1 && <td className="bg-background/40" colSpan={col - 1} />}
+                  {col > 1 && <td colSpan={col - 1} />}
                 </tr>
                 {isOpen("taxes") && (
                   <>

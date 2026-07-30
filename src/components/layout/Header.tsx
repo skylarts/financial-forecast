@@ -284,8 +284,7 @@ function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-md border border-border bg-panel p-1 shadow-lg">
           <AccountTopMenuItem onClose={() => setOpen(false)} />
-          <div className="flex items-center justify-between border-t border-border px-3 py-2">
-            <span className="text-sm text-dim">Theme</span>
+          <div className="border-t border-border pt-1">
             <ThemeToggle />
           </div>
           <div className="border-t border-border pt-1">
@@ -297,7 +296,7 @@ function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
               }}
               className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
             >
-              🧭 Setup Guide
+              Setup Guide
             </button>
           </div>
           <div className="border-t border-border px-1 pt-1">

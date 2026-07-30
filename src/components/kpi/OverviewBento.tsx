@@ -153,10 +153,13 @@ export function OverviewBento({
         .map((g) => ({
           cls: g.cls,
           label: ACCOUNT_CLASS_LABELS[g.cls],
-          accounts: g.accounts,
+          // Zero-balance accounts (e.g. not yet opened, or paid off) are
+          // hidden from this snapshot -- they're still in the totals above,
+          // just not worth a row here.
+          accounts: g.accounts.filter((a) => (rowById.get(a.id)?.value ?? 0) !== 0),
         }))
         .filter((g) => g.accounts.length > 0),
-    [accounts]
+    [accounts, rowById]
   );
 
   // Grid areas live in globals.css (.bento) rather than as Tailwind arbitrary

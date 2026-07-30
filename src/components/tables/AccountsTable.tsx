@@ -55,7 +55,7 @@ function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: Yea
   return (
     <>
       {fields.map((f) => (
-        <tr key={f.label} className={`border-t border-border/40 bg-background/30 text-xs hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
+        <tr key={f.label} className={`border-t border-border/40 text-xs hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
           <td className="py-1.5 pl-14">{f.label}</td>
           {years.map((y, i) => {
             const hover = colHoverProps(i, col, setCol);
@@ -164,7 +164,7 @@ function Section({
   onEdit: (account: Account) => void;
   mode: DollarMode;
 }) {
-  const [sectionOpen, setSectionOpen] = useState(true);
+  const [sectionOpen, setSectionOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const toggleGroup = (label: string) =>
     setOpenGroups((prev) => {
@@ -197,7 +197,7 @@ function Section({
 
   return (
     <>
-      <tr className="cursor-pointer border-t border-border hover:bg-accent/15" onClick={() => setSectionOpen((v) => !v)}>
+      <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={() => setSectionOpen((v) => !v)}>
         <td className="py-2.5 pl-2 font-semibold">
           <ToggleLabel label={title} expanded={sectionOpen} onToggle={() => setSectionOpen((v) => !v)} />
         </td>
@@ -334,7 +334,7 @@ export function AccountsTable({
             </tr>
           </thead>
           <tbody>
-            <tr className="border-b border-border">
+            <tr className="border-b border-dim/25">
               <td className="py-2.5 pl-2 font-bold">Net Worth</td>
               {years.map((y, i) => (
                 <td
@@ -346,6 +346,13 @@ export function AccountsTable({
                   {formatMoney(netWorthOf(y))}
                 </td>
               ))}
+            </tr>
+            {/* Blank row so Assets/Liabilities read as visually separated
+                groups. Filled with the page background (not the table's own
+                panel color) so the gap actually reads as a gap, and its top
+                edge doubles as the lighter border capping the section above. */}
+            <tr aria-hidden="true">
+              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={years.length + 1} />
             </tr>
             <Section
               title="Assets"
@@ -360,6 +367,9 @@ export function AccountsTable({
               }}
               mode={dollarMode}
             />
+            <tr aria-hidden="true">
+              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={years.length + 1} />
+            </tr>
             <Section
               title="Liabilities"
               accounts={accounts.filter((a) => a.category === "liability")}
