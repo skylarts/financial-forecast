@@ -6,7 +6,7 @@ import { forecastSettingsSchema, personSchema } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { Field, ErrorBanner, PercentInput, MoneyInput, inputClass } from "@/components/ui/formFields";
 import { percentStrToFraction } from "@/lib/inputFormat";
-import { addMonths } from "@/engine/dateMath";
+import { addMonths, todayISO } from "@/engine/dateMath";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
 import { addExistingHome, EXISTING_HOME_DEFAULTS } from "@/lib/addExistingHome";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
@@ -47,10 +47,6 @@ const optionButtonClass =
 const primaryButtonClass =
   "rounded-md bg-pri px-4 py-2 text-sm font-semibold text-pri-fg disabled:opacity-50";
 const secondaryButtonClass = "rounded-md border border-border px-4 py-2 text-sm text-dim hover:text-foreground";
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function defaultBirthDate(): string {
   return `${new Date().getFullYear() - 35}-01-01`;
@@ -233,7 +229,7 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
       // principal inputs here) -- those can be added via the Accounts tab's
       // "Add a Home You Already Own" any time after setup.
       { ...EXISTING_HOME_DEFAULTS, homeValue, homeGrowthRatePct, hasMortgage, mortgageBalance, mortgageRate, mortgageYearsLeft },
-      scenario.settings.startDate
+      scenario.settings.startDate ?? todayISO()
     );
     if (!result.ok) {
       setError(result.error);

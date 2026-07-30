@@ -11,7 +11,7 @@ import type {
   SplitStop,
   DrainStop,
 } from "@/domain";
-import { ageOn, compareDates, eachMonthStart, elapsedYears, endOfYear, yearOf } from "./dateMath";
+import { ageOn, compareDates, eachMonthStart, elapsedYears, endOfYear, todayISO, yearOf } from "./dateMath";
 import { monthlyRateFromAnnual } from "./growth";
 import { rmdDivisor, rmdStartAgeForBirthYear } from "./rmd";
 import { computeMonthlyPayment, amortizeMonth } from "./amortization";
@@ -218,7 +218,10 @@ function effectiveTaxTreatment(account: EngineAccount): "taxable" | "tax_deferre
  * converge the estimates onto the real numbers before returning.
  */
 export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<number, YearTaxRates>): ProjectionResult {
-  const { settings } = scenario;
+  // A null startDate means "today, live" (see forecastSettingsSchema) --
+  // resolved once here so every other read of settings.startDate below can
+  // keep treating it as a plain, always-present date.
+  const settings = { ...scenario.settings, startDate: scenario.settings.startDate ?? todayISO() };
   const moneyFlow = settings.moneyFlow;
   const ratesForYear = (year: number): YearTaxRates => ratesByYearOverride?.get(year) ?? ZERO_TAX_RATES;
   const resolved = resolveEvents(scenario);
@@ -1342,7 +1345,10 @@ const RATE_CONVERGENCE_TOLERANCE = 0.001;
  * bracket-computed `federalTaxTotal` per year -- is returned as-is.
  */
 export function projectScenario(scenario: Scenario): ProjectionResult {
-  const { settings } = scenario;
+  // Same null-means-today resolution as forecastScenario -- needed here too
+  // since startYear/endYear (for the tax-rate map below) are computed
+  // before forecastScenario ever runs.
+  const settings = { ...scenario.settings, startDate: scenario.settings.startDate ?? todayISO() };
   const startYear = yearOf(settings.startDate);
   const endYear = yearOf(settings.horizonEndDate);
 

@@ -9,6 +9,7 @@ import type {
   TemporaryAdjustment,
 } from "@/domain";
 import { projectScenario } from "@/engine/forecastScenario";
+import { todayISO } from "@/engine/dateMath";
 import { formatMoney } from "@/lib/format";
 
 const PREAMBLE = `This is a Markdown export of one scenario from a personal retirement/financial forecasting app, for discussion with an AI assistant. It is not financial advice, and no assumptions here are guaranteed to be accurate.
@@ -116,7 +117,9 @@ export function buildLlmExport(scenario: Scenario): string {
 
   lines.push(section("Settings"));
   const s = scenario.settings;
-  lines.push(`- Plan start date: ${s.startDate}`);
+  lines.push(
+    `- Plan start date: ${s.startDate ?? `${todayISO()} (auto: today's date, since no override is set)`}`
+  );
   lines.push(`- Plan horizon end date: ${s.horizonEndDate}`);
   lines.push(`- Inflation rate (annual): ${fmtPct(s.inflationRatePct)}`);
   lines.push(`- Filing status: ${s.filingStatus}`);

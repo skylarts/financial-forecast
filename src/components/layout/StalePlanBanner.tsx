@@ -25,6 +25,10 @@ export function StalePlanBanner({ scenario }: { scenario: Scenario }) {
   const [now] = useState(() => Date.now());
   const openAssumptions = useAssumptionsStore((s) => s.openAssumptions);
 
+  // A null start date always resolves to "today" live (see
+  // forecastSettingsSchema.startDate), so it can never go stale -- only an
+  // explicit, pinned date can drift behind the calendar.
+  if (!scenario.settings.startDate) return null;
   const daysStale = Math.floor((now - new Date(scenario.settings.startDate).getTime()) / MS_PER_DAY);
   if (daysStale < STALE_THRESHOLD_DAYS || dismissed) return null;
 

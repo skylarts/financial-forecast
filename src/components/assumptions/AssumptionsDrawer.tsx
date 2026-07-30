@@ -169,14 +169,20 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
           <label className="flex flex-col gap-1 text-xs text-dim">
             <span className="inline-flex items-center gap-1">
               Start date
-              <InfoTooltip text="Every account's balance is treated as being as of this date, and growth/contributions compound forward from here (accounts created by an event, like a home purchase, use that event's date instead). Moving this date without also updating each account's Starting Balance will make the projection skip or double-count time." />
+              <InfoTooltip text="Every account's balance is treated as being as of this date, and growth/contributions compound forward from here (accounts created by an event, like a home purchase, use that event's date instead). Leave this blank to always use today's date -- the plan then recalculates from 'now' every time you open it, so starting balances stay current without you needing to update this field. Set an explicit date only to override that (e.g. to backdate the plan, or model starting on a future date); if you do, remember that moving it without also updating each account's Starting Balance will make the projection skip or double-count time." />
             </span>
             <input
               className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground"
               type="date"
-              value={settingsDraft.startDate}
-              onChange={(e) => saveSettings({ ...settingsDraft, startDate: e.target.value })}
+              placeholder="Today"
+              value={settingsDraft.startDate ?? ""}
+              onChange={(e) => saveSettings({ ...settingsDraft, startDate: e.target.value || null })}
             />
+            <span className="text-[11px] text-dim-2">
+              {settingsDraft.startDate
+                ? "Pinned to this date."
+                : "Blank = today's date, updated automatically each time you open the plan."}
+            </span>
           </label>
           <label className="flex flex-col gap-1 text-xs text-dim">
             <span className="inline-flex items-center gap-1">

@@ -10,6 +10,7 @@ import { usePlanStore } from "@/store/usePlanStore";
 import { addExistingHome, updateExistingHome, removeExistingHome, EXISTING_HOME_DEFAULTS } from "@/lib/addExistingHome";
 import { buyNewHome, updateBoughtHome, removeBoughtHome, BUY_HOME_DEFAULTS } from "@/lib/buyHome";
 import { computeMonthlyPayment } from "@/engine/amortization";
+import { todayISO } from "@/engine/dateMath";
 
 type Mode = "existing" | "buy";
 
@@ -142,6 +143,10 @@ export function HomeDrawer({
   initialMode?: Mode;
 }) {
   const settings = usePlanStore((s) => s.activeScenario().settings);
+  // A null plan start date means "today, live" -- resolve it here so every
+  // engine helper this drawer calls (which all expect a concrete date) sees
+  // the same effective date the projection itself uses.
+  const effectiveStartDate = settings.startDate ?? todayISO();
   const scenarioAccounts = usePlanStore((s) => s.activeScenario().accounts);
   const [error, setError] = useState<string | null>(null);
 
@@ -201,8 +206,8 @@ export function HomeDrawer({
         mortgageExtraPrincipal: v.mortgageExtraPrincipal,
       };
       result = account
-        ? updateExistingHome(account.id, input, settings.startDate)
-        : addExistingHome(input, settings.startDate);
+        ? updateExistingHome(account.id, input, effectiveStartDate)
+        : addExistingHome(input, effectiveStartDate);
     } else {
       const input = {
         name: v.name,
@@ -221,8 +226,8 @@ export function HomeDrawer({
         replaceHousingExpenses: v.replaceHousingExpenses,
       };
       result = event
-        ? updateBoughtHome(event.id, input, settings)
-        : buyNewHome(input, settings);
+        ? updateBoughtHome(event.id, input, { ...settings, startDate: effectiveStartDate })
+        : buyNewHome(input, { ...settings, startDate: effectiveStartDate });
     }
     if (!result.ok) {
       setError(result.error);
