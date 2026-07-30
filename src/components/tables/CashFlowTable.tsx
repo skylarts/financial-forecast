@@ -634,12 +634,13 @@ export function CashFlowTable({
             {(hasFederalTax || hasBenefitWithholding || hasWithdrawalWithholding || hasSettlement) && (
               <>
                 <tr className="cursor-pointer border-t-2 border-border bg-background/40 hover:bg-accent/15" onClick={() => toggle("taxes")}>
-                  <td className="sticky left-0 z-10 bg-background/40 py-2.5 pl-2 font-bold" colSpan={col}>
+                  <td className="!bg-background/40 py-2.5 pl-2 font-bold">
                     <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
                       <ToggleLabel label="Taxes (informational)" expanded={isOpen("taxes")} onToggle={() => toggle("taxes")} />
                       <InfoTooltip text="Not part of the cash reconciliation above -- most tax is withheld inside the source accounts (it shows up in each account's gross withdrawal), with the year-end true-up settling the difference into cash." />
                     </span>
                   </td>
+                  {col > 1 && <td className="bg-background/40" colSpan={col - 1} />}
                 </tr>
                 {isOpen("taxes") && (
                   <>
