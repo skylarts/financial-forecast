@@ -501,6 +501,11 @@ export function NetWorthChart({
             <XAxis dataKey="year" stroke={theme.axis} tick={{ fontSize: 12 }} />
             <YAxis stroke={theme.axis} tick={{ fontSize: 12 }} tickFormatter={(v) => formatMoney(v)} width={80} />
             <Tooltip
+              // Recharts renders the Legend after the Tooltip in the DOM, so
+              // without an explicit z-index the "By Account" legend (which
+              // wraps onto several lines of account names) paints on top of
+              // the tooltip instead of behind it.
+              wrapperStyle={{ zIndex: 40 }}
               contentStyle={{ background: theme.tooltipBg, border: `1px solid ${theme.tooltipBorder}`, borderRadius: 8 }}
               labelStyle={{ color: theme.label }}
               formatter={(value, name) => {
