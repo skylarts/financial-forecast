@@ -48,7 +48,6 @@ describe("Extra Savings split: flow-based, not stock-based", () => {
         { id: "s1", accountId: checkingId, kind: "flat", amount: 3_000, pct: null, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
       drainOrder: [],
-      drainSplitMode: "priority_fill",
     }));
     const result = projectScenario(scenario);
     const y2026 = result.years.find((y) => y.year === 2026)!;
@@ -68,7 +67,6 @@ describe("Extra Savings split: flow-based, not stock-based", () => {
         { id: "s1", accountId: checkingId, kind: "flat", amount: 3_000, pct: null, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
       drainOrder: [],
-      drainSplitMode: "priority_fill",
     }));
     const result = projectScenario(scenario);
     const y2026 = result.years.find((y) => y.year === 2026)!.accountBalances[extraSavings.id];
@@ -92,7 +90,6 @@ describe("Extra Savings split: cascading percentages", () => {
         { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 0.5, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
       drainOrder: [],
-      drainSplitMode: "priority_fill",
     }));
     const result = projectScenario(scenario);
     const routedToChecking = result.ledger.filter((e) => e.kind === "surplus_route" && e.toAccountId === checking.id && e.date === "2026-02-01");
@@ -111,7 +108,6 @@ describe("Extra Savings split: balance caps still apply", () => {
           { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
         ],
         drainOrder: [],
-        drainSplitMode: "priority_fill",
       }),
       { incomeAmount: 30_000, expenseAmount: 20_000 }
     );
@@ -172,8 +168,7 @@ describe("Extra Savings deficit cascade", () => {
     const { scenario, extraSavings } = buildScenario(
       (extraSavingsId, checkingId, brokerageId) => ({
         splitOrder: [],
-        drainOrder: [{ id: "d1", accountId: brokerageId, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null }],
-        drainSplitMode: "priority_fill",
+        drainOrder: [{ id: "d1", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, startDate: null, endDate: null, minBalance: null, minBalanceGrowthRatePct: null }],
       }),
       { incomeAmount: 5_000, expenseAmount: 20_000 } // $15k/mo shortfall
     );
@@ -190,8 +185,7 @@ describe("Extra Savings deficit cascade", () => {
       (extraSavingsId) => ({
         splitOrder: [],
         // The only drain stop IS Extra Savings itself -- drawFromSource no-ops on self.
-        drainOrder: [{ id: "d1", accountId: extraSavingsId, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null }],
-        drainSplitMode: "priority_fill",
+        drainOrder: [{ id: "d1", accountId: extraSavingsId, kind: "percent_of_remainder", amount: null, pct: 1, startDate: null, endDate: null, minBalance: null, minBalanceGrowthRatePct: null }],
       }),
       { incomeAmount: 5_000, expenseAmount: 20_000 }
     );
@@ -206,7 +200,7 @@ describe("Extra Savings deficit cascade", () => {
   });
 
   it("traceYear renders the year (smoke)", () => {
-    const { scenario } = buildScenario(() => ({ splitOrder: [], drainOrder: [], drainSplitMode: "priority_fill" }));
+    const { scenario } = buildScenario(() => ({ splitOrder: [], drainOrder: [] }));
     const result = projectScenario(scenario);
     const trace = traceYear(result, 2026);
     expect(trace).toContain("money-flow trace");

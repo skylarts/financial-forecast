@@ -76,8 +76,8 @@ describe("buildLlmExport", () => {
       }
     });
 
-    it("reports the drain split mode, which changes how stops are drained", () => {
-      expect(output).toContain(mockScenario.settings.moneyFlow.drainSplitMode);
+    it("reports each drain stop's flat-or-percent kind, mirroring the split order", () => {
+      expect(output).toContain("of what's left after the stops above it");
     });
   });
 

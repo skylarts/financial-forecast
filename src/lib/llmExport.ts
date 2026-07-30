@@ -42,7 +42,7 @@ Each month, in this exact order:
 4. **RMDs.** Every January (when RMDs are enabled in settings), for accounts flagged \`subjectToRMD\`, the prior Dec-31 balance divided by the IRS life-expectancy divisor for the owner's age is forced out, taxed, and deposited to Extra Savings. Per SECURE 2.0, RMDs start at age 73 for owners born 1951-1959 and at 75 for anyone born 1960 or later. Roth accounts are never subject to RMDs.
 5. **Surplus split (Extra Savings).** Extra Savings' "fresh surplus" for the month is exactly what steps 1–4 added to its balance THIS month — not its whole running balance, so money left unclaimed in a prior month (a deliberate reserve) is never re-offered to the split. Each split-order stop, in list order, is offered either a flat dollar amount or a percentage of what's left after the stops above it (cascading — not a share of the original total), clamped by its own optional balance cap; whatever the whole list doesn't claim stays in Extra Savings.
 6. **Cap overflow rebalance.** Any split stop sitting above its cap (from growth, or money that landed in it directly) pushes the excess down to later stops with room. This is a transfer between the user's own accounts, so it doesn't count as routed surplus, but selling out of a taxable account still realizes tax.
-7. **Deficit cascade (the drain order).** If Extra Savings' balance would drop below $0, the shortfall is pulled from the drain order — in list order for \`priority_fill\`, or by configured share for \`fixed_split\`. Only stops whose date window covers the month participate, and no stop is drawn below its minimum-balance floor. Each draw is sized so the withdrawal *plus its own tax* fits in what's available.
+7. **Deficit cascade (the drain order).** If Extra Savings' balance would drop below $0, the shortfall is pulled from the drain order, mirroring the surplus split's cascading model: each stop, in list order, is offered either a flat dollar amount or a percentage of what's left after the stops above it, clamped by its own optional floor — whatever it can't cover spills to the next stop. Only stops whose date window covers the month participate. Each draw is sized so the withdrawal *plus its own tax* fits in what's available.
 
 **Taxes.** Any dollar leaving a \`tax_deferred\` account is taxed as ordinary income in full, plus a 10% early-withdrawal penalty if the owner is under 59½ (unless the account is flagged exempt via 72(t)/rule of 55). Any dollar leaving a \`taxable\` account is taxed only on its realized-gain portion, using **average-cost basis**: basis is the account's \`startingCostBasis\` (or the whole starting balance when unset) plus every dollar of new money added since (contributions, routed surplus, transfers); growth never adds basis. \`tax_free\` (Roth) and cash withdrawals realize no tax. The estimated tax withheld on a withdrawal is deducted from the same account it came out of.
 
@@ -179,11 +179,9 @@ export function buildLlmExport(scenario: Scenario): string {
   }
 
   lines.push("");
-  lines.push(`### Drain order (what's sold to cover a shortfall), mode: \`${mf.drainSplitMode}\``);
+  lines.push(`### Drain order (what's sold to cover a shortfall)`);
   lines.push(
-    mf.drainSplitMode === "fixed_split"
-      ? "Each active stop covers its configured share of the shortfall; any remainder is topped up from the active stops in list order."
-      : "Each active stop is drained fully (down to its floor) before the next one is touched."
+    "Each stop, in list order, is offered either a flat dollar amount or a percentage of what's left after the stops above it (cascading — not a share of the original shortfall), then clamped by its own optional floor; whatever it can't cover spills to the next stop."
   );
   lines.push(
     "This order determines which accounts' gains and ordinary income are realized in which years, so it is the primary lever on the lifetime tax bill."
@@ -195,20 +193,24 @@ export function buildLlmExport(scenario: Scenario): string {
       const parts: string[] = [];
       const account = scenario.accounts.find((a) => a.id === stop.accountId);
       if (account) parts.push(`${account.class} / ${account.taxTreatment}`);
-      if (stop.startDate || stop.endDate) {
-        parts.push(`active ${stop.startDate ?? "plan start"} → ${stop.endDate ?? "plan end"}`);
-      } else {
-        parts.push("active for the whole plan");
-      }
+      parts.push(
+        stop.kind === "flat"
+          ? `flat ${stop.amount == null ? "unset (covers nothing)" : formatMoney(stop.amount)} (today's dollars, grown by inflation)`
+          : `${stop.pct == null ? "unset (covers nothing)" : fmtPct(stop.pct)} of what's left after the stops above it`
+      );
       if (stop.minBalance != null) {
         const floorGrowth =
           stop.minBalanceGrowthRatePct == null
             ? `inflation (${fmtPct(s.inflationRatePct)}/yr)`
             : `${fmtPct(stop.minBalanceGrowthRatePct)}/yr`;
         parts.push(`never drained below ${formatMoney(stop.minBalance)} (today's dollars, grown by ${floorGrowth})`);
+      } else {
+        parts.push("no floor");
       }
-      if (mf.drainSplitMode === "fixed_split") {
-        parts.push(`share of shortfall: ${stop.splitPct == null ? "unset" : fmtPct(stop.splitPct)}`);
+      if (stop.startDate || stop.endDate) {
+        parts.push(`active ${stop.startDate ?? "plan start"} → ${stop.endDate ?? "plan end"}`);
+      } else {
+        parts.push("active for the whole plan");
       }
       lines.push(`${i + 1}. **${accountName(stop.accountId)}** — ${parts.join("; ")}.`);
     });
@@ -418,7 +420,7 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push("");
   lines.push("- **Household** — each person's birth date, retirement age, and planning end age (which sets the plan horizon).");
   lines.push("- **Settings** — plan start/end dates, inflation rate, filing status, whether RMDs are modeled, and the flat state/local tax add-on.");
-  lines.push("- **Routing tab** — which accounts are spending hubs and their buffer amounts; the fill order, each stop's cap and cap growth rate, and the fill split mode; the drain order, each stop's date window, minimum-balance floor, and the drain split mode. Reordering the drain order is the highest-leverage tax change available.");
+  lines.push("- **Routing tab** — which accounts are spending hubs and their buffer amounts; the split order, each stop's flat-amount-or-percentage kind, cap, and cap growth rate; the drain order, each stop's flat-amount-or-percentage kind, floor, floor growth rate, and date window. Reordering the drain order is the highest-leverage tax change available.");
   lines.push("- **Accounts** — name, class, tax treatment, owner, starting balance, starting cost basis, growth rate (or a dated growth-rate schedule), RMD flag, early-withdrawal-penalty exemption, an account start date (for a not-yet-existing account), loan terms, and the contribution (amount, frequency, growth, payroll-deducted flag, end date) or a multi-segment contribution schedule.");
   lines.push("- **Income sources** — amount, an optional gross (Box-1-style) amount for bracket placement while working, frequency (or an every-N-years interval), nominal growth rate, owner, deposit account, start/end dates, category, and temporary adjustment windows.");
   lines.push("- **Expenses** — amount, frequency (or an every-N-years interval), nominal growth rate, payment account, start/end dates, category, and temporary adjustment windows.");

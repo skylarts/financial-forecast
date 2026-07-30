@@ -106,6 +106,10 @@ export function makeExpense(overrides: Partial<ExpenseBaseline>): ExpenseBaselin
  * over directly as `pct`, which is now a share of the CASCADING remainder
  * rather than the original total -- the closest sensible translation, not a
  * precise behavioral match (see the same tradeoff in migrateV2Plan.ts).
+ * `withdrawalPriority` maps onto the new cascading drainOrder the same way:
+ * kind = "percent_of_remainder", pct = 1 (drain this stop fully before
+ * moving to the next) -- there's no legacy fixed-split hint for the drain
+ * side, so every migrated drain stop gets this exact mapping.
  */
 function deriveMoneyFlow(
   accounts: TestAccount[],
@@ -134,16 +138,17 @@ function deriveMoneyFlow(
     .map((a) => ({
       id: nanoid(),
       accountId: a.id,
+      kind: "percent_of_remainder" as const,
+      amount: null,
+      pct: 1,
       startDate: null,
       endDate: null,
-      splitPct: null,
       minBalance: null,
       minBalanceGrowthRatePct: null,
     }));
   return {
     splitOrder,
     drainOrder,
-    drainSplitMode: "priority_fill",
   };
 }
 

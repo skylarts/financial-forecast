@@ -15,9 +15,9 @@ import { usePlanStore } from "@/store/usePlanStore";
  * mandatory hub: income deposits there, expenses pay from there, it captures
  * 100% of net income-minus-expenses every month with a floor hardcoded at
  * $0. The two lists below decide what happens with that money: `splitOrder`
- * is where surplus goes (each stop a flat $ amount or a cascading % of
- * what's left after the stops above it), `drainOrder` is what covers a
- * shortfall, unchanged from before.
+ * is where surplus goes and `drainOrder` is what covers a shortfall --
+ * both use the same cascading model (each stop a flat $ amount or a % of
+ * what's left after the stops above it).
  */
 export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; settings: ForecastSettings }) {
   const updateSettings = usePlanStore((s) => s.updateSettings);
@@ -93,7 +93,17 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       ...moneyFlow,
       drainOrder: [
         ...moneyFlow.drainOrder,
-        { id: nanoid(), accountId, startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
+        {
+          id: nanoid(),
+          accountId,
+          kind: "percent_of_remainder",
+          amount: null,
+          pct: 1,
+          minBalance: null,
+          minBalanceGrowthRatePct: null,
+          startDate: null,
+          endDate: null,
+        },
       ],
     });
   };
@@ -111,14 +121,6 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
     [next[index], next[target]] = [next[target], next[index]];
     save({ ...moneyFlow, drainOrder: next });
   };
-  const setDrainSplitMode = (drainSplitMode: MoneyFlow["drainSplitMode"]) => {
-    const drainOrder =
-      drainSplitMode === "fixed_split"
-        ? moneyFlow.drainOrder.map((d) => ({ ...d, splitPct: d.splitPct ?? 1 / Math.max(1, moneyFlow.drainOrder.length) }))
-        : moneyFlow.drainOrder;
-    save({ ...moneyFlow, drainSplitMode, drainOrder });
-  };
-  const drainSplitTotal = moneyFlow.drainOrder.reduce((s, d) => s + (d.splitPct ?? 0), 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -242,17 +244,8 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       <section className="flex flex-col gap-2">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
           When I&rsquo;m short, drain in this order
-          <InfoTooltip text="Each source can have a Start/End date -- leave either blank for 'always'. The same account can be added more than once with different windows for a phased drawdown." />
+          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total shortfall). A stop's floor stops it from being drained below that amount, so whatever it can't cover spills to the next stop. Each stop can also have a Start/End date -- leave either blank for 'always'. The same account can be added more than once with different windows for a phased drawdown." />
         </h3>
-        <label className="flex items-center gap-2 text-xs text-dim">
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            checked={moneyFlow.drainSplitMode === "fixed_split"}
-            onChange={(e) => setDrainSplitMode(e.target.checked ? "fixed_split" : "priority_fill")}
-          />
-          Split by fixed percentages instead of draining one at a time
-        </label>
         {moneyFlow.drainOrder.length === 0 && <p className="text-xs text-dim">No drain sources configured yet.</p>}
         {moneyFlow.drainOrder.map((stop, i) => (
           <div key={stop.id} className="flex flex-col gap-2 rounded-md border border-border p-2">
@@ -267,27 +260,53 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
               </button>
             </div>
             <div className="ml-6 flex flex-wrap items-center gap-3 text-xs text-dim">
+              <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                <button
+                  type="button"
+                  onClick={() => updateDrainStop(stop.id, { kind: "flat" })}
+                  className={`rounded px-2 py-0.5 ${stop.kind === "flat" ? "bg-pri text-pri-fg" : "text-dim"}`}
+                >
+                  $
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateDrainStop(stop.id, { kind: "percent_of_remainder" })}
+                  className={`rounded px-2 py-0.5 ${stop.kind === "percent_of_remainder" ? "bg-pri text-pri-fg" : "text-dim"}`}
+                >
+                  %
+                </button>
+              </div>
+              {stop.kind === "flat" ? (
+                <label className="flex items-center gap-1">
+                  Amount
+                  <span className="w-28">
+                    <MoneyInput
+                      placeholder="0"
+                      defaultValue={stop.amount == null ? "" : moneyToStr(stop.amount)}
+                      onBlur={(e) => updateDrainStop(stop.id, { amount: moneyStrToNumber(e.target.value) })}
+                    />
+                  </span>
+                </label>
+              ) : (
+                <label className="flex items-center gap-1">
+                  Share
+                  <input
+                    className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                    type="number"
+                    step="1"
+                    min="0"
+                    max="100"
+                    value={stop.pct == null ? "" : Math.round(stop.pct * 100)}
+                    onChange={(e) =>
+                      updateDrainStop(stop.id, { pct: e.target.value === "" ? null : Number(e.target.value) / 100 })
+                    }
+                  />
+                  % of remainder
+                </label>
+              )}
               <label className="flex items-center gap-1">
-                Start
-                <input
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="date"
-                  value={stop.startDate ?? ""}
-                  onChange={(e) => updateDrainStop(stop.id, { startDate: e.target.value === "" ? null : e.target.value })}
-                />
-              </label>
-              <label className="flex items-center gap-1">
-                End
-                <input
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="date"
-                  value={stop.endDate ?? ""}
-                  onChange={(e) => updateDrainStop(stop.id, { endDate: e.target.value === "" ? null : e.target.value })}
-                />
-              </label>
-              <label className="flex items-center gap-1">
-                Keep at least
-                <InfoTooltip text="Today's dollars, grown by the rate below (or inflation, if left blank). Stops this source draining below that floor -- once hit, the remaining shortfall spills to the next active source." />
+                Floor
+                <InfoTooltip text="Today's dollars, grown by the rate below (or inflation, if left blank). Stops this source draining below that floor -- whatever it can't cover spills to the next stop." />
                 <span className="w-28">
                   <MoneyInput
                     placeholder="0"
@@ -307,23 +326,24 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 </span>
                 /yr
               </label>
-              {moneyFlow.drainSplitMode === "fixed_split" && (
-                <label className="flex items-center gap-1">
-                  Share
-                  <input
-                    className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                    type="number"
-                    step="5"
-                    min="0"
-                    max="100"
-                    value={stop.splitPct == null ? "" : Math.round(stop.splitPct * 100)}
-                    onChange={(e) =>
-                      updateDrainStop(stop.id, { splitPct: e.target.value === "" ? null : Number(e.target.value) / 100 })
-                    }
-                  />
-                  %
-                </label>
-              )}
+              <label className="flex items-center gap-1">
+                Start
+                <input
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="date"
+                  value={stop.startDate ?? ""}
+                  onChange={(e) => updateDrainStop(stop.id, { startDate: e.target.value === "" ? null : e.target.value })}
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                End
+                <input
+                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  type="date"
+                  value={stop.endDate ?? ""}
+                  onChange={(e) => updateDrainStop(stop.id, { endDate: e.target.value === "" ? null : e.target.value })}
+                />
+              </label>
             </div>
           </div>
         ))}
@@ -332,13 +352,6 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
           onAdd={addDrainSource}
           placeholder="+ Add drain source"
         />
-        {moneyFlow.drainSplitMode === "fixed_split" && (
-          <div className={`text-xs ${Math.abs(drainSplitTotal - 1) < 0.001 ? "text-dim" : "text-negative"}`}>
-            Total allocated: {(drainSplitTotal * 100).toFixed(0)}%
-            {Math.abs(drainSplitTotal - 1) >= 0.001 &&
-              " (shares are a target, not a hard cap -- an underfunded share tops up from the next active source)"}
-          </div>
-        )}
       </section>
     </div>
   );
