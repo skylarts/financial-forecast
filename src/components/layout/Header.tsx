@@ -319,11 +319,14 @@ export function Header({ scenario }: { scenario: Scenario }) {
     <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-6 py-4">
       <div className="flex items-center gap-3">
         <ThemeToggle />
-        <div className="flex flex-col">
-          <h1 className="text-2xl font-bold tracking-tight">{isJoy ? "Forecast ✨" : "Forecast"}</h1>
-          {isJoy && (
-            <span className="joy-tagline text-xs font-medium">Bright days ahead — let&apos;s grow your money ☀️</span>
-          )}
+        <div className="flex items-center gap-2.5">
+          {!isJoy && <span className="h-4 w-0.5 rounded-full bg-accent" aria-hidden />}
+          <div className="flex flex-col">
+            <h1 className="text-xl font-semibold tracking-tight">{isJoy ? "Forecast ✨" : "Forecast"}</h1>
+            {isJoy && (
+              <span className="joy-tagline text-xs font-medium">Bright days ahead — let&apos;s grow your money ☀️</span>
+            )}
+          </div>
         </div>
         {lastSavedAt > 0 && <span className="text-xs text-dim">Saved to this browser</span>}
       </div>

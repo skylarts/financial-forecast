@@ -1,18 +1,24 @@
 @import "tailwindcss";
 
+/* "Ledger Depth" -- deep navy-teal, layered panels, one bright teal accent.
+   Chosen over a brighter/bluer palette because this is a trust instrument
+   (someone's actual retirement numbers), not a marketing surface: the
+   restraint is the point. */
 :root {
-  --background: #0f1420;
-  --panel: #171d2b;
-  --border-color: #2a3245;
-  --foreground: #e6e9f0;
-  --dim: #9aa4b8;
-  --accent: #5b8def;
-  --positive: #3ecf8e;
-  --negative: #e8555a;
+  --background: #0a151b;
+  --panel: #0f1e25;
+  --panel-2: #142931;
+  --border-color: #22363f;
+  --foreground: #ede6d9;
+  --dim: #8ba3ab;
+  --accent: #35c9b0;
+  --positive: #6bc78a;
+  --negative: #e2716a;
   /* Chart chrome, overridable per theme. */
-  --chart-grid: #2a3245;
-  --chart-axis: #9aa4b8;
-  --chart-line: #5b8def;
+  --chart-grid: #1c2e35;
+  --chart-axis: #8ba3ab;
+  --chart-line: #35c9b0;
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 30px -18px rgba(0, 0, 0, 0.65);
 }
 
 /* ☀️ Joy mode -- a sunny, warm second color scheme that makes finance feel
@@ -145,6 +151,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
   --color-border: var(--border-color);
   --color-foreground: var(--foreground);
   --color-dim: var(--dim);
@@ -164,4 +171,25 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--foreground);
+}
+
+/* Every panel gets a hairline border plus a soft inset+drop shadow so
+   surfaces read as physically layered rather than flat color blocks --
+   this is the main "depth" carrier for the whole palette. Joy mode
+   overrides this with its own warm glow further down. */
+:root:not([data-theme="joy"]) .bg-panel {
+  box-shadow: var(--shadow-panel);
+}
+
+/* Tabular figures (KPIs, dollar amounts in tables) get the monospace face
+   so digits line up and read as ledger entries rather than prose. */
+.font-mono,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }

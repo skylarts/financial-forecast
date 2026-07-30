@@ -93,23 +93,23 @@ export function KpiStrip({
   const isJoy = useUiStore((s) => s.theme) === "joy";
 
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+    <div className="grid grid-cols-2 divide-y divide-border rounded-lg border border-border bg-panel md:grid-cols-4 md:divide-x md:divide-y-0">
       {cards.map((card) => (
-        <div key={card.label} className="rounded-lg border border-border bg-panel p-4">
-          <div className="flex items-center gap-1.5 text-xs text-dim">
-            {isJoy && <span className="text-sm leading-none">{card.icon}</span>}
+        <div key={card.label} className="relative overflow-hidden p-4 first:before:absolute first:before:inset-y-3 first:before:left-0 first:before:w-0.5 first:before:rounded-full first:before:bg-accent md:pl-5">
+          <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-dim">
+            {isJoy && <span className="text-sm leading-none normal-case tracking-normal">{card.icon}</span>}
             {card.label}
           </div>
           {card.compareValue === null ? (
-            <div className="mt-1 text-3xl font-bold tracking-tight">{card.value}</div>
+            <div className="mt-1.5 font-mono text-2xl font-semibold tracking-tight tabular-nums">{card.value}</div>
           ) : (
-            <div className="mt-1 flex items-stretch gap-3">
-              <div className="text-3xl font-bold tracking-tight">{card.value}</div>
+            <div className="mt-1.5 flex items-stretch gap-3">
+              <div className="font-mono text-2xl font-semibold tracking-tight tabular-nums">{card.value}</div>
               <div className="w-px shrink-0 bg-border" />
               <div>
-                <div className="text-sm font-medium text-dim">{card.compareValue}</div>
+                <div className="font-mono text-sm font-medium tabular-nums text-dim">{card.compareValue}</div>
                 {card.delta && (
-                  <div className={`text-xs font-semibold ${card.deltaPositive ? "text-positive" : "text-negative"}`}>
+                  <div className={`font-mono text-xs font-semibold tabular-nums ${card.deltaPositive ? "text-positive" : "text-negative"}`}>
                     {card.delta}
                   </div>
                 )}

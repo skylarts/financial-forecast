@@ -26,7 +26,7 @@ import { EventDrawer } from "@/components/events/EventDrawer";
  *  its editor) rather than a drag (reschedule its date). */
 const CLICK_MOVE_THRESHOLD = 4;
 
-const CHART_COLORS = ["#5b8def", "#3ecf8e", "#e8555a", "#f4b740", "#a97bea", "#3ec7cf", "#f2789f", "#8fd14f"];
+const CHART_COLORS = ["#35c9b0", "#6bc78a", "#e2716a", "#e0b24a", "#9c8cd6", "#4fa8c9", "#d98bb0", "#8fd14f"];
 const JOY_CHART_COLORS = ["#ff7a59", "#f4a63b", "#2fb98d", "#3ec7cf", "#ff9d6f", "#e8555a", "#7bc47f", "#c874e8"];
 
 /** One base hue per account class, so "By Account" reads as a color family
@@ -58,7 +58,7 @@ function accountClassColor(hue: number, index: number, count: number, isJoy: boo
 
 // Recharts needs concrete color strings, so mirror the two palettes here.
 const CHART_THEME = {
-  dark: { grid: "#2a3245", axis: "#9aa4b8", tooltipBg: "#171d2b", tooltipBorder: "#2a3245", label: "#e6e9f0" },
+  dark: { grid: "#1c2e35", axis: "#8ba3ab", tooltipBg: "#0f1e25", tooltipBorder: "#22363f", label: "#ede6d9" },
   joy: { grid: "#f4e5d3", axis: "#a68a72", tooltipBg: "#ffffff", tooltipBorder: "#ffe0c7", label: "#4a3729" },
 } as const;
 
