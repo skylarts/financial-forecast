@@ -112,6 +112,12 @@ function HomeContent() {
                 editableAccounts={editableAccounts}
                 years={years}
                 dollarMode={dollarMode}
+                onDollarModeChange={setDollarMode}
+                minYear={minYear}
+                maxYear={maxYear}
+                rangeStart={range[0]}
+                rangeEnd={range[1]}
+                onRangeChange={(start, end) => setRange([start, end])}
                 events={scenario.events}
                 incomeSources={scenario.incomeSources}
                 expenses={scenario.expenses}
