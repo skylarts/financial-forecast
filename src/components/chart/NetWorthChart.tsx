@@ -60,6 +60,79 @@ interface DragState {
   iconTop: number;
 }
 
+/** From/To year selects plus range-preset chips -- a compact copy of the
+ *  ViewBar's range controls for use in the chart's fullscreen header, where
+ *  the ViewBar itself is covered. */
+function FullscreenRangeControls({
+  minYear,
+  maxYear,
+  rangeStart,
+  rangeEnd,
+  onRangeChange,
+}: {
+  minYear: number;
+  maxYear: number;
+  rangeStart: number;
+  rangeEnd: number;
+  onRangeChange: (start: number, end: number) => void;
+}) {
+  const yearOptions = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
+  const isFullRange = rangeStart === minYear && rangeEnd === maxYear;
+  const activePreset = RANGE_PRESETS.find((n) => rangeEnd - rangeStart + 1 === n && !isFullRange) ?? null;
+  const selectClass = "rounded-md border border-border bg-panel-2 px-2 py-1 font-mono text-[12px] text-foreground";
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+        From
+        <select
+          value={rangeStart}
+          onChange={(e) => onRangeChange(Number(e.target.value), rangeEnd)}
+          className={selectClass}
+        >
+          {yearOptions
+            .filter((y) => y <= rangeEnd)
+            .map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+        </select>
+      </label>
+      <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+        To
+        <select
+          value={rangeEnd}
+          onChange={(e) => onRangeChange(rangeStart, Number(e.target.value))}
+          className={selectClass}
+        >
+          {yearOptions
+            .filter((y) => y >= rangeStart)
+            .map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+        </select>
+      </label>
+      <div className="flex items-center gap-1">
+        {RANGE_PRESETS.map((n) => (
+          <Chip
+            key={n}
+            active={activePreset === n}
+            onClick={() => onRangeChange(rangeStart, Math.min(maxYear, rangeStart + n - 1))}
+          >
+            {n}y
+          </Chip>
+        ))}
+        <Chip active={isFullRange} onClick={() => onRangeChange(minYear, maxYear)}>
+          Full
+        </Chip>
+      </div>
+    </div>
+  );
+}
+
 function nearestYear(x: number, layout: MarkerLayout): number {
   let best = 0;
   let bestDist = Infinity;
@@ -90,11 +163,24 @@ interface CompareScenarioData {
   people: Person[];
 }
 
+const RANGE_PRESETS = [5, 10, 20, 40] as const;
+
+const DOLLAR_OPTIONS = [
+  { value: "nominal" as const, label: "Nominal" },
+  { value: "real" as const, label: "Real" },
+];
+
 export function NetWorthChart({
   accounts: allAccounts,
   editableAccounts,
   years,
   dollarMode,
+  onDollarModeChange,
+  minYear,
+  maxYear,
+  rangeStart,
+  rangeEnd,
+  onRangeChange,
   events,
   incomeSources,
   expenses,
@@ -109,6 +195,15 @@ export function NetWorthChart({
   editableAccounts: Account[];
   years: YearSnapshot[];
   dollarMode: DollarMode;
+  /** Lets the chart's own fullscreen header drive the same nominal/real
+   *  toggle the persistent ViewBar controls -- otherwise there's no way to
+   *  change dollar mode while the chart covers the ViewBar. */
+  onDollarModeChange: (mode: DollarMode) => void;
+  minYear: number;
+  maxYear: number;
+  rangeStart: number;
+  rangeEnd: number;
+  onRangeChange: (start: number, end: number) => void;
   events: ScenarioEvent[];
   incomeSources: IncomeSource[];
   expenses: ExpenseBaseline[];
@@ -119,6 +214,7 @@ export function NetWorthChart({
   compareScenario: CompareScenarioData | null;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const theme = isJoy ? CHART_THEME.joy : CHART_THEME.dark;
@@ -468,16 +564,43 @@ export function NetWorthChart({
   };
 
   return (
-    <div className="joy-lift flex h-full flex-col rounded-xl border border-border bg-panel p-4">
+    <div
+      className={
+        isFullscreen
+          ? "joy-lift fixed inset-0 z-50 flex flex-col overflow-auto rounded-none border-0 bg-panel p-4"
+          : "joy-lift flex h-full flex-col rounded-xl border border-border bg-panel p-4"
+      }
+    >
       {/* Dollar mode and scenario comparison moved to the persistent ViewBar
           (they apply to the tables too, which are now separate views); what
-          stays here is chart-only: the series mode and its legend. */}
+          stays here is chart-only: the series mode and its legend. While
+          fullscreen the chart covers the ViewBar, so it grows its own copy
+          of the date-range and dollar-mode controls, driven by the same
+          lifted state via onRangeChange/onDollarModeChange. */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-dim">
           {viewMode === "net_worth" ? "Net Worth Projection" : "Balance by Account"}
           {compareName && <span className="ml-2 font-normal text-dim-2">vs {compareName}</span>}
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {isFullscreen && (
+            <>
+              <FullscreenRangeControls
+                minYear={minYear}
+                maxYear={maxYear}
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                onRangeChange={onRangeChange}
+              />
+              <Segmented
+                ariaLabel="Show figures in future or today's dollars"
+                size="sm"
+                options={DOLLAR_OPTIONS}
+                value={dollarMode}
+                onChange={onDollarModeChange}
+              />
+            </>
+          )}
           {viewMode === "by_account" && (
             <Chip onClick={toggleAllAccounts}>{allHidden ? "Show all" : "Hide all"}</Chip>
           )}
@@ -491,11 +614,19 @@ export function NetWorthChart({
             value={viewMode}
             onChange={setViewMode}
           />
+          <button
+            type="button"
+            onClick={() => setIsFullscreen((v) => !v)}
+            title={isFullscreen ? "Minimize" : "Expand to full screen"}
+            className="rounded-md border border-border bg-panel-2 px-2 py-1 text-xs text-dim transition-colors hover:border-accent hover:text-foreground"
+          >
+            {isFullscreen ? "⤡ Minimize" : "⤢ Expand"}
+          </button>
         </div>
       </div>
 
-      <div ref={containerRef} className="relative">
-        <ResponsiveContainer width="100%" height={320}>
+      <div ref={containerRef} className="relative" style={isFullscreen ? { height: "calc(100vh - 160px)" } : undefined}>
+        <ResponsiveContainer width="100%" height={isFullscreen ? "100%" : 320}>
           <LineChart data={data} margin={{ top: chartTopMargin, right: isJoy ? 24 : 8, left: 8, bottom: 4 }}>
             <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
             <XAxis dataKey="year" stroke={theme.axis} tick={{ fontSize: 12 }} />
