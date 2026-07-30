@@ -248,14 +248,14 @@ export function HomeDrawer({
             <button
               type="button"
               onClick={() => setMode("existing")}
-              className={`flex-1 rounded px-3 py-1.5 font-medium ${mode === "existing" ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+              className={`flex-1 rounded px-3 py-1.5 font-medium ${mode === "existing" ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
             >
               Already own it
             </button>
             <button
               type="button"
               onClick={() => setMode("buy")}
-              className={`flex-1 rounded px-3 py-1.5 font-medium ${mode === "buy" ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+              className={`flex-1 rounded px-3 py-1.5 font-medium ${mode === "buy" ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
             >
               Buying it
             </button>
@@ -281,14 +281,14 @@ export function HomeDrawer({
             <button
               type="button"
               onClick={() => setValue("financed", true)}
-              className={`flex-1 rounded px-3 py-1.5 font-medium ${financed ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+              className={`flex-1 rounded px-3 py-1.5 font-medium ${financed ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
             >
               Finance
             </button>
             <button
               type="button"
               onClick={() => setValue("financed", false)}
-              className={`flex-1 rounded px-3 py-1.5 font-medium ${!financed ? "bg-accent text-white" : "text-dim hover:text-foreground"}`}
+              className={`flex-1 rounded px-3 py-1.5 font-medium ${!financed ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
             >
               Pay cash
             </button>
@@ -415,7 +415,7 @@ export function HomeDrawer({
             <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
               Cancel
             </button>
-            <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white">
+            <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
               {isEditing ? "Save" : "Add Home"}
             </button>
           </div>

@@ -1,18 +1,50 @@
 @import "tailwindcss";
 
+/* ===========================================================================
+   Design tokens — "Orbit"
+
+   Every theme defines the SAME token contract, so components style themselves
+   through tokens only and never name a theme. Adding or retuning a theme is a
+   matter of redefining this block.
+
+   Surfaces are a 4-step ramp (background → panel → panel-2 → panel-3) so
+   depth comes from layered surfaces plus hairline borders rather than heavy
+   shadows. Two border weights: `border-color` separates panels from the page,
+   `border-soft` separates rows inside a panel.
+
+   Note the accent is split in two. `--accent` is the UI accent (active
+   underline, focus ring, hover borders) and `--accent-line` is the brighter
+   value used for a 1–2px chart stroke, which needs more punch to stay legible
+   at that weight. Action buttons use their own `--pri-bg` / `--pri-fg` pair:
+   in dark themes that's a deep fill with light text, because a bright fill at
+   button size reads as glaring against a dark ground.
+   =========================================================================== */
 :root {
-  --background: #0f1420;
-  --panel: #171d2b;
-  --border-color: #2a3245;
-  --foreground: #e6e9f0;
-  --dim: #9aa4b8;
-  --accent: #5b8def;
-  --positive: #3ecf8e;
-  --negative: #e8555a;
-  /* Chart chrome, overridable per theme. */
-  --chart-grid: #2a3245;
-  --chart-axis: #9aa4b8;
-  --chart-line: #5b8def;
+  /* surfaces */
+  --background: #08161a;
+  --panel: #0e2027;
+  --panel-2: #142a32;
+  --panel-3: #1a333c;
+  --border-color: #1f3a42;
+  --border-soft: #172d34;
+  /* text */
+  --foreground: #e7e7de;
+  --dim: #8399a0;
+  --dim-2: #5c767e;
+  /* accent + actions */
+  --accent: #2e9d8c;
+  --accent-line: #3fb8a4;
+  --pri-bg: #1b6e63;
+  --pri-fg: #e9f2f0;
+  /* semantic values — deliberately distinct from the accent hue so "good"
+     and "brand" never get confused in a table of numbers */
+  --positive: #5cb88f;
+  --negative: #db7a6e;
+  --gold: #c9a063;
+  /* chart chrome */
+  --chart-grid: #172d34;
+  --chart-axis: #8399a0;
+  --chart-line: #3fb8a4;
 }
 
 /* ☀️ Joy mode -- a sunny, warm second color scheme that makes finance feel
@@ -21,12 +53,23 @@
 :root[data-theme="joy"] {
   --background: #fff8f0;
   --panel: #ffffff;
+  --panel-2: #fff4e9;
+  --panel-3: #ffebd9;
   --border-color: #ffe0c7;
+  --border-soft: #f7eadb;
   --foreground: #4a3729;
   --dim: #a68a72;
-  --accent: #ff7a59;
+  --dim-2: #c0a68e;
+  /* The raw coral (#ff7a59) fails contrast as text or as a button fill with
+     white on cream, so joy uses a deeper terracotta for anything that carries
+     text and keeps the bright coral for strokes and fills only. */
+  --accent: #d24e2c;
+  --accent-line: #ff7a59;
+  --pri-bg: #d24e2c;
+  --pri-fg: #fff7f3;
   --positive: #2fb98d;
-  --negative: #f0506b;
+  --negative: #d94a63;
+  --gold: #d9993c;
   --chart-grid: #f4e5d3;
   --chart-axis: #a68a72;
   --chart-line: #ff7a59;
@@ -36,10 +79,61 @@
   --joy-glow: 0 8px 24px -10px rgba(255, 122, 89, 0.35);
 }
 
+@theme inline {
+  --color-background: var(--background);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-3: var(--panel-3);
+  --color-border: var(--border-color);
+  --color-border-soft: var(--border-soft);
+  --color-foreground: var(--foreground);
+  --color-dim: var(--dim);
+  --color-dim-2: var(--dim-2);
+  --color-accent: var(--accent);
+  --color-accent-line: var(--accent-line);
+  --color-pri: var(--pri-bg);
+  --color-pri-fg: var(--pri-fg);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-gold: var(--gold);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Explicit root background so overscroll regions, prints, and screenshots
+   never composite as black. */
+html {
+  background-color: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Dollar figures line up in columns everywhere in this app, so tabular
+   figures are the default rather than an opt-in utility. */
+.tabular-nums,
+table {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--foreground);
+}
+
+/* Keyboard focus must stay visible on every interactive element — several
+   controls here clear the default outline to style their own borders. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* -- Joy mode delight layer ------------------------------------------------
    These rules only fire under [data-theme="joy"], so the default dark theme
    is untouched. They lean on the utility classes the app already uses
-   (bg-panel, bg-accent) so every card and primary button gets the joyful
+   (bg-panel, bg-pri) so every card and primary button gets the joyful
    treatment at once, without editing each component. */
 
 /* The sunny wash is painted by a fixed-position pseudo-element instead of
@@ -58,13 +152,17 @@
   background: var(--joy-gradient);
 }
 
-/* Cards: soft warm glow and a gentle lift on hover so the whole page feels
-   light and alive. */
+/* Cards: soft warm glow. The hover lift is scoped to `.joy-lift` (opted into
+   by the overview tiles) rather than every .bg-panel -- with the Orbit layout
+   the tables and control strips are panels too, and having those jump on
+   hover made dense data feel unstable. */
 :root[data-theme="joy"] .bg-panel {
   box-shadow: var(--joy-glow);
+}
+:root[data-theme="joy"] .joy-lift {
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
-:root[data-theme="joy"] .bg-panel:hover {
+:root[data-theme="joy"] .joy-lift:hover {
   transform: translateY(-2px);
   box-shadow: 0 14px 30px -12px rgba(255, 122, 89, 0.45);
 }
@@ -75,8 +173,8 @@
   color: #b8502e;
 }
 
-/* Primary/active buttons (scenario tabs, sign-in) get a sunset gradient. */
-:root[data-theme="joy"] .bg-accent {
+/* Primary/active buttons get a sunset gradient. */
+:root[data-theme="joy"] .bg-pri {
   background-image: var(--joy-accent-gradient);
   box-shadow: 0 4px 14px -4px rgba(255, 122, 89, 0.5);
 }
@@ -142,26 +240,13 @@
   }
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-panel: var(--panel);
-  --color-border: var(--border-color);
-  --color-foreground: var(--foreground);
-  --color-dim: var(--dim);
-  --color-accent: var(--accent);
-  --color-positive: var(--positive);
-  --color-negative: var(--negative);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-/* Explicit root background so overscroll regions, prints, and screenshots
-   never composite as black. */
-html {
-  background-color: var(--background);
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
+@media (prefers-reduced-motion: reduce) {
+  .joy-sun,
+  .joy-sparkle,
+  .joy-confetti-piece {
+    animation: none;
+  }
+  :root[data-theme="joy"] .joy-lift:hover {
+    transform: none;
+  }
 }

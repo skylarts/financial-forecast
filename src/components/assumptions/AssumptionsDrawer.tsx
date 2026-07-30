@@ -157,7 +157,7 @@ export function AssumptionsDrawer({ open, onClose, scenario }: { open: boolean; 
                 addPerson({ name: newPersonName.trim(), birthDate: "1990-01-01", retirementAge: 65, planningEndAge: 95 });
                 setNewPersonName("");
               }}
-              className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white"
+              className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg"
             >
               Add
             </button>

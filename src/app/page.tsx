@@ -5,7 +5,8 @@ import type { Id } from "@/domain";
 import type { DollarMode } from "@/lib/format";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
-import { YearRangePicker } from "@/components/layout/YearRangePicker";
+import { ViewBar } from "@/components/layout/ViewBar";
+import type { View } from "@/lib/views";
 import { KpiStrip } from "@/components/kpi/KpiStrip";
 import { NetWorthChart } from "@/components/chart/NetWorthChart";
 import { DetailTabs } from "@/components/tables/DetailTabs";
@@ -23,6 +24,8 @@ function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());
   const projection = useProjection(scenario);
   const isJoy = useUiStore((s) => s.theme) === "joy";
+  const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
+  const [view, setView] = useState<View>("Overview");
 
   const allScenarios = usePlanStore((s) => s.plan.scenarios);
   const compareScenarioId = usePlanStore((s) => s.compareScenarioId);
@@ -67,34 +70,46 @@ function HomeContent() {
     <div className="flex min-h-screen flex-1 flex-col">
       {/* Celebrate once when joy mode is on and the plan reaches retirement. */}
       <JoyConfetti fire={isJoy && projection.kpis.retirementAge !== null} />
-      <Header scenario={scenario} />
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-6">
-        <KpiStrip
-          kpis={projection.kpis}
-          years={years}
-          dollarMode={dollarMode}
-          isFullRange={range[0] === minYear && range[1] === maxYear}
-          compareKpis={hasCompare ? compareProjection.kpis : null}
-          compareYears={compareYears}
-          compareName={hasCompare ? compareScenarioRaw!.name : null}
-        />
-        {isJoy && <JoyQuote />}
+      <Header scenario={scenario} view={view} onViewChange={setView} />
+      <ViewBar
+        minYear={minYear}
+        maxYear={maxYear}
+        rangeStart={range[0]}
+        rangeEnd={range[1]}
+        onRangeChange={(start, end) => setRange([start, end])}
+        dollarMode={dollarMode}
+        onDollarModeChange={setDollarMode}
+        compareOptions={compareOptions}
+        compareScenarioId={compareScenarioId}
+        onCompareChange={setCompareScenarioId}
+        savedToBrowser={lastSavedAt > 0}
+      />
+
+      {/* Banners sit above whichever view is showing -- a stale plan or an
+          insufficient-funds warning is worth seeing regardless of which tab
+          you happen to be on. */}
+      <div className="flex flex-col gap-3 px-6 pt-4 empty:hidden">
         <StalePlanBanner scenario={scenario} />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
-        <div className="flex flex-col gap-3">
-          <YearRangePicker
-            minYear={minYear}
-            maxYear={maxYear}
-            rangeStart={range[0]}
-            rangeEnd={range[1]}
-            onChange={(start, end) => setRange([start, end])}
+      </div>
+
+      {view === "Overview" ? (
+        <main className="flex w-full flex-1 flex-col gap-4 px-6 py-4">
+          <KpiStrip
+            kpis={projection.kpis}
+            years={years}
+            dollarMode={dollarMode}
+            isFullRange={range[0] === minYear && range[1] === maxYear}
+            compareKpis={hasCompare ? compareProjection.kpis : null}
+            compareYears={compareYears}
+            compareName={hasCompare ? compareScenarioRaw!.name : null}
           />
+          {isJoy && <JoyQuote />}
           <NetWorthChart
             accounts={projection.accounts}
             editableAccounts={editableAccounts}
             years={years}
             dollarMode={dollarMode}
-            onDollarModeChange={setDollarMode}
             events={scenario.events}
             incomeSources={scenario.incomeSources}
             expenses={scenario.expenses}
@@ -102,7 +117,6 @@ function HomeContent() {
             scenarioName={scenario.name}
             compareOptions={compareOptions}
             compareScenarioId={compareScenarioId}
-            onCompareChange={setCompareScenarioId}
             compareScenario={
               hasCompare
                 ? {
@@ -116,13 +130,11 @@ function HomeContent() {
                 : null
             }
           />
-        </div>
-      </main>
-      {/* Breaks out of <main>'s max-w-6xl so the tab section can use the
-          full window width -- w-screen + centering offsets the parent's
-          horizontal margin regardless of where <main> sits on the page. */}
-      <div className="w-screen relative left-1/2 right-1/2 -mx-[50vw] px-6 pb-6">
-        <DetailTabs
+        </main>
+      ) : (
+        <main className="flex w-full flex-1 flex-col px-6 py-4">
+          <DetailTabs
+            active={view}
           accounts={projection.accounts}
           years={years}
           timeline={projection.timeline}
@@ -150,9 +162,10 @@ function HomeContent() {
                   expenses: compareScenarioRaw!.expenses,
                 }
               : null
-          }
-        />
-      </div>
+            }
+          />
+        </main>
+      )}
       <Footer />
     </div>
   );

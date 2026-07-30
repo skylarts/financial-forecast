@@ -38,7 +38,7 @@ export function StalePlanBanner({ scenario }: { scenario: Scenario }) {
         <button
           type="button"
           onClick={openAssumptions}
-          className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white"
+          className="rounded-md bg-pri px-3 py-1.5 text-xs font-semibold text-pri-fg"
         >
           Update now
         </button>

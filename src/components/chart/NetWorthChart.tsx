@@ -18,6 +18,7 @@ import { usePlanStore } from "@/store/usePlanStore";
 import { buildChartMarkers, type ChartMarker } from "./chartMarkers";
 import { MARKER_TONE_CLASS } from "./eventIcons";
 import { MarkerLayoutReporter, type MarkerLayout } from "./MarkerLayoutReporter";
+import { Chip, Segmented } from "@/components/ui/controls";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { EventDrawer } from "@/components/events/EventDrawer";
@@ -26,7 +27,7 @@ import { EventDrawer } from "@/components/events/EventDrawer";
  *  its editor) rather than a drag (reschedule its date). */
 const CLICK_MOVE_THRESHOLD = 4;
 
-const CHART_COLORS = ["#5b8def", "#3ecf8e", "#e8555a", "#f4b740", "#a97bea", "#3ec7cf", "#f2789f", "#8fd14f"];
+const CHART_COLORS = ["#3fb8a4", "#5cb88f", "#db7a6e", "#c9a063", "#9c8cd6", "#4fa8c9", "#d98bb0", "#8fbf5f"];
 const JOY_CHART_COLORS = ["#ff7a59", "#f4a63b", "#2fb98d", "#3ec7cf", "#ff9d6f", "#e8555a", "#7bc47f", "#c874e8"];
 
 /** One base hue per account class, so "By Account" reads as a color family
@@ -57,8 +58,9 @@ function accountClassColor(hue: number, index: number, count: number, isJoy: boo
 }
 
 // Recharts needs concrete color strings, so mirror the two palettes here.
+// These must stay in sync with the theme tokens in globals.css.
 const CHART_THEME = {
-  dark: { grid: "#2a3245", axis: "#9aa4b8", tooltipBg: "#171d2b", tooltipBorder: "#2a3245", label: "#e6e9f0" },
+  dark: { grid: "#172d34", axis: "#8399a0", tooltipBg: "#0e2027", tooltipBorder: "#1f3a42", label: "#e7e7de" },
   joy: { grid: "#f4e5d3", axis: "#a68a72", tooltipBg: "#ffffff", tooltipBorder: "#ffe0c7", label: "#4a3729" },
 } as const;
 
@@ -157,7 +159,6 @@ export function NetWorthChart({
   editableAccounts,
   years,
   dollarMode,
-  onDollarModeChange,
   events,
   incomeSources,
   expenses,
@@ -165,7 +166,6 @@ export function NetWorthChart({
   scenarioName,
   compareOptions,
   compareScenarioId,
-  onCompareChange,
   compareScenario,
 }: {
   accounts: Account[];
@@ -173,7 +173,6 @@ export function NetWorthChart({
   editableAccounts: Account[];
   years: YearSnapshot[];
   dollarMode: DollarMode;
-  onDollarModeChange: (mode: DollarMode) => void;
   events: ScenarioEvent[];
   incomeSources: IncomeSource[];
   expenses: ExpenseBaseline[];
@@ -181,12 +180,10 @@ export function NetWorthChart({
   scenarioName: string;
   compareOptions: { id: string; name: string }[];
   compareScenarioId: string | null;
-  onCompareChange: (id: string | null) => void;
   compareScenario: CompareScenarioData | null;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
   const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
-  const [compareMenuOpen, setCompareMenuOpen] = useState(false);
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const theme = isJoy ? CHART_THEME.joy : CHART_THEME.dark;
   const palette = isJoy ? JOY_CHART_COLORS : CHART_COLORS;
@@ -547,102 +544,28 @@ export function NetWorthChart({
 
   return (
     <div className="rounded-lg border border-border bg-panel p-4">
-      <div className="relative mb-1 flex items-center justify-center gap-2">
-        <span className="text-base font-semibold">{scenarioName}</span>
-        {compareName && <span className="text-sm font-normal text-dim/70">Vs {compareName}</span>}
-        {compareOptions.length > 0 && (
-          <div className="relative ml-1">
-            <button
-              type="button"
-              onClick={() => setCompareMenuOpen((v) => !v)}
-              title={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
-              aria-label={compareName ? `Comparing to ${compareName}` : "Compare to another scenario"}
-              className={`rounded border px-1 py-0.5 text-[10px] leading-none ${
-                compareName ? "border-accent text-accent" : "border-border text-dim/50 hover:text-dim"
-              }`}
-            >
-              ⇄
-            </button>
-            {compareMenuOpen && (
-              <div className="absolute left-1/2 top-full z-30 mt-1 w-48 -translate-x-1/2 rounded-md border border-border bg-panel p-1 shadow-lg">
-                {compareOptions.map((o) => (
-                  <button
-                    key={o.id}
-                    type="button"
-                    onClick={() => {
-                      onCompareChange(o.id);
-                      setCompareMenuOpen(false);
-                    }}
-                    className={`block w-full rounded px-3 py-2 text-left text-sm hover:bg-accent/15 ${
-                      o.id === compareScenarioId ? "text-foreground" : "text-dim"
-                    }`}
-                  >
-                    {o.name}
-                  </button>
-                ))}
-                {compareName && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onCompareChange(null);
-                      setCompareMenuOpen(false);
-                    }}
-                    className="mt-1 block w-full rounded border-t border-border px-3 py-2 pt-2 text-left text-sm text-dim hover:bg-accent/15"
-                  >
-                    Clear comparison
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {/* Dollar mode and scenario comparison moved to the persistent ViewBar
+          (they apply to the tables too, which are now separate views); what
+          stays here is chart-only: the series mode and its legend. */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-dim">
           {viewMode === "net_worth" ? "Net Worth Projection" : "Balance by Account"}
+          {compareName && <span className="ml-2 font-normal text-dim-2">vs {compareName}</span>}
         </h2>
         <div className="flex items-center gap-2">
           {viewMode === "by_account" && (
-            <button
-              type="button"
-              onClick={toggleAllAccounts}
-              className="rounded-md border border-border px-2 py-1 text-xs text-dim"
-            >
-              {allHidden ? "Show all" : "Hide all"}
-            </button>
+            <Chip onClick={toggleAllAccounts}>{allHidden ? "Show all" : "Hide all"}</Chip>
           )}
-          <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
-            <button
-              type="button"
-              onClick={() => setViewMode("net_worth")}
-              className={`rounded px-2 py-1 text-xs ${viewMode === "net_worth" ? "bg-accent text-white" : "text-dim"}`}
-            >
-              Net Worth
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("by_account")}
-              className={`rounded px-2 py-1 text-xs ${viewMode === "by_account" ? "bg-accent text-white" : "text-dim"}`}
-            >
-              By Account
-            </button>
-          </div>
-          <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
-            <button
-              type="button"
-              onClick={() => onDollarModeChange("nominal")}
-              className={`rounded px-2 py-1 text-xs ${dollarMode === "nominal" ? "bg-accent text-white" : "text-dim"}`}
-            >
-              Nominal
-            </button>
-            <button
-              type="button"
-              onClick={() => onDollarModeChange("real")}
-              className={`rounded px-2 py-1 text-xs ${dollarMode === "real" ? "bg-accent text-white" : "text-dim"}`}
-            >
-              Real
-            </button>
-          </div>
+          <Segmented
+            ariaLabel="Chart series"
+            size="sm"
+            options={[
+              { value: "net_worth" as const, label: "Net Worth" },
+              { value: "by_account" as const, label: "By Account" },
+            ]}
+            value={viewMode}
+            onChange={setViewMode}
+          />
         </div>
       </div>
 
@@ -809,7 +732,7 @@ export function NetWorthChart({
                   }}
                 />
                 <div
-                  className="absolute -translate-x-1/2 rounded bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                  className="absolute -translate-x-1/2 rounded bg-pri px-1.5 py-0.5 text-[10px] font-semibold text-pri-fg"
                   style={{ left: drag.pointerX, top: drag.iconTop - 20 }}
                 >
                   {drag.year}

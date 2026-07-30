@@ -10,6 +10,8 @@ import { AssumptionsDrawer } from "@/components/assumptions/AssumptionsDrawer";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { BackupControls } from "@/components/layout/BackupControls";
 import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
+import { Btn } from "@/components/ui/controls";
+import { VIEWS, type View } from "@/lib/views";
 
 function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean }) {
   const setActiveScenarioId = usePlanStore((s) => s.setActiveScenarioId);
@@ -31,7 +33,7 @@ function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean
           else setName(scenario.name);
         }}
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        className="rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white outline-none"
+        className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg outline-none"
       />
     );
   }
@@ -43,7 +45,7 @@ function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean
       onDoubleClick={() => setEditing(true)}
       title="Double-click to rename"
       className={`group flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${
-        active ? "bg-accent text-white" : "text-dim hover:text-foreground"
+        active ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"
       }`}
     >
       {scenario.name}
@@ -207,7 +209,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
                   onChange={(e) => setName(e.target.value)}
                   onBlur={commitRename}
                   onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-                  className="my-0.5 flex-1 rounded bg-accent px-2 py-1.5 text-sm text-white outline-none"
+                  className="my-0.5 flex-1 rounded bg-pri px-2 py-1.5 text-sm text-pri-fg outline-none"
                 />
               ) : (
                 <button
@@ -282,6 +284,10 @@ function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-md border border-border bg-panel p-1 shadow-lg">
           <AccountTopMenuItem onClose={() => setOpen(false)} />
+          <div className="flex items-center justify-between border-t border-border px-3 py-2">
+            <span className="text-sm text-dim">Theme</span>
+            <ThemeToggle />
+          </div>
           <div className="border-t border-border pt-1">
             <button
               type="button"
@@ -306,9 +312,16 @@ function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
   );
 }
 
-export function Header({ scenario }: { scenario: Scenario }) {
+export function Header({
+  scenario,
+  view,
+  onViewChange,
+}: {
+  scenario: Scenario;
+  view: View;
+  onViewChange: (v: View) => void;
+}) {
   const scenarios = usePlanStore((s) => s.plan.scenarios);
-  const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const openWizard = useWizardStore((s) => s.openWizard);
   const assumptionsOpen = useAssumptionsStore((s) => s.open);
@@ -316,18 +329,43 @@ export function Header({ scenario }: { scenario: Scenario }) {
   const closeAssumptions = useAssumptionsStore((s) => s.closeAssumptions);
 
   return (
-    <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-6 py-4">
-      <div className="flex items-center gap-3">
-        <ThemeToggle />
+    <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-6 py-3.5">
+      <div className="flex items-center gap-2.5">
+        <span
+          aria-hidden
+          className="block h-5 w-2 rounded-[3px] bg-gradient-to-b from-accent-line to-accent"
+        />
         <div className="flex flex-col">
-          <h1 className="text-2xl font-bold tracking-tight">{isJoy ? "Forecast ✨" : "Forecast"}</h1>
+          <h1 className="text-[15px] font-bold leading-tight tracking-tight">
+            {isJoy ? "Forecast ✨" : "Forecast"}
+          </h1>
           {isJoy && (
-            <span className="joy-tagline text-xs font-medium">Bright days ahead — let&apos;s grow your money ☀️</span>
+            <span className="joy-tagline text-[11px] font-medium">Bright days ahead ☀️</span>
           )}
         </div>
-        {lastSavedAt > 0 && <span className="text-xs text-dim">Saved to this browser</span>}
       </div>
-      <div className="flex items-center gap-3">
+
+      {/* The five top-level views. Underline (not a filled pill) marks the
+          current one, so the primary fill stays reserved for actions. */}
+      <nav className="-mb-3.5 flex items-center gap-0.5 overflow-x-auto" aria-label="Views">
+        {VIEWS.map((v) => (
+          <button
+            key={v}
+            type="button"
+            aria-current={v === view}
+            onClick={() => onViewChange(v)}
+            className={`whitespace-nowrap border-b-2 px-3.5 py-2 pb-3.5 text-[13px] transition-colors ${
+              v === view
+                ? "border-accent font-semibold text-foreground"
+                : "border-transparent font-medium text-dim hover:text-foreground"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </nav>
+
+      <div className="flex items-center gap-2">
         {scenarios.length > 2 ? (
           <ScenarioSwitcher scenario={scenario} />
         ) : (
@@ -338,14 +376,9 @@ export function Header({ scenario }: { scenario: Scenario }) {
             <NewScenarioControl scenario={scenario} />
           </nav>
         )}
-        <button
-          type="button"
-          id="assumptions-button"
-          onClick={openAssumptions}
-          className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
-        >
+        <Btn id="assumptions-button" variant="primary" onClick={openAssumptions}>
           ⚙ Assumptions
-        </button>
+        </Btn>
         <OverflowMenu onOpenWizard={openWizard} />
       </div>
       {/* key=scenario.id forces a full remount on scenario switch, so the
