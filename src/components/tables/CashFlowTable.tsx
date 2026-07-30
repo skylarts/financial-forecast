@@ -146,11 +146,22 @@ export function CashFlowTable({
     for (const y of years) for (const c of y.cashFlow.contributionsByItem) fromPay.set(c.id, c.fromPaycheck);
     return unionItems(years.map((y) => y.cashFlow.contributionsByItem)).map((it) => ({ ...it, fromPaycheck: fromPay.get(it.id) ?? false }));
   }, [years]);
-  const otherActivityMaps = useMemo(
-    () => years.map((y) => new Map(y.cashFlow.otherActivityByItem.map((i) => [i.id, i.amount]))),
+  // otherActivityByItem grouped by its counterparty account (falling back to
+  // a synthetic "__other__" bucket for flows with no single account, e.g. a
+  // reconciling residual) -- folded into Account Activity below instead of
+  // living in its own section.
+  const otherActivityMapsByAccount = useMemo(
+    () =>
+      years.map((y) => {
+        const m = new Map<string, number>();
+        for (const it of y.cashFlow.otherActivityByItem) {
+          const key = it.accountId ?? "__other__";
+          m.set(key, (m.get(key) ?? 0) + it.amount);
+        }
+        return m;
+      }),
     [years]
   );
-  const otherActivityItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.otherActivityByItem), "date"), [years]);
 
   // Expenses grouped by source: a life event's one-time + recurring costs
   // collapse under one expandable row (ids share the event-id prefix, e.g.
@@ -239,6 +250,11 @@ export function CashFlowTable({
   const depositOf = (accountId: string, yi: number) =>
     (contribMaps[yi].get(`${accountId}:contribution`) ?? 0) + (surplusMaps[yi].get(accountId) ?? 0);
   const withdrawnOf = (accountId: string, yi: number) => wdGrossMaps[yi].get(accountId) ?? 0;
+  // otherActivityByItem is signed by its effect on CASH (positive = cash
+  // increased), the opposite of this section's account-centric convention
+  // (positive = the account gained), so it's negated everywhere it's folded
+  // in below.
+  const otherOf = (accountId: string, yi: number) => otherActivityMapsByAccount[yi].get(accountId) ?? 0;
   // Net movement for the account, EXCLUDING payroll-deducted contributions --
   // those never touched cash (take-home pay was already entered net of
   // them), so folding them in would make the net look like a bigger save
@@ -247,34 +263,44 @@ export function CashFlowTable({
   const netOf = (accountId: string, fromPaycheck: boolean, yi: number) => {
     const contrib = fromPaycheck ? 0 : (contribMaps[yi].get(`${accountId}:contribution`) ?? 0);
     const surplus = surplusMaps[yi].get(accountId) ?? 0;
-    return contrib + surplus - withdrawnOf(accountId, yi);
+    return contrib + surplus - withdrawnOf(accountId, yi) - otherOf(accountId, yi);
   };
 
-  // Every account with a withdrawal, contribution, or swept surplus in the
-  // visible range, merged into one entry so an account's savings and
-  // withdrawals for the year sit together instead of in separate sections.
+  // Every account with a withdrawal, contribution, swept surplus, or other
+  // direct activity in the visible range, merged into one entry so an
+  // account's savings and withdrawals for the year sit together instead of
+  // in separate sections.
   const activityAccounts = useMemo(() => {
     const ids = new Set<string>();
     for (const m of wdGrossMaps) for (const id of m.keys()) ids.add(id);
     for (const m of surplusMaps) for (const id of m.keys()) ids.add(id);
     for (const m of contribMaps) for (const key of m.keys()) ids.add(key.replace(/:contribution$/, ""));
+    for (const m of otherActivityMapsByAccount) for (const id of m.keys()) ids.add(id);
     const fromPaycheckOf = new Map(contribItems.map((it) => [it.id.replace(/:contribution$/, ""), it.fromPaycheck]));
     const magnitude = (id: string) =>
       years.reduce(
-        (s, _y, yi) => s + (wdGrossMaps[yi].get(id) ?? 0) + (contribMaps[yi].get(`${id}:contribution`) ?? 0) + (surplusMaps[yi].get(id) ?? 0),
+        (s, _y, yi) =>
+          s +
+          (wdGrossMaps[yi].get(id) ?? 0) +
+          (contribMaps[yi].get(`${id}:contribution`) ?? 0) +
+          (surplusMaps[yi].get(id) ?? 0) +
+          Math.abs(otherActivityMapsByAccount[yi].get(id) ?? 0),
         0
       );
     return [...ids]
-      .map((id) => ({ id, label: accountNameById.get(id) ?? id, fromPaycheck: fromPaycheckOf.get(id) ?? false }))
+      .map((id) => ({
+        id,
+        label: id === "__other__" ? "Other" : accountNameById.get(id) ?? id,
+        fromPaycheck: fromPaycheckOf.get(id) ?? false,
+      }))
       .sort((a, b) => magnitude(b.id) - magnitude(a.id));
-  }, [wdGrossMaps, surplusMaps, contribMaps, contribItems, accountNameById, years]);
+  }, [wdGrossMaps, surplusMaps, contribMaps, otherActivityMapsByAccount, contribItems, accountNameById, years]);
 
   const totalNet = (yi: number) => activityAccounts.reduce((s, a) => s + netOf(a.id, a.fromPaycheck, yi), 0);
 
   const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
   const hasBenefitWithholding = years.some((y) => Math.abs(y.cashFlow.incomeTaxWithheldFromCash) > 0.5);
   const hasSettlement = years.some((y) => Math.abs(y.cashFlow.taxSettlement) > 0.5);
-  const hasOtherActivity = years.some((y) => Math.abs(y.cashFlow.otherAccountActivity) > 0.5);
   const hasFederalTax = years.some((y) => y.cashFlow.federalTaxTotal > 0.5);
   const hasWithdrawalWithholding = withholdingItems.length > 0;
 
@@ -484,18 +510,19 @@ export function CashFlowTable({
             })}
 
             {/* Account Activity -- every account with a deposit, swept
-                surplus, or withdrawal this year, merged into one entry so
-                the two sides of the same account sit together instead of in
-                separate sections. Net excludes payroll-deducted
-                contributions (they never touched cash). Withdrawals are
-                shown GROSS (including tax withheld at the source); expand
-                one to split it into estimated withholding and the net
-                amount that actually reached cash. */}
+                surplus, withdrawal, or other direct flow this year, merged
+                into one entry so the different sides of the same account sit
+                together instead of in separate sections. Each account row is
+                collapsed by default; click to reveal its detail lines. Net
+                excludes payroll-deducted contributions (they never touched
+                cash). Withdrawals are shown GROSS (including tax withheld at
+                the source); expand one to split it into estimated
+                withholding and the net amount that actually reached cash. */}
             {sectionHeader(
               "accountActivity",
               "Account Activity",
               totalNet,
-              "Net movement for each account this year: what was deposited or swept in as surplus, minus what was withdrawn (including tax withheld at the source, for RMDs and planned drawdowns). Excludes payroll-deducted contributions from the net, since those never touched cash -- take-home pay was already entered net of them.",
+              "Net movement for each account this year: what was deposited or swept in as surplus, minus what was withdrawn (including tax withheld at the source, for RMDs and planned drawdowns) and minus other direct flows like a down payment or home sale. Excludes payroll-deducted contributions from the net, since those never touched cash -- take-home pay was already entered net of them. Click an account to see the detail.",
               { signed: true }
             )}
             {isOpen("accountActivity") &&
@@ -504,47 +531,61 @@ export function CashFlowTable({
                     const hasTax = years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
                     const hasDeposit = years.some((_y, yi) => depositOf(a.id, yi) > 0.5);
                     const hasWithdrawal = years.some((_y, yi) => withdrawnOf(a.id, yi) > 0.5);
+                    const hasOther = years.some((_y, yi) => Math.abs(otherOf(a.id, yi)) > 0.5);
+                    const acctKey = `aa:${a.id}`;
                     return (
                       <Fragment key={a.id}>
-                        <tr className="border-t border-border/40 hover:bg-accent/15">
-                          <td className="py-2 pl-6 font-medium">{a.label}</td>
+                        <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggle(acctKey)}>
+                          <td className="py-2 pl-6 font-medium">
+                            <ToggleLabel label={a.label} expanded={isOpen(acctKey)} onToggle={() => toggle(acctKey)} />
+                          </td>
                           {cells((yi) => netOf(a.id, a.fromPaycheck, yi), { signed: true })}
                         </tr>
-                        {hasDeposit && (
-                          <tr className="text-dim hover:bg-accent/15">
-                            <td className="py-2 pl-12">
-                              Deposited / saved
-                              {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck, excluded from net</span>}
-                            </td>
-                            {cells((yi) => depositOf(a.id, yi))}
-                          </tr>
-                        )}
-                        {hasWithdrawal && (
+                        {isOpen(acctKey) && (
                           <>
-                            <tr
-                              className={`text-dim hover:bg-accent/15 ${hasTax ? "cursor-pointer" : ""}`}
-                              onClick={hasTax ? () => toggle(`wd:acct:${a.id}`) : undefined}
-                            >
-                              <td className="py-2 pl-12">
-                                {hasTax ? (
-                                  <ToggleLabel label="Withdrawn" expanded={isOpen(`wd:acct:${a.id}`)} onToggle={() => toggle(`wd:acct:${a.id}`)} />
-                                ) : (
-                                  "Withdrawn"
-                                )}
-                              </td>
-                              {cells((yi) => withdrawnOf(a.id, yi))}
-                            </tr>
-                            {hasTax && isOpen(`wd:acct:${a.id}`) && (
+                            {hasDeposit && (
+                              <tr className="text-dim hover:bg-accent/15">
+                                <td className="py-2 pl-12">
+                                  Deposited / saved
+                                  {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck, excluded from net</span>}
+                                </td>
+                                {cells((yi) => depositOf(a.id, yi))}
+                              </tr>
+                            )}
+                            {hasWithdrawal && (
                               <>
-                                <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                                  <td className="py-2 pl-[4.5rem] text-xs italic">Estimated withholding</td>
-                                  {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
+                                <tr
+                                  className={`text-dim hover:bg-accent/15 ${hasTax ? "cursor-pointer" : ""}`}
+                                  onClick={hasTax ? () => toggle(`wd:acct:${a.id}`) : undefined}
+                                >
+                                  <td className="py-2 pl-12">
+                                    {hasTax ? (
+                                      <ToggleLabel label="Withdrawn" expanded={isOpen(`wd:acct:${a.id}`)} onToggle={() => toggle(`wd:acct:${a.id}`)} />
+                                    ) : (
+                                      "Withdrawn"
+                                    )}
+                                  </td>
+                                  {cells((yi) => withdrawnOf(a.id, yi))}
                                 </tr>
-                                <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                                  <td className="py-2 pl-[4.5rem] text-xs italic">Net withdrawal</td>
-                                  {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
-                                </tr>
+                                {hasTax && isOpen(`wd:acct:${a.id}`) && (
+                                  <>
+                                    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+                                      <td className="py-2 pl-[4.5rem] text-xs italic">Estimated withholding</td>
+                                      {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
+                                    </tr>
+                                    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+                                      <td className="py-2 pl-[4.5rem] text-xs italic">Net withdrawal</td>
+                                      {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
+                                    </tr>
+                                  </>
+                                )}
                               </>
+                            )}
+                            {hasOther && (
+                              <tr className="text-dim hover:bg-accent/15">
+                                <td className="py-2 pl-12">Other activity</td>
+                                {cells((yi) => -otherOf(a.id, yi), { signed: true })}
+                              </tr>
                             )}
                           </>
                         )}
@@ -559,63 +600,14 @@ export function CashFlowTable({
                 They still count toward Net change in cash below; that row is
                 measured from the actual simulated balance, not summed. */}
 
-            {/* Interest earned directly on cash, and any direct hub activity
-                (a down payment from cash, home-sale proceeds, a custom
-                transfer touching the hub) -- shown whenever present so the
+            {/* Interest earned directly on cash -- the one remaining flow
+                that isn't tied to any account, shown whenever present so the
                 visible rows always sum exactly to the bottom line. */}
             {hasCashInterest && (
               <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
                 <td className="py-2 pl-2">Interest earned on cash</td>
                 {cells((yi) => years[yi].cashFlow.cashInterest)}
               </tr>
-            )}
-            {hasOtherActivity && (
-              <>
-                <tr className="cursor-pointer text-dim hover:bg-accent/15" onClick={() => toggle("otherActivity")}>
-                  <td className="py-2 pl-2">
-                    <span className="inline-flex items-center gap-1">
-                      <ToggleLabel
-                        label="Other account activity"
-                        expanded={isOpen("otherActivity")}
-                        onToggle={() => toggle("otherActivity")}
-                      />
-                      <InfoTooltip text="One-off flows that touched cash directly: a home purchase down payment, home-sale proceeds, a custom transfer to/from the hub, net of income deposited straight into an investment. Expand to see each flow." />
-                    </span>
-                  </td>
-                  {years.map((y, yi) => {
-                    const v = d(years[yi].cashFlow.otherAccountActivity, yi);
-                    return (
-                      <td key={y.year} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
-                        {Math.abs(v) < 0.5 ? (
-                          <span className="text-dim">—</span>
-                        ) : (
-                          <span className={v < 0 ? "text-negative" : ""}>{formatMoney(v)}</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  {totalCell(totalOf((yi) => years[yi].cashFlow.otherAccountActivity), { signed: true })}
-                </tr>
-                {isOpen("otherActivity") &&
-                  otherActivityItems.map((item) => (
-                    <tr key={item.id} className="border-t border-border/40 text-dim hover:bg-accent/15">
-                      <td className="py-2 pl-10">{item.label}</td>
-                      {years.map((y, yi) => {
-                        const v = d(otherActivityMaps[yi].get(item.id) ?? 0, yi);
-                        return (
-                          <td key={y.year} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
-                            {Math.abs(v) < 0.5 ? (
-                              <span className="text-dim">—</span>
-                            ) : (
-                              <span className={v < 0 ? "text-negative" : ""}>{formatMoney(v)}</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                      {totalCell(totalOf((yi) => otherActivityMaps[yi].get(item.id) ?? 0), { signed: true })}
-                    </tr>
-                  ))}
-              </>
             )}
             {/* Net change in cash -- the reconciling bottom line, measured
                 directly from the actual simulated cash balance. Account
