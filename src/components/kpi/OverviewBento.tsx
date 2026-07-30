@@ -94,22 +94,38 @@ export function OverviewBento({
   const cmpEoy = compareKpis ? (real ? compareKpis.netWorthEndOfYear1Real : compareKpis.netWorthEndOfYear1) : null;
   const cmpRetirementAge = compareKpis?.retirementAge ?? null;
 
-  // First-year cash-flow figures for the two stat tiles. These are "what the
-  // plan does right now", which is the number you're usually adjusting.
-  //
-  // Savings rate rather than federal tax: because income is entered as
-  // take-home, the engine only realizes tax on withdrawals/pension/Social
-  // Security, so federalTaxTotal is legitimately $0 for every pre-retirement
-  // year -- a tile that reads $0 for decades earns none of its space.
+  // First-year figures for the two stat tiles. Deliberately two *different*
+  // stories: what you put in (surplus, a cash-flow figure) versus what the
+  // money earned on its own (growth, a balance-sheet figure). Savings rate
+  // lived here at first and was cut -- it's income minus expenses restated as
+  // a percentage, so it said nothing the surplus tile didn't already say.
   const surplus = firstYear ? deflateFlow(firstYear.cashFlow.operatingCashFlow, firstYear, dollarMode) : 0;
-  const income = firstYear ? deflateFlow(firstYear.cashFlow.totalIncome, firstYear, dollarMode) : 0;
-  const expenses = firstYear ? deflateFlow(firstYear.cashFlow.totalExpenses, firstYear, dollarMode) : 0;
-  // Ratio of undeflated figures -- a rate is scale-free, so deflating both
-  // sides would cancel out anyway.
-  const savingsRate =
-    firstYear && firstYear.cashFlow.totalIncome > 0
-      ? (firstYear.cashFlow.operatingCashFlow / firstYear.cashFlow.totalIncome) * 100
-      : null;
+
+  // Growth across every asset (a mortgage's rollforward "growth" is accruing
+  // interest, which isn't what this tile is about). Paired with deposits into
+  // those same accounts so the caption reads as "growth vs. what you put in."
+  //
+  // Cash-class accounts are excluded from *both* sides: the spending hub's
+  // rollforward "deposits" field also captures income landing there and cash
+  // arriving from the deficit cascade, not just savings -- with the hub
+  // included, a paycheck counted once on arrival and again when swept to a
+  // brokerage account, inflating "contributed" well past actual savings.
+  const { investmentGrowth, investmentDeposits } = useMemo(() => {
+    if (!firstYear) return { investmentGrowth: 0, investmentDeposits: 0 };
+    const byId = new Map(allAccounts.map((a) => [a.id, a]));
+    let growth = 0;
+    let deposits = 0;
+    for (const r of firstYear.rollforwards) {
+      const acct = byId.get(r.accountId);
+      if (!acct || acct.isExcluded || acct.category !== "asset" || acct.class === "cash") continue;
+      growth += r.growth;
+      deposits += r.deposits;
+    }
+    return {
+      investmentGrowth: deflateFlow(growth, firstYear, dollarMode),
+      investmentDeposits: deflateFlow(deposits, firstYear, dollarMode),
+    };
+  }, [firstYear, allAccounts, dollarMode]);
 
   const accounts = useMemo(() => displayAccounts(allAccounts), [allAccounts]);
   const accountColors = useMemo(() => buildAccountColors(accounts, isJoy), [accounts, isJoy]);
@@ -191,7 +207,7 @@ export function OverviewBento({
         </dl>
       </Tile>
 
-      {/* ---- Two first-year cash-flow stats ---- */}
+      {/* ---- Two first-year stats: what you contributed vs. what it earned ---- */}
       <Tile area="k1" className="p-4">
         <Label>Operating surplus · {firstYear?.year ?? ""}</Label>
         <div
@@ -207,12 +223,12 @@ export function OverviewBento({
       </Tile>
 
       <Tile area="k2" className="p-4">
-        <Label>Savings rate · {firstYear?.year ?? ""}</Label>
-        <div className="mt-1.5 font-mono text-2xl font-bold tracking-tight tabular-nums">
-          {savingsRate === null ? "—" : `${savingsRate.toFixed(0)}%`}
+        <Label>Investment growth · {firstYear?.year ?? ""}</Label>
+        <div className="mt-1.5 font-mono text-2xl font-bold tracking-tight tabular-nums text-positive">
+          {formatMoney(investmentGrowth)}
         </div>
         <div className="mt-1.5 text-[11.5px] text-dim-2">
-          {formatMoney(expenses)} spent of {formatMoney(income)}
+          vs {formatMoney(investmentDeposits)} contributed
         </div>
       </Tile>
 

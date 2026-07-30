@@ -127,7 +127,18 @@ body {
   display: grid;
   gap: 0.75rem;
   grid-template-columns: 1fr;
-  grid-template-areas: "hero" "k1" "k2" "chart" "list";
+  /* Every tile sets an inline grid-area, so every breakpoint needs a matching
+     named area -- without one, grid-area's implicit line names collide across
+     tiles and the browser auto-places more than one tile into the same cell
+     (found by testing at mobile width: the chart and account list overlapped).
+     One quoted string per line, not packed onto one line -- that form
+     silently broke the build's CSS parser and dropped this whole rule. */
+  grid-template-areas:
+    "hero"
+    "k1"
+    "k2"
+    "chart"
+    "list";
 }
 
 @media (min-width: 1024px) {
