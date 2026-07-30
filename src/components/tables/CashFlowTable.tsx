@@ -146,12 +146,22 @@ export function CashFlowTable({
     for (const y of years) for (const c of y.cashFlow.contributionsByItem) fromPay.set(c.id, c.fromPaycheck);
     return unionItems(years.map((y) => y.cashFlow.contributionsByItem)).map((it) => ({ ...it, fromPaycheck: fromPay.get(it.id) ?? false }));
   }, [years]);
-  const surplusItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.surplusByAccount)), [years]);
-  const otherActivityMaps = useMemo(
-    () => years.map((y) => new Map(y.cashFlow.otherActivityByItem.map((i) => [i.id, i.amount]))),
+  // otherActivityByItem grouped by its counterparty account (falling back to
+  // a synthetic "__other__" bucket for flows with no single account, e.g. a
+  // reconciling residual) -- folded into Account Activity below instead of
+  // living in its own section.
+  const otherActivityMapsByAccount = useMemo(
+    () =>
+      years.map((y) => {
+        const m = new Map<string, number>();
+        for (const it of y.cashFlow.otherActivityByItem) {
+          const key = it.accountId ?? "__other__";
+          m.set(key, (m.get(key) ?? 0) + it.amount);
+        }
+        return m;
+      }),
     [years]
   );
-  const otherActivityItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.otherActivityByItem), "date"), [years]);
 
   // Expenses grouped by source: a life event's one-time + recurring costs
   // collapse under one expandable row (ids share the event-id prefix, e.g.
@@ -227,19 +237,70 @@ export function CashFlowTable({
   // Estimated withholding taken at the source from taxable/tax-deferred
   // withdrawals -- shown as an informational drill-down under Federal Tax,
   // alongside the benefit withholding and true-up (it's already netted out
-  // of the gross withdrawal amounts shown in the Withdrawals section above).
+  // of the gross withdrawal amounts shown in Account Activity above).
   const withholdingItems = useMemo(() => {
     const items: { id: string; label: string }[] = [];
     for (const g of withdrawalGroups) for (const a of g.accounts) items.push({ id: a.id, label: a.label });
     return items.filter((it) => years.some((_y, yi) => (wdTaxMaps[yi].get(it.id) ?? 0) > 0.5));
   }, [withdrawalGroups, years, wdTaxMaps]);
 
-  const hasWithdrawals = withdrawalGroups.length > 0;
-  const hasSaved = years.some((y) => y.cashFlow.afterTaxContributionTotal + y.cashFlow.surplusRouted > 0.005);
+  // Account name lookup for the unified Account Activity section below.
+  const accountNameById = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
+
+  const depositOf = (accountId: string, yi: number) =>
+    (contribMaps[yi].get(`${accountId}:contribution`) ?? 0) + (surplusMaps[yi].get(accountId) ?? 0);
+  const withdrawnOf = (accountId: string, yi: number) => wdGrossMaps[yi].get(accountId) ?? 0;
+  // otherActivityByItem is signed by its effect on CASH (positive = cash
+  // increased), the opposite of this section's account-centric convention
+  // (positive = the account gained), so it's negated everywhere it's folded
+  // in below.
+  const otherOf = (accountId: string, yi: number) => otherActivityMapsByAccount[yi].get(accountId) ?? 0;
+  // Net movement for the account, EXCLUDING payroll-deducted contributions --
+  // those never touched cash (take-home pay was already entered net of
+  // them), so folding them in would make the net look like a bigger save
+  // than actually happened. Matches how the old "Saved to accounts" total
+  // was computed (afterTaxContributionTotal, not all contributions).
+  const netOf = (accountId: string, fromPaycheck: boolean, yi: number) => {
+    const contrib = fromPaycheck ? 0 : (contribMaps[yi].get(`${accountId}:contribution`) ?? 0);
+    const surplus = surplusMaps[yi].get(accountId) ?? 0;
+    return contrib + surplus - withdrawnOf(accountId, yi) - otherOf(accountId, yi);
+  };
+
+  // Every account with a withdrawal, contribution, swept surplus, or other
+  // direct activity in the visible range, merged into one entry so an
+  // account's savings and withdrawals for the year sit together instead of
+  // in separate sections.
+  const activityAccounts = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of wdGrossMaps) for (const id of m.keys()) ids.add(id);
+    for (const m of surplusMaps) for (const id of m.keys()) ids.add(id);
+    for (const m of contribMaps) for (const key of m.keys()) ids.add(key.replace(/:contribution$/, ""));
+    for (const m of otherActivityMapsByAccount) for (const id of m.keys()) ids.add(id);
+    const fromPaycheckOf = new Map(contribItems.map((it) => [it.id.replace(/:contribution$/, ""), it.fromPaycheck]));
+    const magnitude = (id: string) =>
+      years.reduce(
+        (s, _y, yi) =>
+          s +
+          (wdGrossMaps[yi].get(id) ?? 0) +
+          (contribMaps[yi].get(`${id}:contribution`) ?? 0) +
+          (surplusMaps[yi].get(id) ?? 0) +
+          Math.abs(otherActivityMapsByAccount[yi].get(id) ?? 0),
+        0
+      );
+    return [...ids]
+      .map((id) => ({
+        id,
+        label: id === "__other__" ? "Other" : accountNameById.get(id) ?? id,
+        fromPaycheck: fromPaycheckOf.get(id) ?? false,
+      }))
+      .sort((a, b) => magnitude(b.id) - magnitude(a.id));
+  }, [wdGrossMaps, surplusMaps, contribMaps, otherActivityMapsByAccount, contribItems, accountNameById, years]);
+
+  const totalNet = (yi: number) => activityAccounts.reduce((s, a) => s + netOf(a.id, a.fromPaycheck, yi), 0);
+
   const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
   const hasBenefitWithholding = years.some((y) => Math.abs(y.cashFlow.incomeTaxWithheldFromCash) > 0.5);
   const hasSettlement = years.some((y) => Math.abs(y.cashFlow.taxSettlement) > 0.5);
-  const hasOtherActivity = years.some((y) => Math.abs(y.cashFlow.otherAccountActivity) > 0.5);
   const hasFederalTax = years.some((y) => y.cashFlow.federalTaxTotal > 0.5);
   const hasWithdrawalWithholding = withholdingItems.length > 0;
 
@@ -279,18 +340,26 @@ export function CashFlowTable({
     </td>
   );
 
-  // Money cells across every visible year plus a trailing total, deflated as needed.
-  const cells = (get: (yi: number) => number) => (
+  // Money cells across every visible year plus a trailing total, deflated as
+  // needed. `signed` colors negative/positive values (for rows like a net
+  // that can go either way) instead of showing plain unsigned text.
+  const cells = (get: (yi: number) => number, opts?: { signed?: boolean }) => (
     <>
       {years.map((y, yi) => {
         const v = d(get(yi), yi);
         return (
           <td key={y.year} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
-            {Math.abs(v) < 0.5 ? <span className="text-dim">—</span> : formatMoney(v)}
+            {Math.abs(v) < 0.5 ? (
+              <span className="text-dim">—</span>
+            ) : opts?.signed ? (
+              <span className={v < 0 ? "text-negative" : "text-positive"}>{formatMoney(v)}</span>
+            ) : (
+              formatMoney(v)
+            )}
           </td>
         );
       })}
-      {totalCell(totalOf(get))}
+      {totalCell(totalOf(get), { signed: opts?.signed })}
     </>
   );
 
@@ -351,7 +420,7 @@ export function CashFlowTable({
     </tr>
   );
 
-  const sectionHeader = (key: string, label: string, get: (yi: number) => number, hint?: string) => (
+  const sectionHeader = (key: string, label: string, get: (yi: number) => number, hint?: string, opts?: { signed?: boolean }) => (
     <tr className="cursor-pointer border-t border-border bg-background/40 hover:bg-accent/15" onClick={() => toggle(key)}>
       <td className="py-2.5 pl-2 font-semibold">
         <span className="inline-flex items-center gap-1">
@@ -359,7 +428,7 @@ export function CashFlowTable({
           {hint && <InfoTooltip text={hint} />}
         </span>
       </td>
-      {cells(get)}
+      {cells(get, opts)}
     </tr>
   );
 
@@ -440,70 +509,90 @@ export function CashFlowTable({
               hint: "Income minus expenses. When it goes negative (typically once income drops in retirement), Withdrawals below pull from your accounts to cover it.",
             })}
 
-            {/* Withdrawals -- header and every level show the GROSS amount
-                pulled from the account (including tax withheld at the source);
-                each account expands into its estimated withholding and the net
-                amount that actually reached cash. */}
+            {/* Account Activity -- every account with a deposit, swept
+                surplus, withdrawal, or other direct flow this year, merged
+                into one entry so the different sides of the same account sit
+                together instead of in separate sections. Each account row is
+                collapsed by default; click to reveal its detail lines. Net
+                excludes payroll-deducted contributions (they never touched
+                cash). Withdrawals are shown GROSS (including tax withheld at
+                the source); expand one to split it into estimated
+                withholding and the net amount that actually reached cash. */}
             {sectionHeader(
-              "withdrawals",
-              "Withdrawals",
-              (yi) => withdrawalGroups.reduce((s, g) => s + g.accounts.reduce((t, a) => t + (wdGrossMaps[yi].get(a.id) ?? 0), 0), 0),
-              "Total pulled from your accounts, INCLUDING tax withheld at the source: planned drawdowns and RMDs. Expand any account to split its withdrawal into estimated withholding (sent to the IRS) and the net amount that reached your spending. A transfer between your own accounts also appears here for visibility."
+              "accountActivity",
+              "Account Activity",
+              totalNet,
+              "Net movement for each account this year: what was deposited or swept in as surplus, minus what was withdrawn (including tax withheld at the source, for RMDs and planned drawdowns) and minus other direct flows like a down payment or home sale. Excludes payroll-deducted contributions from the net, since those never touched cash -- take-home pay was already entered net of them. Click an account to see the detail.",
+              { signed: true }
             )}
-            {isOpen("withdrawals") &&
-              (hasWithdrawals
-                ? withdrawalGroups.map((g) => (
-                    <Fragment key={g.key}>
-                      <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggle(`wd:${g.key}`)}>
-                        <td className="py-2 pl-6 font-medium">
-                          <ToggleLabel
-                            label={g.label}
-                            expanded={isOpen(`wd:${g.key}`)}
-                            onToggle={() => toggle(`wd:${g.key}`)}
-                          />
-                        </td>
-                        {cells((yi) => g.accounts.reduce((s, a) => s + (wdGrossMaps[yi].get(a.id) ?? 0), 0))}
-                      </tr>
-                      {isOpen(`wd:${g.key}`) &&
-                        g.accounts.map((a) => {
-                          const hasTax = years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
-                          return (
-                            <Fragment key={a.id}>
-                              <tr
-                                className={`text-dim hover:bg-accent/15 ${hasTax ? "cursor-pointer" : ""}`}
-                                onClick={hasTax ? () => toggle(`wd:acct:${a.id}`) : undefined}
-                              >
+            {isOpen("accountActivity") &&
+              (activityAccounts.length
+                ? activityAccounts.map((a) => {
+                    const hasTax = years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
+                    const hasDeposit = years.some((_y, yi) => depositOf(a.id, yi) > 0.5);
+                    const hasWithdrawal = years.some((_y, yi) => withdrawnOf(a.id, yi) > 0.5);
+                    const hasOther = years.some((_y, yi) => Math.abs(otherOf(a.id, yi)) > 0.5);
+                    const acctKey = `aa:${a.id}`;
+                    return (
+                      <Fragment key={a.id}>
+                        <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggle(acctKey)}>
+                          <td className="py-2 pl-6 font-medium">
+                            <ToggleLabel label={a.label} expanded={isOpen(acctKey)} onToggle={() => toggle(acctKey)} />
+                          </td>
+                          {cells((yi) => netOf(a.id, a.fromPaycheck, yi), { signed: true })}
+                        </tr>
+                        {isOpen(acctKey) && (
+                          <>
+                            {hasDeposit && (
+                              <tr className="text-dim hover:bg-accent/15">
                                 <td className="py-2 pl-12">
-                                  {hasTax ? (
-                                    <ToggleLabel
-                                      label={a.label}
-                                      expanded={isOpen(`wd:acct:${a.id}`)}
-                                      onToggle={() => toggle(`wd:acct:${a.id}`)}
-                                    />
-                                  ) : (
-                                    a.label
-                                  )}
+                                  Deposited / saved
+                                  {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck, excluded from net</span>}
                                 </td>
-                                {cells((yi) => wdGrossMaps[yi].get(a.id) ?? 0)}
+                                {cells((yi) => depositOf(a.id, yi))}
                               </tr>
-                              {hasTax && isOpen(`wd:acct:${a.id}`) && (
-                                <>
-                                  <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                                    <td className="py-2 pl-[4.5rem] text-xs italic">Estimated withholding</td>
-                                    {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
-                                  </tr>
-                                  <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                                    <td className="py-2 pl-[4.5rem] text-xs italic">Net withdrawal</td>
-                                    {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
-                                  </tr>
-                                </>
-                              )}
-                            </Fragment>
-                          );
-                        })}
-                    </Fragment>
-                  ))
-                : emptyRow("No withdrawals in this range."))}
+                            )}
+                            {hasWithdrawal && (
+                              <>
+                                <tr
+                                  className={`text-dim hover:bg-accent/15 ${hasTax ? "cursor-pointer" : ""}`}
+                                  onClick={hasTax ? () => toggle(`wd:acct:${a.id}`) : undefined}
+                                >
+                                  <td className="py-2 pl-12">
+                                    {hasTax ? (
+                                      <ToggleLabel label="Withdrawn" expanded={isOpen(`wd:acct:${a.id}`)} onToggle={() => toggle(`wd:acct:${a.id}`)} />
+                                    ) : (
+                                      "Withdrawn"
+                                    )}
+                                  </td>
+                                  {cells((yi) => withdrawnOf(a.id, yi))}
+                                </tr>
+                                {hasTax && isOpen(`wd:acct:${a.id}`) && (
+                                  <>
+                                    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+                                      <td className="py-2 pl-[4.5rem] text-xs italic">Estimated withholding</td>
+                                      {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
+                                    </tr>
+                                    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+                                      <td className="py-2 pl-[4.5rem] text-xs italic">Net withdrawal</td>
+                                      {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
+                                    </tr>
+                                  </>
+                                )}
+                              </>
+                            )}
+                            {hasOther && (
+                              <tr className="text-dim hover:bg-accent/15">
+                                <td className="py-2 pl-12">Other activity</td>
+                                {cells((yi) => -otherOf(a.id, yi), { signed: true })}
+                              </tr>
+                            )}
+                          </>
+                        )}
+                      </Fragment>
+                    );
+                  })
+                : emptyRow("No account activity in this range."))}
 
             {/* Cash-side tax rows -- withholding on benefit deposits and the
                 December true-up -- are shown under Federal Tax below, not
@@ -511,37 +600,8 @@ export function CashFlowTable({
                 They still count toward Net change in cash below; that row is
                 measured from the actual simulated balance, not summed. */}
 
-            {/* Saved to accounts */}
-            {hasSaved &&
-              sectionHeader(
-                "saved",
-                "Saved to accounts",
-                (yi) => years[yi].cashFlow.afterTaxContributionTotal + years[yi].cashFlow.surplusRouted
-              )}
-            {hasSaved && isOpen("saved") && (
-              <>
-                {surplusItems.length > 0 && (
-                  <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                    <td className="py-2 pl-10 font-medium">Surplus swept to savings/investments</td>
-                    {cells((yi) => years[yi].cashFlow.surplusRouted)}
-                  </tr>
-                )}
-                {itemRows(surplusItems, surplusMaps, "pl-14")}
-                {contribItems.map((item) => (
-                  <tr key={item.id} className={`border-t border-border/40 hover:bg-accent/15 ${item.fromPaycheck ? "text-dim/60" : "text-dim"}`}>
-                    <td className="py-2 pl-10">
-                      {item.label}
-                      {item.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
-                    </td>
-                    {cells((yi) => contribMaps[yi].get(item.id) ?? 0)}
-                  </tr>
-                ))}
-              </>
-            )}
-
-            {/* Interest earned directly on cash, and any direct hub activity
-                (a down payment from cash, home-sale proceeds, a custom
-                transfer touching the hub) -- shown whenever present so the
+            {/* Interest earned directly on cash -- the one remaining flow
+                that isn't tied to any account, shown whenever present so the
                 visible rows always sum exactly to the bottom line. */}
             {hasCashInterest && (
               <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
@@ -549,61 +609,14 @@ export function CashFlowTable({
                 {cells((yi) => years[yi].cashFlow.cashInterest)}
               </tr>
             )}
-            {hasOtherActivity && (
-              <>
-                <tr className="cursor-pointer text-dim hover:bg-accent/15" onClick={() => toggle("otherActivity")}>
-                  <td className="py-2 pl-2">
-                    <span className="inline-flex items-center gap-1">
-                      <ToggleLabel
-                        label="Other account activity"
-                        expanded={isOpen("otherActivity")}
-                        onToggle={() => toggle("otherActivity")}
-                      />
-                      <InfoTooltip text="One-off flows that touched cash directly: a home purchase down payment, home-sale proceeds, a custom transfer to/from the hub, net of income deposited straight into an investment. Expand to see each flow." />
-                    </span>
-                  </td>
-                  {years.map((y, yi) => {
-                    const v = d(years[yi].cashFlow.otherAccountActivity, yi);
-                    return (
-                      <td key={y.year} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
-                        {Math.abs(v) < 0.5 ? (
-                          <span className="text-dim">—</span>
-                        ) : (
-                          <span className={v < 0 ? "text-negative" : ""}>{formatMoney(v)}</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  {totalCell(totalOf((yi) => years[yi].cashFlow.otherAccountActivity), { signed: true })}
-                </tr>
-                {isOpen("otherActivity") &&
-                  otherActivityItems.map((item) => (
-                    <tr key={item.id} className="border-t border-border/40 text-dim hover:bg-accent/15">
-                      <td className="py-2 pl-10">{item.label}</td>
-                      {years.map((y, yi) => {
-                        const v = d(otherActivityMaps[yi].get(item.id) ?? 0, yi);
-                        return (
-                          <td key={y.year} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
-                            {Math.abs(v) < 0.5 ? (
-                              <span className="text-dim">—</span>
-                            ) : (
-                              <span className={v < 0 ? "text-negative" : ""}>{formatMoney(v)}</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                      {totalCell(totalOf((yi) => otherActivityMaps[yi].get(item.id) ?? 0), { signed: true })}
-                    </tr>
-                  ))}
-              </>
-            )}
             {/* Net change in cash -- the reconciling bottom line, measured
-                directly from the actual simulated cash balance. Withdrawals
-                above are shown GROSS, so to tie out by hand subtract the
-                estimated withholdings shown in the Taxes section. */}
+                directly from the actual simulated cash balance. Account
+                Activity's net is deposits minus GROSS withdrawals (including
+                withholding), so to tie out by hand subtract the estimated
+                withholdings shown in the Taxes section. */}
             {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, {
               strong: true,
-              hint: "The measured change in Extra Savings' balance this year. Withdrawals above are shown gross (including withholding), so to tie out by hand: operating result + withdrawals - estimated withholdings + true-up + saving + interest + other activity. Lands near $0 in a year where you draw just what you need.",
+              hint: "The measured change in Extra Savings' balance this year. To tie out by hand: operating result - Account Activity (net) - estimated withholdings + true-up + interest + other activity. Lands near $0 in a year where you draw just what you need.",
             })}
             {summaryRow("Ending cash on hand", (yi) => years[yi].cashFlow.endingCashBalance, {
               totalIsMeaningful: false,
