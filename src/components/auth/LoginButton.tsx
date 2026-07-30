@@ -30,7 +30,7 @@ export function LoginButton() {
       type="button"
       onClick={() => void signInWithGoogle()}
       title="Sign in to save your plan to the cloud and access it from other devices"
-      className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+      className="rounded-md border border-border bg-panel px-3 py-1.5 text-sm text-dim hover:text-foreground"
     >
       Sign in with Google
     </button>

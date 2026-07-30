@@ -718,7 +718,7 @@ export function NetWorthChart({
               // Keep icons inside the plot area: markers on the first visible
               // year would otherwise center over the y-axis and sit on top of
               // its dollar labels.
-              const x = Math.max(rawX, layout.left + ICON_SIZE / 2 + 2);
+              const x = Math.max(rawX, layout.left + ICON_SIZE / 2 + 10);
               const list = rawList;
               const stackBottom = layout.top + TOP_PAD + list.length * (ICON_SIZE + ICON_GAP) - ICON_GAP;
               return (
