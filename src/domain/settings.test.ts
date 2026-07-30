@@ -45,7 +45,6 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
     expect(parsed.moneyFlow).toEqual({
       splitOrder: [],
       drainOrder: [],
-      drainSplitMode: "priority_fill",
     });
   });
 
@@ -56,8 +55,7 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
         splitOrder: [
           { accountId: "savings", kind: "percent_of_remainder", amount: null, pct: 0.5, maxBalance: null, maxBalanceGrowthRatePct: null },
         ],
-        drainOrder: [{ accountId: "savings", startDate: null, endDate: null, splitPct: null }],
-        drainSplitMode: "priority_fill",
+        drainOrder: [{ accountId: "savings", startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 0.5 }],
       },
     });
     expect(parsed.moneyFlow.splitOrder).toHaveLength(1);
@@ -73,8 +71,8 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
       },
     });
     expect(parsed.moneyFlow.drainOrder.map((d) => ({ ...d, id: undefined }))).toEqual([
-      { id: undefined, accountId: "savings", startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
-      { id: undefined, accountId: "brokerage", startDate: null, endDate: null, splitPct: null, minBalance: null, minBalanceGrowthRatePct: null },
+      { id: undefined, accountId: "savings", kind: "percent_of_remainder", amount: null, pct: 1, startDate: null, endDate: null, minBalance: null, minBalanceGrowthRatePct: null },
+      { id: undefined, accountId: "brokerage", kind: "percent_of_remainder", amount: null, pct: 1, startDate: null, endDate: null, minBalance: null, minBalanceGrowthRatePct: null },
     ]);
     // Each migrated entry gets its own freshly-generated, non-empty id.
     const ids = parsed.moneyFlow.drainOrder.map((d) => d.id);
@@ -95,5 +93,17 @@ describe("forecastSettingsSchema -- moneyFlow defaults", () => {
     });
     expect(parsed.moneyFlow.splitOrder[0]).toMatchObject({ kind: "flat", amount: 7500 });
     expect(parsed.moneyFlow.splitOrder[1]).toMatchObject({ kind: "percent_of_remainder", pct: null });
+  });
+
+  it("defaults a drain stop's kind to percent_of_remainder with pct=1, not null -- so a plan saved before this field existed keeps draining each stop fully before the next", () => {
+    const parsed = forecastSettingsSchema.parse({
+      ...base,
+      moneyFlow: {
+        splitOrder: [],
+        drainOrder: [{ accountId: "brokerage" }, { accountId: "ira", kind: "flat", amount: 2000 }],
+      },
+    });
+    expect(parsed.moneyFlow.drainOrder[0]).toMatchObject({ kind: "percent_of_remainder", pct: 1 });
+    expect(parsed.moneyFlow.drainOrder[1]).toMatchObject({ kind: "flat", amount: 2000 });
   });
 });

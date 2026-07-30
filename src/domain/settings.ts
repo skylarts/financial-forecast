@@ -41,10 +41,13 @@ export type SplitStop = z.infer<typeof splitStopSchema>;
 
 /**
  * A stop in the shortfall "drain order" -- an account that can cover a cash
- * shortfall, in list order (first stop drained first, unless drainSplitMode
- * = "fixed_split"). The optional date window lets a stop participate only
- * for part of the plan -- e.g. an account that funds a shortfall for a few
- * years until another one becomes available.
+ * shortfall, in list order. Mirrors splitStopSchema's cascading model: each
+ * stop is either a flat $ amount or a percentage of what's left after the
+ * stops above it (cascading, not a share of the original shortfall), capped
+ * by its own floor -- whatever a stop can't cover spills to the next stop.
+ * The optional date window lets a stop participate only for part of the
+ * plan -- e.g. an account that funds a shortfall for a few years until
+ * another one becomes available.
  *
  * Has its own `id` (independent of `accountId`) so the SAME account can
  * appear more than once with different windows -- e.g. drain account A,
@@ -54,12 +57,21 @@ export const drainStopSchema = z.object({
   /** Stable identity for this list entry -- NOT unique per account; the same accountId may appear in multiple stops. */
   id: idSchema.default(() => nanoid()),
   accountId: idSchema,
+  kind: z.enum(["flat", "percent_of_remainder"]).default("percent_of_remainder"),
+  /** Used when kind = "flat": a fixed dollar amount (today's dollars, grown by inflation) taken off the top. */
+  amount: z.number().nonnegative().nullable().default(null),
+  /**
+   * Used when kind = "percent_of_remainder": this stop's share (0..1) of
+   * what's left after stops above it. Defaults to 1 (not null, unlike
+   * splitStopSchema's pct) so a plan saved before this field existed keeps
+   * behaving exactly like the old default: drain this stop fully before
+   * moving to the next.
+   */
+  pct: z.number().min(0).max(1).nullable().default(1),
   /** null = active from the plan's start. */
   startDate: isoDateSchema.nullable().default(null),
   /** null = active through the plan's end. */
   endDate: isoDateSchema.nullable().default(null),
-  /** Only used when drainSplitMode = "fixed_split": this stop's share of the shortfall (0..1). */
-  splitPct: z.number().min(0).max(1).nullable().default(null),
   /** Minimum balance (today's dollars, grown by inflation) this stop won't be drained below; null = no floor. */
   minBalance: z.number().nonnegative().nullable().default(null),
   /** Annual growth of the floor; null = follow settings.inflationRatePct. */
@@ -87,22 +99,20 @@ const drainOrderSchema = z.preprocess((val) => {
  * scenarioSchema's auto-inject transform in scenario.ts) is the sole hub: it
  * captures 100% of net income-minus-expenses every month with a hardcoded
  * $0 floor, `splitOrder` decides where that surplus goes, and `drainOrder`
- * (unchanged from before) decides what covers a shortfall. Edited from the
- * Routing tab, not per-account forms.
+ * decides what covers a shortfall using the same cascading kind/amount/pct
+ * model. Edited from the Routing tab, not per-account forms.
  */
 export const moneyFlowSchema = z.object({
   /** Ordered surplus split; first stop offered first, cascading remainder spills onward. */
   splitOrder: z.array(splitStopSchema).default([]),
-  /** Ordered drain sources for covering a shortfall; first (active) entry drawn first. */
+  /** Ordered drain sources for covering a shortfall; first (active) entry drained first, cascading remainder spills onward. */
   drainOrder: drainOrderSchema.default([]),
-  drainSplitMode: z.enum(["priority_fill", "fixed_split"]).default("priority_fill"),
 });
 export type MoneyFlow = z.infer<typeof moneyFlowSchema>;
 
 export const DEFAULT_MONEY_FLOW: MoneyFlow = {
   splitOrder: [],
   drainOrder: [],
-  drainSplitMode: "priority_fill",
 };
 
 export const filingStatusSchema = z.enum(["single", "marriedFilingJointly"]);

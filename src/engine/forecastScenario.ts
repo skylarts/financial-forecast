@@ -455,8 +455,8 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // other withdrawal). `floor` (default 0) keeps this source's balance from
   // being drawn below that amount -- the remaining shortfall is left for the
   // caller to spill to the next source. Returns the net (non-tax) amount
-  // that actually reached `spender` -- the single primitive both drain-order
-  // modes (priority_fill and fixed_split) draw from.
+  // that actually reached `spender` -- the single primitive the deficit
+  // cascade draws from.
   const drawFromSource = (
     source: EngineAccount,
     spender: EngineAccount,
@@ -931,45 +931,25 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
 
     // 6. Deficit cascade. Triggers once Extra Savings drops below $0 --
     //    hardcoded, not user-configurable (see splitStopSchema/moneyFlowSchema
-    //    docs: Extra Savings has no floor/ceiling input of its own). Only
-    //    drain stops whose optional date window covers this month participate
-    //    -- lets e.g. a brokerage fund a shortfall for a few years until a
-    //    later account becomes the active source.
+    //    docs: Extra Savings has no floor/ceiling input of its own). Mirrors
+    //    the surplus split above: each stop, in list order, is offered
+    //    either a flat $ amount or a percentage of what's left after the
+    //    stops above it (cascading, not a share of the original shortfall),
+    //    capped by its own floor -- whatever a stop can't cover (floor hit,
+    //    or its offered amount undershoots) spills to the next stop. Only
+    //    drain stops whose optional date window covers this month
+    //    participate -- lets e.g. a brokerage fund a shortfall for a few
+    //    years until a later account becomes the active source.
     if (extraSavingsAccount) {
       const spender = extraSavingsAccount;
       let shortfall = 0 - (balances.get(spender.id) ?? 0);
       if (shortfall > 0) {
         const active = drainStops.filter(({ stop }) => isDrainStopActive(stop, month));
-        const totalSplit = active.reduce((s, { stop }) => s + (stop.splitPct ?? 0), 0);
-
-        if (moneyFlow.drainSplitMode === "fixed_split" && totalSplit > 0) {
-          // Pass 1: each active source's target share of the ORIGINAL
-          // shortfall (not a shrinking remainder, so ratios stay meaningful
-          // regardless of draw order).
-          const originalShortfall = shortfall;
-          for (const { account: source, stop } of active) {
-            const target = originalShortfall * ((stop.splitPct ?? 0) / totalSplit);
-            const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
-            shortfall -= drawFromSource(source, spender, target, month, floor);
-          }
-          // Pass 2: top up any unmet remainder from active sources in list
-          // order -- the split is a target ratio, not a hard cap, so the
-          // shortfall still gets fully covered whenever the combined active
-          // balance allows it, rather than leaving the household short
-          // because one bucket ran low this month.
-          for (const { account: source, stop } of active) {
-            if (shortfall <= 0) break;
-            const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
-            shortfall -= drawFromSource(source, spender, shortfall, month, floor);
-          }
-        } else {
-          // priority_fill (default): drain each active source fully (down to
-          // its floor) before moving to the next, in list order.
-          for (const { account: source, stop } of active) {
-            if (shortfall <= 0) break;
-            const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
-            shortfall -= drawFromSource(source, spender, shortfall, month, floor);
-          }
+        for (const { account: source, stop } of active) {
+          if (shortfall <= 0.005) break;
+          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+          const offered = stop.kind === "flat" ? (stop.amount ?? 0) * inflationFactor : shortfall * (stop.pct ?? 0);
+          shortfall -= drawFromSource(source, spender, offered, month, floor);
         }
       }
     }

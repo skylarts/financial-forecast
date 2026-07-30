@@ -68,6 +68,12 @@ export function looksLikeV2Plan(raw: unknown): boolean {
  * (a splitPct of the ORIGINAL total) maps to the new pct of the CASCADING
  * remainder, which is the closest sensible translation but not a precise
  * behavioral match -- reasonable for a best-effort restore of an old backup.
+ *
+ * v2's withdrawalPriority (drain order) had no fixed_split/percentage
+ * concept at all -- it was always plain priority_fill -- so every migrated
+ * drain stop maps onto the new cascading drainOrder the same exact way as
+ * the priority_fill splitOrder case above: kind="percent_of_remainder",
+ * pct=1 (drain this stop fully before moving to the next).
  */
 function migrateMoneyFlow(accounts: Json[], surplusRoutingRule: Json | undefined) {
   const wasFixedSplit = surplusRoutingRule?.mode === "fixed_split";
@@ -85,11 +91,18 @@ function migrateMoneyFlow(accounts: Json[], surplusRoutingRule: Json | undefined
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
     .sort((a, b) => a.withdrawalPriority - b.withdrawalPriority)
-    .map((a) => ({ accountId: a.id, startDate: null, endDate: null, splitPct: null, minBalance: null }));
+    .map((a) => ({
+      accountId: a.id,
+      kind: "percent_of_remainder" as const,
+      amount: null,
+      pct: 1,
+      startDate: null,
+      endDate: null,
+      minBalance: null,
+    }));
   return {
     splitOrder,
     drainOrder,
-    drainSplitMode: "priority_fill",
   };
 }
 

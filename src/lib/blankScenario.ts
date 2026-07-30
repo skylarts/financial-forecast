@@ -24,7 +24,6 @@ export function makeBlankScenario(name: string) {
       moneyFlow: {
         splitOrder: [],
         drainOrder: [],
-        drainSplitMode: "priority_fill",
       },
       rmdEnabled: true,
       filingStatus: "single",
