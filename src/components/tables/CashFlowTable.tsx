@@ -440,6 +440,14 @@ export function CashFlowTable({
       </tr>
     ));
 
+  // Thin blank row dropped between major sections so they read as visually
+  // separated groups rather than one continuous list.
+  const spacerRow = (key: string) => (
+    <tr key={key} aria-hidden="true">
+      <td className="h-2 p-0" colSpan={col} />
+    </tr>
+  );
+
   const emptyRow = (text: string) => (
     <tr className="text-xs text-dim">
       <td className="py-2 pl-10" colSpan={col}>
@@ -476,6 +484,7 @@ export function CashFlowTable({
 
             {/* Expenses -- grouped by life event / home, expandable to the
                 underlying one-time + recurring pieces. */}
+            {spacerRow("spacer:expenses")}
             {sectionHeader("expenses", "Expenses", (yi) => years[yi].cashFlow.totalExpenses)}
             {isOpen("expenses") &&
               (expenseGroups.length
@@ -504,6 +513,7 @@ export function CashFlowTable({
                 : emptyRow("No expenses in this range."))}
 
             {/* Operating surplus / (shortfall) */}
+            {spacerRow("spacer:operatingSurplus")}
             {summaryRow("Operating surplus / (shortfall)", (yi) => years[yi].cashFlow.operatingCashFlow, {
               strong: true,
               hint: "Income minus expenses. When it goes negative (typically once income drops in retirement), Withdrawals below pull from your accounts to cover it.",
@@ -518,6 +528,7 @@ export function CashFlowTable({
                 cash). Withdrawals are shown GROSS (including tax withheld at
                 the source); expand one to split it into estimated
                 withholding and the net amount that actually reached cash. */}
+            {spacerRow("spacer:accountActivity")}
             {sectionHeader(
               "accountActivity",
               "Account Activity",
@@ -614,6 +625,7 @@ export function CashFlowTable({
                 Activity's net is deposits minus GROSS withdrawals (including
                 withholding), so to tie out by hand subtract the estimated
                 withholdings shown in the Taxes section. */}
+            {spacerRow("spacer:netChangeInCash")}
             {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, {
               strong: true,
               hint: "The measured change in Extra Savings' balance this year. To tie out by hand: operating result - Account Activity (net) - estimated withholdings + true-up + interest + other activity. Lands near $0 in a year where you draw just what you need.",
@@ -633,6 +645,7 @@ export function CashFlowTable({
                 was withheld at the source accounts, not from cash. */}
             {(hasFederalTax || hasBenefitWithholding || hasWithdrawalWithholding || hasSettlement) && (
               <>
+                {spacerRow("spacer:taxes")}
                 <tr className="cursor-pointer border-t-2 border-border bg-background/40 hover:bg-accent/15" onClick={() => toggle("taxes")}>
                   <td className="!bg-background/40 py-2.5 pl-2 font-bold">
                     <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">

@@ -347,6 +347,11 @@ export function AccountsTable({
                 </td>
               ))}
             </tr>
+            {/* Thin blank row so Assets/Liabilities read as visually
+                separated groups rather than one continuous list. */}
+            <tr aria-hidden="true">
+              <td className="h-2 p-0" colSpan={years.length + 1} />
+            </tr>
             <Section
               title="Assets"
               accounts={accounts.filter((a) => a.category === "asset")}
@@ -360,6 +365,9 @@ export function AccountsTable({
               }}
               mode={dollarMode}
             />
+            <tr aria-hidden="true">
+              <td className="h-2 p-0" colSpan={years.length + 1} />
+            </tr>
             <Section
               title="Liabilities"
               accounts={accounts.filter((a) => a.category === "liability")}
