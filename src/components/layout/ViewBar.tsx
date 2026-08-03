@@ -1,16 +1,35 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Id } from "@/domain";
+import type { Granularity, Id } from "@/domain";
 import type { DollarMode } from "@/lib/format";
 import { Chip, Segmented } from "@/components/ui/controls";
 
 const PRESETS = [5, 10, 20, 40] as const;
 
+/** Month-range presets, in months. Capped by the engine's monthly window. */
+const MONTH_PRESETS = [
+  { months: 6, label: "6m" },
+  { months: 12, label: "1y" },
+  { months: 24, label: "2y" },
+  { months: 36, label: "3y" },
+  { months: 60, label: "5y" },
+] as const;
+
 const DOLLAR_OPTIONS = [
   { value: "nominal" as const, label: "Nominal" },
   { value: "real" as const, label: "Real" },
 ];
+
+const GRANULARITY_OPTIONS = [
+  { value: "year" as const, label: "Yearly" },
+  { value: "month" as const, label: "Monthly" },
+];
+
+export interface MonthOption {
+  key: string;
+  label: string;
+}
 
 /**
  * The persistent control strip under the header.
@@ -27,6 +46,13 @@ export function ViewBar({
   rangeStart,
   rangeEnd,
   onRangeChange,
+  granularity,
+  onGranularityChange,
+  granularityAvailable,
+  monthOptions,
+  monthStart,
+  monthEnd,
+  onMonthRangeChange,
   dollarMode,
   onDollarModeChange,
   compareOptions,
@@ -39,6 +65,15 @@ export function ViewBar({
   rangeStart: number;
   rangeEnd: number;
   onRangeChange: (start: number, end: number) => void;
+  granularity: Granularity;
+  onGranularityChange: (g: Granularity) => void;
+  /** Only the views that can render monthly columns offer the toggle at all. */
+  granularityAvailable: boolean;
+  /** Every month the engine produced detail for, oldest first. */
+  monthOptions: MonthOption[];
+  monthStart: string;
+  monthEnd: string;
+  onMonthRangeChange: (start: string, end: string) => void;
   dollarMode: DollarMode;
   onDollarModeChange: (m: DollarMode) => void;
   compareOptions: { id: Id; name: string }[];
@@ -49,6 +84,17 @@ export function ViewBar({
   const years = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
   const isFullRange = rangeStart === minYear && rangeEnd === maxYear;
   const activePreset = PRESETS.find((n) => rangeEnd - rangeStart + 1 === n && !isFullRange) ?? null;
+
+  const showMonths = granularityAvailable && granularity === "month" && monthOptions.length > 0;
+  const startIndex = monthOptions.findIndex((m) => m.key === monthStart);
+  const endIndex = monthOptions.findIndex((m) => m.key === monthEnd);
+  const activeMonthPreset =
+    startIndex >= 0 && endIndex >= 0 ? MONTH_PRESETS.find((p) => endIndex - startIndex + 1 === p.months) ?? null : null;
+  /** Extend/shrink the window forward from the current start, clamped to what the engine produced. */
+  const applyMonthPreset = (months: number) => {
+    const from = Math.max(0, startIndex);
+    onMonthRangeChange(monthOptions[from].key, monthOptions[Math.min(monthOptions.length - 1, from + months - 1)].key);
+  };
 
   const [compareOpen, setCompareOpen] = useState(false);
   const compareRef = useRef<HTMLDivElement>(null);
@@ -69,52 +115,110 @@ export function ViewBar({
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-panel px-6 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
-          From
-          <select
-            value={rangeStart}
-            onChange={(e) => onRangeChange(Number(e.target.value), rangeEnd)}
-            className={selectClass}
-          >
-            {years
-              .filter((y) => y <= rangeEnd)
-              .map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
+        {granularityAvailable && (
+          <Segmented
+            ariaLabel="Show one column per year or per month"
+            options={GRANULARITY_OPTIONS}
+            value={granularity}
+            onChange={onGranularityChange}
+            size="sm"
+          />
+        )}
+        {showMonths ? (
+          <>
+            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+              From
+              <select
+                value={monthStart}
+                onChange={(e) => onMonthRangeChange(e.target.value, monthEnd)}
+                className={selectClass}
+              >
+                {monthOptions
+                  .filter((m) => m.key <= monthEnd)
+                  .map((m) => (
+                    <option key={m.key} value={m.key}>
+                      {m.label}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+              To
+              <select
+                value={monthEnd}
+                onChange={(e) => onMonthRangeChange(monthStart, e.target.value)}
+                className={selectClass}
+              >
+                {monthOptions
+                  .filter((m) => m.key >= monthStart)
+                  .map((m) => (
+                    <option key={m.key} value={m.key}>
+                      {m.label}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <div className="flex items-center gap-1">
+              {MONTH_PRESETS.filter((p) => p.months <= monthOptions.length).map((p) => (
+                <Chip key={p.months} active={activeMonthPreset?.months === p.months} onClick={() => applyMonthPreset(p.months)}>
+                  {p.label}
+                </Chip>
               ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
-          To
-          <select
-            value={rangeEnd}
-            onChange={(e) => onRangeChange(rangeStart, Number(e.target.value))}
-            className={selectClass}
-          >
-            {years
-              .filter((y) => y >= rangeStart)
-              .map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
+            </div>
+            <span className="text-[11.5px] text-dim-2">
+              Monthly detail covers the first {Math.round(monthOptions.length / 12)} years of the plan.
+            </span>
+          </>
+        ) : (
+          <>
+            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+              From
+              <select
+                value={rangeStart}
+                onChange={(e) => onRangeChange(Number(e.target.value), rangeEnd)}
+                className={selectClass}
+              >
+                {years
+                  .filter((y) => y <= rangeEnd)
+                  .map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+              To
+              <select
+                value={rangeEnd}
+                onChange={(e) => onRangeChange(rangeStart, Number(e.target.value))}
+                className={selectClass}
+              >
+                {years
+                  .filter((y) => y >= rangeStart)
+                  .map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <div className="flex items-center gap-1">
+              {PRESETS.map((n) => (
+                <Chip
+                  key={n}
+                  active={activePreset === n}
+                  onClick={() => onRangeChange(rangeStart, Math.min(maxYear, rangeStart + n - 1))}
+                >
+                  {n}y
+                </Chip>
               ))}
-          </select>
-        </label>
-        <div className="flex items-center gap-1">
-          {PRESETS.map((n) => (
-            <Chip
-              key={n}
-              active={activePreset === n}
-              onClick={() => onRangeChange(rangeStart, Math.min(maxYear, rangeStart + n - 1))}
-            >
-              {n}y
-            </Chip>
-          ))}
-          <Chip active={isFullRange} onClick={() => onRangeChange(minYear, maxYear)}>
-            Full
-          </Chip>
-        </div>
+              <Chip active={isFullRange} onClick={() => onRangeChange(minYear, maxYear)}>
+                Full
+              </Chip>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

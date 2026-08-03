@@ -7,13 +7,14 @@ import type {
   Account,
   ExpenseBaseline,
   ForecastSettings,
+  Granularity,
   Id,
   IncomeSource,
   LedgerEvent,
+  PeriodSnapshot,
   Person,
   ScenarioEvent,
   TimelineRow,
-  YearSnapshot,
 } from "@/domain";
 import type { DollarMode } from "@/lib/format";
 import { AccountsTable } from "./AccountsTable";
@@ -27,7 +28,7 @@ type Tab = DetailView;
 export interface CompareTabData {
   name: string;
   accounts: Account[];
-  years: YearSnapshot[];
+  periods: PeriodSnapshot[];
   timeline: TimelineRow[];
   ledger: LedgerEvent[];
   events: ScenarioEvent[];
@@ -40,7 +41,8 @@ export interface CompareTabData {
 export function DetailTabs({
   active,
   accounts,
-  years,
+  periods,
+  granularity,
   timeline,
   ledger,
   events,
@@ -55,7 +57,9 @@ export function DetailTabs({
 }: {
   active: Tab;
   accounts: Account[];
-  years: YearSnapshot[];
+  /** Year or month snapshots for the selected range -- see `granularity`. */
+  periods: PeriodSnapshot[];
+  granularity: Granularity;
   timeline: TimelineRow[];
   ledger: LedgerEvent[];
   events: ScenarioEvent[];
@@ -76,7 +80,7 @@ export function DetailTabs({
   const routingLocked = showCompare;
 
   const viewAccounts = showCompare ? compare!.accounts : accounts;
-  const viewYears = showCompare ? compare!.years : years;
+  const viewPeriods = showCompare ? compare!.periods : periods;
   const viewTimeline = showCompare ? compare!.timeline : timeline;
   const viewLedger = showCompare ? compare!.ledger : ledger;
   const viewEvents = showCompare ? compare!.events : events;
@@ -108,11 +112,12 @@ export function DetailTabs({
       {active === "Accounts" && (
         <AccountsTable
           accounts={viewAccounts}
-          years={viewYears}
+          periods={viewPeriods}
           editableAccountIds={viewEditableAccountIds}
           people={viewPeople}
           dollarMode={dollarMode}
           events={viewEvents}
+          granularity={granularity}
         />
       )}
       {active === "Timeline" && (
@@ -135,7 +140,9 @@ export function DetailTabs({
         ) : (
           <MoneyFlowEditor accounts={editableAccounts} settings={settings} />
         ))}
-      {active === "Cash Flow" && <CashFlowTable years={viewYears} accounts={viewAccounts} dollarMode={dollarMode} />}
+      {active === "Cash Flow" && (
+        <CashFlowTable periods={viewPeriods} accounts={viewAccounts} dollarMode={dollarMode} granularity={granularity} />
+      )}
     </div>
   );
 }

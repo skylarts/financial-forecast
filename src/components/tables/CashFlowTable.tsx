@@ -1,13 +1,21 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import type { Account, CashFlowLineItem, FederalTaxComponentKey, TaxTreatment, WithdrawalLineItem, YearSnapshot } from "@/domain";
+import type {
+  Account,
+  CashFlowLineItem,
+  FederalTaxComponentKey,
+  Granularity,
+  PeriodSnapshot,
+  TaxTreatment,
+  WithdrawalLineItem,
+} from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { InfoTooltip } from "@/components/ui/formFields";
 import { useUiStore } from "@/store/useUiStore";
 
 // Fixed display order for the federal tax breakdown -- matches the order
-// components are computed in the engine, and stays stable across years
+// components are computed in the engine, and stays stable across periods
 // (rather than re-sorting by magnitude, which would shuffle row order as the
 // tax-deferred/pension/SS split shifts from year to year).
 const FEDERAL_TAX_COMPONENT_ORDER: FederalTaxComponentKey[] = [
@@ -27,7 +35,7 @@ const TAX_GROUPS: { key: TaxTreatment; label: string }[] = [
 ];
 
 /**
- * Union of line-item ids across all visible years. Ordered by total
+ * Union of line-item ids across all visible periods. Ordered by total
  * magnitude by default, or chronologically by each item's real first-posted
  * date (items with no known date sort last) when sortBy = "date".
  */
@@ -59,7 +67,7 @@ function unionItems(
   return items.sort((a, b) => (totals.get(b.id) ?? 0) - (totals.get(a.id) ?? 0));
 }
 
-/** Union of withdrawal source accounts across visible years, with tax treatment, by gross magnitude. */
+/** Union of withdrawal source accounts across visible periods, with tax treatment, by gross magnitude. */
 function unionWithdrawals(perYear: WithdrawalLineItem[][]): { id: string; label: string; taxTreatment: TaxTreatment }[] {
   const meta = new Map<string, { label: string; taxTreatment: TaxTreatment }>();
   const totals = new Map<string, number>();
@@ -91,14 +99,18 @@ function ToggleLabel({ label, expanded, onToggle }: { label: string; expanded: b
 }
 
 export function CashFlowTable({
-  years,
+  periods,
   accounts,
   dollarMode,
+  granularity,
 }: {
-  years: YearSnapshot[];
+  /** One column per period -- calendar years or months, depending on `granularity`. */
+  periods: PeriodSnapshot[];
   accounts: Account[];
   dollarMode: DollarMode;
+  granularity: Granularity;
 }) {
+  const isMonthly = granularity === "month";
   // Every section starts collapsed. "Taxes" is the exception -- its expand
   // state is remembered across reloads/sign-ins (see useUiStore) rather than
   // reset each visit, since it's a section people either always or never care
@@ -127,32 +139,32 @@ export function CashFlowTable({
   // Flows happen throughout the year, so they use the mid-year flow deflator;
   // the ending-balance row uses the year-end balance deflator instead.
   const d = (value: number, yearIndex: number) =>
-    dollarMode === "real" ? value / (years[yearIndex].flowInflationDeflator ?? years[yearIndex].inflationDeflator) : value;
+    dollarMode === "real" ? value / (periods[yearIndex].flowInflationDeflator ?? periods[yearIndex].inflationDeflator) : value;
   const dBalance = (value: number, yearIndex: number) =>
-    dollarMode === "real" ? value / years[yearIndex].inflationDeflator : value;
+    dollarMode === "real" ? value / periods[yearIndex].inflationDeflator : value;
 
   // Per-year id→amount lookup maps + union id lists for each drill-down section.
-  const incomeMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.incomeByItem.map((i) => [i.id, i.amount]))), [years]);
-  const expenseMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.expenseByItem.map((i) => [i.id, i.amount]))), [years]);
-  const contribMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.contributionsByItem.map((i) => [i.id, i.amount]))), [years]);
-  const surplusMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.surplusByAccount.map((i) => [i.id, i.amount]))), [years]);
-  const wdGrossMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.withdrawalsByAccount.map((w) => [w.id, w.gross]))), [years]);
-  const wdTaxMaps = useMemo(() => years.map((y) => new Map(y.cashFlow.withdrawalsByAccount.map((w) => [w.id, w.tax]))), [years]);
+  const incomeMaps = useMemo(() => periods.map((y) => new Map(y.cashFlow.incomeByItem.map((i) => [i.id, i.amount]))), [periods]);
+  const expenseMaps = useMemo(() => periods.map((y) => new Map(y.cashFlow.expenseByItem.map((i) => [i.id, i.amount]))), [periods]);
+  const contribMaps = useMemo(() => periods.map((y) => new Map(y.cashFlow.contributionsByItem.map((i) => [i.id, i.amount]))), [periods]);
+  const surplusMaps = useMemo(() => periods.map((y) => new Map(y.cashFlow.surplusByAccount.map((i) => [i.id, i.amount]))), [periods]);
+  const wdGrossMaps = useMemo(() => periods.map((y) => new Map(y.cashFlow.withdrawalsByAccount.map((w) => [w.id, w.gross]))), [periods]);
+  const wdTaxMaps = useMemo(() => periods.map((y) => new Map(y.cashFlow.withdrawalsByAccount.map((w) => [w.id, w.tax]))), [periods]);
 
-  const incomeItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.incomeByItem), "date"), [years]);
-  const expenseItems = useMemo(() => unionItems(years.map((y) => y.cashFlow.expenseByItem), "date"), [years]);
+  const incomeItems = useMemo(() => unionItems(periods.map((y) => y.cashFlow.incomeByItem), "date"), [periods]);
+  const expenseItems = useMemo(() => unionItems(periods.map((y) => y.cashFlow.expenseByItem), "date"), [periods]);
   const contribItems = useMemo(() => {
     const fromPay = new Map<string, boolean>();
-    for (const y of years) for (const c of y.cashFlow.contributionsByItem) fromPay.set(c.id, c.fromPaycheck);
-    return unionItems(years.map((y) => y.cashFlow.contributionsByItem)).map((it) => ({ ...it, fromPaycheck: fromPay.get(it.id) ?? false }));
-  }, [years]);
+    for (const y of periods) for (const c of y.cashFlow.contributionsByItem) fromPay.set(c.id, c.fromPaycheck);
+    return unionItems(periods.map((y) => y.cashFlow.contributionsByItem)).map((it) => ({ ...it, fromPaycheck: fromPay.get(it.id) ?? false }));
+  }, [periods]);
   // otherActivityByItem grouped by its counterparty account (falling back to
   // a synthetic "__other__" bucket for flows with no single account, e.g. a
   // reconciling residual) -- folded into Account Activity below instead of
   // living in its own section.
   const otherActivityMapsByAccount = useMemo(
     () =>
-      years.map((y) => {
+      periods.map((y) => {
         const m = new Map<string, number>();
         for (const it of y.cashFlow.otherActivityByItem) {
           const key = it.accountId ?? "__other__";
@@ -160,7 +172,7 @@ export function CashFlowTable({
         }
         return m;
       }),
-    [years]
+    [periods]
   );
 
   // Expenses grouped by source: a life event's one-time + recurring costs
@@ -217,22 +229,22 @@ export function CashFlowTable({
 
   // Federal tax breakdown -- shown as negative (a deduction), same sign convention as the summary row above it.
   const federalTaxComponentMaps = useMemo(
-    () => years.map((y) => new Map(y.cashFlow.federalTaxByComponent.map((c) => [c.key, -c.amount]))),
-    [years]
+    () => periods.map((y) => new Map(y.cashFlow.federalTaxByComponent.map((c) => [c.key, -c.amount]))),
+    [periods]
   );
   const federalTaxComponentItems = useMemo(() => {
     const labels = new Map<string, string>();
-    for (const y of years) for (const c of y.cashFlow.federalTaxByComponent) labels.set(c.key, c.label);
+    for (const y of periods) for (const c of y.cashFlow.federalTaxByComponent) labels.set(c.key, c.label);
     return FEDERAL_TAX_COMPONENT_ORDER.filter((k) => labels.has(k)).map((k) => ({ id: k, label: `${labels.get(k)} (actual)` }));
-  }, [years]);
+  }, [periods]);
 
   // Withdrawal source accounts, grouped by tax treatment (only groups with data).
   const withdrawalGroups = useMemo(() => {
-    const items = unionWithdrawals(years.map((y) => y.cashFlow.withdrawalsByAccount));
+    const items = unionWithdrawals(periods.map((y) => y.cashFlow.withdrawalsByAccount));
     return TAX_GROUPS.map((g) => ({ ...g, accounts: items.filter((it) => it.taxTreatment === g.key) })).filter(
       (g) => g.accounts.length > 0
     );
-  }, [years]);
+  }, [periods]);
 
   // Estimated withholding taken at the source from taxable/tax-deferred
   // withdrawals -- shown as an informational drill-down under Federal Tax,
@@ -241,8 +253,8 @@ export function CashFlowTable({
   const withholdingItems = useMemo(() => {
     const items: { id: string; label: string }[] = [];
     for (const g of withdrawalGroups) for (const a of g.accounts) items.push({ id: a.id, label: a.label });
-    return items.filter((it) => years.some((_y, yi) => (wdTaxMaps[yi].get(it.id) ?? 0) > 0.5));
-  }, [withdrawalGroups, years, wdTaxMaps]);
+    return items.filter((it) => periods.some((_p, yi) => (wdTaxMaps[yi].get(it.id) ?? 0) > 0.5));
+  }, [withdrawalGroups, periods, wdTaxMaps]);
 
   // Account name lookup for the unified Account Activity section below.
   const accountNameById = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
@@ -278,7 +290,7 @@ export function CashFlowTable({
     for (const m of otherActivityMapsByAccount) for (const id of m.keys()) ids.add(id);
     const fromPaycheckOf = new Map(contribItems.map((it) => [it.id.replace(/:contribution$/, ""), it.fromPaycheck]));
     const magnitude = (id: string) =>
-      years.reduce(
+      periods.reduce(
         (s, _y, yi) =>
           s +
           (wdGrossMaps[yi].get(id) ?? 0) +
@@ -294,28 +306,29 @@ export function CashFlowTable({
         fromPaycheck: fromPaycheckOf.get(id) ?? false,
       }))
       .sort((a, b) => magnitude(b.id) - magnitude(a.id));
-  }, [wdGrossMaps, surplusMaps, contribMaps, otherActivityMapsByAccount, contribItems, accountNameById, years]);
+  }, [wdGrossMaps, surplusMaps, contribMaps, otherActivityMapsByAccount, contribItems, accountNameById, periods]);
 
   const totalNet = (yi: number) => activityAccounts.reduce((s, a) => s + netOf(a.id, a.fromPaycheck, yi), 0);
 
-  const hasCashInterest = years.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
-  const hasBenefitWithholding = years.some((y) => Math.abs(y.cashFlow.incomeTaxWithheldFromCash) > 0.5);
-  const hasSettlement = years.some((y) => Math.abs(y.cashFlow.taxSettlement) > 0.5);
-  const hasFederalTax = years.some((y) => y.cashFlow.federalTaxTotal > 0.5);
+  const hasCashInterest = periods.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
+  const hasBenefitWithholding = periods.some((y) => Math.abs(y.cashFlow.incomeTaxWithheldFromCash) > 0.5);
+  const hasSettlement = periods.some((y) => Math.abs(y.cashFlow.taxSettlement) > 0.5);
+  const hasFederalTax = periods.some((y) => y.cashFlow.federalTaxTotal > 0.5);
   const hasWithdrawalWithholding = withholdingItems.length > 0;
 
-  if (years.length === 0) {
+  if (periods.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-panel p-8 text-center text-sm text-dim">
-        No years in the selected range.
+        No {isMonthly ? "months" : "years"}{" "}
+        in the selected range.
       </div>
     );
   }
 
-  const col = years.length + 2; // label + each visible year + total
+  const col = periods.length + 2; // label + each visible year + total
 
   // Sum of a row's deflated per-year values across the selected range.
-  const totalOf = (get: (yi: number) => number) => years.reduce((s, _y, yi) => s + d(get(yi), yi), 0);
+  const totalOf = (get: (yi: number) => number) => periods.reduce((s, _y, yi) => s + d(get(yi), yi), 0);
 
   const totalCellClass = "py-2 pr-3 text-right tabular-nums bg-background/40 font-medium";
 
@@ -345,10 +358,10 @@ export function CashFlowTable({
   // that can go either way) instead of showing plain unsigned text.
   const cells = (get: (yi: number) => number, opts?: { signed?: boolean }) => (
     <>
-      {years.map((y, yi) => {
+      {periods.map((p, yi) => {
         const v = d(get(yi), yi);
         return (
-          <td key={y.year} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+          <td key={p.periodKey} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
             {Math.abs(v) < 0.5 ? (
               <span className="text-dim">—</span>
             ) : opts?.signed ? (
@@ -375,17 +388,17 @@ export function CashFlowTable({
           {opts?.hint && <InfoTooltip text={opts.hint} />}
         </span>
       </td>
-      {years.map((y, yi) => {
+      {periods.map((p, yi) => {
         const v = opts?.balance ? dBalance(get(yi), yi) : d(get(yi), yi);
         return (
-          <td key={y.year} className={`py-2 pr-3 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+          <td key={p.periodKey} className={`py-2 pr-3 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
             <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
           </td>
         );
       })}
       {opts?.totalIsMeaningful === false ? (
         <td className={totalCellClass}>
-          <span className="text-dim" title="A point-in-time balance isn't meaningful to sum across years">
+          <span className="text-dim" title="A point-in-time balance isn't meaningful to sum across periods">
             —
           </span>
         </td>
@@ -404,10 +417,10 @@ export function CashFlowTable({
           {hint && <InfoTooltip text={hint} />}
         </span>
       </td>
-      {years.map((y, yi) => {
+      {periods.map((p, yi) => {
         const v = d(get(yi), yi);
         return (
-          <td key={y.year} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+          <td key={p.periodKey} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
             {Math.abs(v) < 0.5 ? (
               <span className="text-dim">—</span>
             ) : (
@@ -465,29 +478,29 @@ export function CashFlowTable({
           <thead>
             <tr className="text-left text-xs text-dim">
               <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-2.5 pl-2 font-medium">Category</th>
-              {years.map((y, yi) => (
+              {periods.map((p, yi) => (
                 <th
-                  key={y.year}
+                  key={p.periodKey}
                   className={`py-2.5 pr-3 text-right font-medium ${colHoverClass(yi)}`}
                   {...colHoverProps(yi)}
                 >
-                  {y.year}
+                  {p.periodLabel}
                 </th>
               ))}
               <th className="bg-background/40 py-2.5 pr-3 text-right font-medium">
-                Total ({years[0].year}–{years[years.length - 1].year})
+                Total ({periods[0].periodLabel}–{periods[periods.length - 1].periodLabel})
               </th>
             </tr>
           </thead>
           <tbody>
             {/* Income */}
-            {sectionHeader("income", "Income", (yi) => years[yi].cashFlow.totalIncome)}
+            {sectionHeader("income", "Income", (yi) => periods[yi].cashFlow.totalIncome)}
             {isOpen("income") && (incomeItems.length ? itemRows(incomeItems, incomeMaps) : emptyRow("No income in this range."))}
 
             {/* Expenses -- grouped by life event / home, expandable to the
                 underlying one-time + recurring pieces. */}
             {spacerRow("spacer:expenses")}
-            {sectionHeader("expenses", "Expenses", (yi) => years[yi].cashFlow.totalExpenses)}
+            {sectionHeader("expenses", "Expenses", (yi) => periods[yi].cashFlow.totalExpenses)}
             {isOpen("expenses") &&
               (expenseGroups.length
                 ? expenseGroups.map((g) =>
@@ -516,7 +529,7 @@ export function CashFlowTable({
 
             {/* Operating surplus / (shortfall) */}
             {spacerRow("spacer:operatingSurplus")}
-            {summaryRow("Operating surplus / (shortfall)", (yi) => years[yi].cashFlow.operatingCashFlow, {
+            {summaryRow("Operating surplus / (shortfall)", (yi) => periods[yi].cashFlow.operatingCashFlow, {
               strong: true,
               hint: "Income minus expenses. When it goes negative (typically once income drops in retirement), Withdrawals below pull from your accounts to cover it.",
             })}
@@ -541,10 +554,10 @@ export function CashFlowTable({
             {isOpen("accountActivity") &&
               (activityAccounts.length
                 ? activityAccounts.map((a) => {
-                    const hasTax = years.some((_y, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
-                    const hasDeposit = years.some((_y, yi) => depositOf(a.id, yi) > 0.5);
-                    const hasWithdrawal = years.some((_y, yi) => withdrawnOf(a.id, yi) > 0.5);
-                    const hasOther = years.some((_y, yi) => Math.abs(otherOf(a.id, yi)) > 0.5);
+                    const hasTax = periods.some((_p, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
+                    const hasDeposit = periods.some((_p, yi) => depositOf(a.id, yi) > 0.5);
+                    const hasWithdrawal = periods.some((_p, yi) => withdrawnOf(a.id, yi) > 0.5);
+                    const hasOther = periods.some((_p, yi) => Math.abs(otherOf(a.id, yi)) > 0.5);
                     const acctKey = `aa:${a.id}`;
                     return (
                       <Fragment key={a.id}>
@@ -619,7 +632,7 @@ export function CashFlowTable({
             {hasCashInterest && (
               <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
                 <td className="py-2 pl-2">Interest earned on cash</td>
-                {cells((yi) => years[yi].cashFlow.cashInterest)}
+                {cells((yi) => periods[yi].cashFlow.cashInterest)}
               </tr>
             )}
             {/* Net change in cash -- the reconciling bottom line, measured
@@ -628,11 +641,11 @@ export function CashFlowTable({
                 withholding), so to tie out by hand subtract the estimated
                 withholdings shown in the Taxes section. */}
             {spacerRow("spacer:netChangeInCash")}
-            {summaryRow("Net change in cash", (yi) => years[yi].cashFlow.netCashFlow, {
+            {summaryRow("Net change in cash", (yi) => periods[yi].cashFlow.netCashFlow, {
               strong: true,
               hint: "The measured change in Extra Savings' balance this year. To tie out by hand: operating result - Account Activity (net) - estimated withholdings + true-up + interest + other activity. Lands near $0 in a year where you draw just what you need.",
             })}
-            {summaryRow("Ending cash on hand", (yi) => years[yi].cashFlow.endingCashBalance, {
+            {summaryRow("Ending cash on hand", (yi) => periods[yi].cashFlow.endingCashBalance, {
               totalIsMeaningful: false,
               balance: true,
               hint: "Your total balance across all cash accounts, not just Extra Savings -- a broader figure than the reconciliation above. Not summed in the Total column since it's a balance, not a flow.",
@@ -652,7 +665,14 @@ export function CashFlowTable({
                   <td className="py-2.5 pl-2 font-bold">
                     <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
                       <ToggleLabel label="Taxes (informational)" expanded={isOpen("taxes")} onToggle={() => toggle("taxes")} />
-                      <InfoTooltip text="Not part of the cash reconciliation above -- most tax is withheld inside the source accounts (it shows up in each account's gross withdrawal), with the year-end true-up settling the difference into cash." />
+                      <InfoTooltip
+                        text={
+                          "Not part of the cash reconciliation above -- most tax is withheld inside the source accounts (it shows up in each account's gross withdrawal), with the year-end true-up settling the difference into cash." +
+                          (isMonthly
+                            ? " In a monthly view, withholding appears in the month it's taken, but the actual bill and the true-up are only knowable once the whole year's income is in -- so both land entirely on December."
+                            : "")
+                        }
+                      />
                     </span>
                   </td>
                   {col > 1 && <td colSpan={col - 1} />}
@@ -667,15 +687,15 @@ export function CashFlowTable({
                           <InfoTooltip text="The exact bill for the year from real IRS brackets on actual realized income -- and, after the year-end true-up, exactly what the household actually paid. Expand to see which income sources it came from. Tax is computed on the household's joint income, so it can't be split per person." />
                         </span>
                       </td>
-                      {years.map((y, yi) => {
-                        const v = d(-years[yi].cashFlow.federalTaxTotal, yi);
+                      {periods.map((p, yi) => {
+                        const v = d(-periods[yi].cashFlow.federalTaxTotal, yi);
                         return (
-                          <td key={y.year} className={`py-2 pr-3 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+                          <td key={p.periodKey} className={`py-2 pr-3 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
                             <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
                           </td>
                         );
                       })}
-                      {totalCell(totalOf((yi) => -years[yi].cashFlow.federalTaxTotal), { signed: true })}
+                      {totalCell(totalOf((yi) => -periods[yi].cashFlow.federalTaxTotal), { signed: true })}
                     </tr>
                     {isOpen("federalTax") &&
                       (federalTaxComponentItems.length
@@ -692,19 +712,19 @@ export function CashFlowTable({
                           "Estimated withholdings (total withheld)",
                           (yi) =>
                             -withholdingItems.reduce((s, it) => s + (wdTaxMaps[yi].get(it.id) ?? 0), 0) -
-                            years[yi].cashFlow.incomeTaxWithheldFromCash,
+                            periods[yi].cashFlow.incomeTaxWithheldFromCash,
                           "All estimated tax withheld during the year: at the source on account withdrawals, and from Social Security / pension deposits before they reach cash. Expand to see it by source."
                         )}
                         {isOpen("withholdings") && (
                           <>
                             {itemRows(
                               withholdingItems.map((it) => ({ ...it, label: `${it.label} est. withholding` })),
-                              years.map((_y, yi) => new Map(withholdingItems.map((it) => [it.id, -(wdTaxMaps[yi].get(it.id) ?? 0)])))
+                              periods.map((_p, yi) => new Map(withholdingItems.map((it) => [it.id, -(wdTaxMaps[yi].get(it.id) ?? 0)])))
                             )}
                             {hasBenefitWithholding &&
                               itemRows(
                                 [{ id: "benefits", label: "Social Security / pension est. withholding" }],
-                                years.map((_y, yi) => new Map([["benefits", -years[yi].cashFlow.incomeTaxWithheldFromCash]]))
+                                periods.map((_p, yi) => new Map([["benefits", -periods[yi].cashFlow.incomeTaxWithheldFromCash]]))
                               )}
                           </>
                         )}
@@ -715,7 +735,7 @@ export function CashFlowTable({
                     {hasSettlement &&
                       reconcileRow(
                         "Tax true-up (year-end settlement)",
-                        (yi) => years[yi].cashFlow.taxSettlement,
+                        (yi) => periods[yi].cashFlow.taxSettlement,
                         "Each December the estimated withholding is settled against the exact bracket-computed bill -- positive is a refund back into cash, negative is extra tax owed. After this, the year's total withheld plus this settlement equals the Federal tax (actual bill) line above exactly."
                       )}
                   </>

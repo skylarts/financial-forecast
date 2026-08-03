@@ -8,7 +8,14 @@ import type { Account, TaxTreatment } from "./account";
  * Zod schemas (no untrusted external data to validate against them).
  */
 
-export interface AccountYearRollforward {
+/**
+ * Whether a snapshot covers a calendar year or a single calendar month. The
+ * engine emits both (see ProjectionResult.years / .months); every consumer
+ * renders the two identically, since a period snapshot carries its own label.
+ */
+export type Granularity = "year" | "month";
+
+export interface AccountPeriodRollforward {
   accountId: Id;
   year: number;
   startingBalance: number;
@@ -35,7 +42,7 @@ export interface CashFlowLineItem {
  * custom transfer touching the hub, or income deposited straight into a
  * non-hub account (negative: it counted in totalIncome but never reached
  * cash). Amounts are signed by their effect on cash; they sum exactly to
- * CashFlowYearRow.otherAccountActivity.
+ * CashFlowPeriodRow.otherAccountActivity.
  */
 export interface OtherActivityLineItem extends CashFlowLineItem {
   /** The non-hub counterparty account for this flow, when known (e.g. the home sold, the brokerage a windfall landed in); null for flows whose other leg isn't a single account. */
@@ -87,7 +94,22 @@ export interface FederalTaxComponent {
   amount: number;
 }
 
-export interface CashFlowYearRow {
+/**
+ * One period's cash flow. Every field below describes THIS period -- a
+ * calendar year in `ProjectionResult.years`, a single month in
+ * `ProjectionResult.months`. Both are built by the same code from the same
+ * simulated numbers, so a year's twelve monthly rows sum exactly to its
+ * annual row (see the monthly-rollup test).
+ *
+ * The one exception is the tax block at the bottom (federalTaxTotal,
+ * federalTaxByComponent, ordinaryTaxableIncome, taxableSocialSecurityAmount):
+ * the exact bracket-computed bill is only knowable once the year's income is
+ * fully realized, so on monthly rows it lands entirely on DECEMBER and is
+ * zero/empty for January-November. Withholding, by contrast, is taken at the
+ * source as it happens and so is genuinely monthly.
+ */
+export interface CashFlowPeriodRow {
+  /** The calendar year this period falls in (the year itself, for annual rows). */
   year: number;
   totalIncome: number;
   totalExpenses: number;
@@ -201,24 +223,38 @@ export interface LedgerEvent {
   note: string;
 }
 
-export interface YearSnapshot {
+/**
+ * One period of the simulation, as of its last day: a calendar year (in
+ * `ProjectionResult.years`) or a single month (in `ProjectionResult.months`).
+ * Both granularities carry identical fields, so a table or chart can render
+ * either without knowing which it was handed -- use `periodLabel` for column
+ * headers and `periodKey` for React keys rather than reading `year`.
+ */
+export interface PeriodSnapshot {
+  granularity: Granularity;
+  /** Unique, sortable key for this period: "2026" (annual) or "2026-03" (monthly). */
+  periodKey: string;
+  /** Human column header: "2026" (annual) or "Mar '26" (monthly). */
+  periodLabel: string;
+  /** The calendar year this period falls in (the year itself, for annual rows). */
   year: number;
+  /** Last day of the period -- Dec 31 for a year, month-end for a month. */
   date: ISODate;
   totalAssetsNominal: number;
   totalLiabilitiesNominal: number;
   netWorthNominal: number;
   /** Nominal deflated by cumulative inflation back to start-date dollars. */
   netWorthReal: number;
-  /** (1+inflation)^(full years elapsed from the plan start through Dec 31 of this year).
-   *  Divide an end-of-year BALANCE by this to show it in today's dollars. */
+  /** (1+inflation)^(years elapsed from the plan start through the LAST DAY of this period).
+   *  Divide an end-of-period BALANCE by this to show it in today's dollars. */
   inflationDeflator: number;
-  /** (1+inflation)^(years elapsed from the plan start to mid-year) -- the right
-   *  deflator for FLOWS (income/expenses/withdrawals occur throughout the year,
-   *  so on average at mid-year), vs. inflationDeflator for year-end balances. */
+  /** (1+inflation)^(years elapsed from the plan start to the MIDPOINT of this period) --
+   *  the right deflator for FLOWS (income/expenses/withdrawals occur throughout the
+   *  period, so on average at its midpoint), vs. inflationDeflator for closing balances. */
   flowInflationDeflator: number;
   accountBalances: Record<Id, number>;
-  rollforwards: AccountYearRollforward[];
-  cashFlow: CashFlowYearRow;
+  rollforwards: AccountPeriodRollforward[];
+  cashFlow: CashFlowPeriodRow;
 }
 
 export interface ProjectionWarning {
@@ -239,7 +275,16 @@ export interface ProjectionResult {
    * won't have names/classes to render against.
    */
   accounts: Account[];
-  years: YearSnapshot[];
+  /** One snapshot per calendar year, for the whole horizon. */
+  years: PeriodSnapshot[];
+  /**
+   * One snapshot per MONTH, for the first `MONTHLY_DETAIL_YEARS` plan years
+   * only -- the window the monthly drill-down views can show. Deliberately
+   * bounded: a 50-year horizon at monthly resolution is 600 columns of data
+   * nobody reads, and the near-term months are the ones worth inspecting
+   * (an upcoming purchase, a year with lumpy annual bills).
+   */
+  months: PeriodSnapshot[];
   timeline: TimelineRow[];
   ledger: LedgerEvent[];
   kpis: {

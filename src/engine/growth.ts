@@ -12,7 +12,7 @@ export function monthlyRateFromAnnual(annualRatePct: number): number {
  * rate is the actual (nominal) growth -- it already includes inflation, so
  * e.g. a salary you expect to rise 4%/yr uses 0.04 directly. Displaying the
  * result in today's-dollars ("real") is a separate deflation step done at
- * render time via YearSnapshot.inflationDeflator, not here.
+ * render time via PeriodSnapshot.inflationDeflator, not here.
  */
 export function growthAdjustedAmount(
   baseAmount: number,

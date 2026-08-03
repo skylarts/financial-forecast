@@ -55,6 +55,29 @@ export function endOfYear(year: number): ISODate {
   return `${year}-12-31`;
 }
 
+/** Last day of the 'YYYY-MM' month (handles 28/29/30/31-day months). */
+export function endOfMonth(yearMonth: string): ISODate {
+  const [y, m] = yearMonth.split("-").map(Number);
+  return `${yearMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * The 15th of the 'YYYY-MM' month -- the mid-period date a month's FLOWS
+ * deflate to, mirroring how annual flows deflate to July 1 rather than
+ * Dec 31 (flows land throughout the period, so on average at its midpoint).
+ */
+export function midMonth(yearMonth: string): ISODate {
+  return `${yearMonth}-15`;
+}
+
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Compact column header for a 'YYYY-MM' month: "Mar '26". */
+export function monthColumnLabel(yearMonth: string): string {
+  const [y, m] = yearMonth.split("-");
+  return `${MONTH_ABBR[Number(m) - 1]} '${y.slice(2)}`;
+}
+
 export function startOfYear(year: number): ISODate {
   return `${year}-01-01`;
 }
