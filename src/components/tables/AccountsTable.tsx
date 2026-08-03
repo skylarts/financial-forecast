@@ -6,6 +6,7 @@ import { formatMoney, type DollarMode } from "@/lib/format";
 import { ASSET_CLASS_GROUPS, LIABILITY_CLASS_GROUPS, type AccountClassGroup } from "@/lib/labels";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
+import { useUiStore } from "@/store/useUiStore";
 
 /** Deflate a nominal dollar amount to today's dollars when in real mode. */
 function deflate(value: number, period: PeriodSnapshot, mode: DollarMode): number {
@@ -105,11 +106,13 @@ function AccountRow({
   onEdit: () => void;
   mode: DollarMode;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const rowKey = `row:${account.id}`;
+  const expanded = useUiStore((s) => s.accountsExpanded.includes(rowKey));
+  const toggleExpanded = useUiStore((s) => s.toggleAccountsExpanded);
   const { col, setCol } = useContext(ColHoverContext);
   return (
     <>
-      <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => setExpanded((v) => !v)}>
+      <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggleExpanded(rowKey)}>
         <td className="py-2 pl-10">
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}
@@ -164,15 +167,13 @@ function Section({
   onEdit: (account: Account) => void;
   mode: DollarMode;
 }) {
-  const [sectionOpen, setSectionOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
-  const toggleGroup = (label: string) =>
-    setOpenGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(label)) next.delete(label);
-      else next.add(label);
-      return next;
-    });
+  const sectionKey = `section:${title}`;
+  const sectionOpen = useUiStore((s) => s.accountsExpanded.includes(sectionKey));
+  const accountsExpanded = useUiStore((s) => s.accountsExpanded);
+  const toggleExpanded = useUiStore((s) => s.toggleAccountsExpanded);
+  const setSectionOpen = () => toggleExpanded(sectionKey);
+  const groupKey = (label: string) => `group:${title}:${label}`;
+  const toggleGroup = (label: string) => toggleExpanded(groupKey(label));
 
   const groups = groupDefs
     .map((g) => ({
@@ -197,9 +198,9 @@ function Section({
 
   return (
     <>
-      <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={() => setSectionOpen((v) => !v)}>
+      <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={setSectionOpen}>
         <td className="py-2.5 pl-2 font-semibold">
-          <ToggleLabel label={title} expanded={sectionOpen} onToggle={() => setSectionOpen((v) => !v)} />
+          <ToggleLabel label={title} expanded={sectionOpen} onToggle={setSectionOpen} />
         </td>
         {periods.map((p, i) => {
           const hover = colHoverProps(i, col, setCol);
@@ -212,7 +213,7 @@ function Section({
       </tr>
       {sectionOpen &&
         groups.map((g) => {
-          const groupOpen = openGroups.has(g.label);
+          const groupOpen = accountsExpanded.includes(groupKey(g.label));
           return (
             <Fragment key={g.label}>
               <tr className="cursor-pointer border-t border-border/40 text-dim hover:bg-accent/15" onClick={() => toggleGroup(g.label)}>

@@ -111,11 +111,10 @@ export function CashFlowTable({
   granularity: Granularity;
 }) {
   const isMonthly = granularity === "month";
-  // Every section starts collapsed. "Taxes" is the exception -- its expand
-  // state is remembered across reloads/sign-ins (see useUiStore) rather than
-  // reset each visit, since it's a section people either always or never care
-  // about drilling into.
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // Every section starts collapsed, but stays as the user last left it across
+  // reloads/sign-ins (see useUiStore) rather than resetting each visit.
+  const expanded = useUiStore((s) => s.cashFlowExpanded);
+  const toggleExpanded = useUiStore((s) => s.toggleCashFlowExpanded);
   const taxesOpen = useUiStore((s) => s.cashFlowTaxesOpen);
   const setTaxesOpen = useUiStore((s) => s.setCashFlowTaxesOpen);
   const toggle = (key: string) => {
@@ -123,14 +122,9 @@ export function CashFlowTable({
       setTaxesOpen(!taxesOpen);
       return;
     }
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    toggleExpanded(key);
   };
-  const isOpen = (key: string) => (key === "taxes" ? taxesOpen : expanded.has(key));
+  const isOpen = (key: string) => (key === "taxes" ? taxesOpen : expanded.includes(key));
 
   // Column highlight state -- see colHoverProps/colHoverClass below.
   const [hoveredCol, setHoveredCol] = useState<number | null>(null);
