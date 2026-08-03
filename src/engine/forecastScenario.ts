@@ -14,6 +14,7 @@ import type {
   DrainStop,
 } from "@/domain";
 import {
+  addMonths,
   ageOn,
   compareDates,
   eachMonthStart,
@@ -24,6 +25,7 @@ import {
   monthColumnLabel,
   todayISO,
   yearOf,
+  yearMonthOf,
 } from "./dateMath";
 import { monthlyRateFromAnnual } from "./growth";
 import { rmdDivisor, rmdStartAgeForBirthYear } from "./rmd";
@@ -404,7 +406,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const years: PeriodSnapshot[] = [];
   // Monthly snapshots for the drill-down window only (see MONTHLY_DETAIL_YEARS).
   const months: PeriodSnapshot[] = [];
-  const monthlyDetailThrough = endOfYear(yearOf(settings.startDate) + MONTHLY_DETAIL_YEARS - 1);
+  const monthlyDetailThrough = endOfMonth(yearMonthOf(addMonths(settings.startDate, MONTHLY_DETAIL_YEARS * 12 - 1)));
   const ledger: LedgerEvent[] = [];
   const warnings: ProjectionWarning[] = [];
   const warnedThisYear = new Set<string>(); // `${year}:${accountId}`
