@@ -109,6 +109,19 @@ describe("monthly snapshots", () => {
     expect(result.months[result.months.length - 1].periodKey).toBe(`${2026 + MONTHLY_DETAIL_YEARS - 1}-12`);
   });
 
+  it("gives a full 5-year window even when the plan starts mid-year", () => {
+    // A plan starting Aug 2026 (e.g. a blank start date resolved to "today")
+    // should still get MONTHLY_DETAIL_YEARS * 12 months, not just however
+    // many happen to fall before the next Dec 31st four calendar years out.
+    const midYear = busyScenario();
+    midYear.settings.startDate = "2026-08-03";
+    midYear.settings.horizonEndDate = "2075-12-31";
+    const result = projectScenario(midYear);
+    expect(result.months).toHaveLength(MONTHLY_DETAIL_YEARS * 12);
+    expect(result.months[0].periodKey).toBe("2026-08");
+    expect(result.months[result.months.length - 1].periodKey).toBe("2031-07");
+  });
+
   // The core guarantee: monthly rows are the same numbers as the annual row,
   // just sliced finer. If this drifts, the monthly views are lying.
   describe.each(years.map((y) => y.year))("year %i rolls up exactly", (year) => {
