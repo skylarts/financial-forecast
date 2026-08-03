@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import type { Account, ProjectionResult, YearSnapshot } from "@/domain";
+import type { Account, ProjectionResult, PeriodSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ACCOUNT_CLASS_LABELS, buildAccountColors, displayAccounts, groupAccountsByClass } from "@/lib/accountColors";
 import { useUiStore } from "@/store/useUiStore";
@@ -19,11 +19,11 @@ import { useUiStore } from "@/store/useUiStore";
 
 /** Deflate a flow (income, tax, surplus) to today's dollars when in real mode.
  *  Flows use flowInflationDeflator (mid-year), not the year-end balance one. */
-function deflateFlow(value: number, year: YearSnapshot, mode: DollarMode): number {
+function deflateFlow(value: number, year: PeriodSnapshot, mode: DollarMode): number {
   return mode === "real" ? value / year.flowInflationDeflator : value;
 }
 
-function deflateBalance(value: number, year: YearSnapshot, mode: DollarMode): number {
+function deflateBalance(value: number, year: PeriodSnapshot, mode: DollarMode): number {
   return mode === "real" ? value / year.inflationDeflator : value;
 }
 
@@ -73,7 +73,7 @@ export function OverviewBento({
 }: {
   kpis: ProjectionResult["kpis"];
   /** Years already narrowed to the selected range. */
-  years: YearSnapshot[];
+  years: PeriodSnapshot[];
   accounts: Account[];
   dollarMode: DollarMode;
   isFullRange: boolean;

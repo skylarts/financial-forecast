@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Id } from "@/domain";
+import type { Granularity, Id, PeriodSnapshot } from "@/domain";
 import type { DollarMode } from "@/lib/format";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
@@ -51,6 +51,45 @@ function HomeContent() {
     () => (hasCompare ? compareProjection.years.filter((y) => y.year >= range[0] && y.year <= range[1]) : []),
     [hasCompare, compareProjection.years, range]
   );
+
+  // --- Monthly drill-down -------------------------------------------------
+  // The Cash Flow and Accounts tables can show one column per MONTH over the
+  // engine's bounded monthly window (see MONTHLY_DETAIL_YEARS) -- the lens for
+  // "what does cash flow look like around this purchase". Everything else
+  // (Overview, Timeline, Routing) stays annual, so the toggle is only offered
+  // on the two views that can honor it.
+  const [granularity, setGranularity] = useState<Granularity>("year");
+  const monthOptions = useMemo(
+    () => projection.months.map((m) => ({ key: m.periodKey, label: m.periodLabel })),
+    [projection.months]
+  );
+  const DEFAULT_MONTH_SPAN = 24;
+  const defaultMonthRange = useMemo<[string, string]>(() => {
+    if (monthOptions.length === 0) return ["", ""];
+    return [monthOptions[0].key, monthOptions[Math.min(monthOptions.length, DEFAULT_MONTH_SPAN) - 1].key];
+  }, [monthOptions]);
+  // Null until the user picks a range; also falls back whenever a plan edit
+  // moves the horizon out from under a previously-chosen month.
+  const [pickedMonthRange, setPickedMonthRange] = useState<[string, string] | null>(null);
+  const monthRange =
+    pickedMonthRange && monthOptions.some((m) => m.key === pickedMonthRange[0]) && monthOptions.some((m) => m.key === pickedMonthRange[1])
+      ? pickedMonthRange
+      : defaultMonthRange;
+
+  const granularityAvailable = view === "Cash Flow" || view === "Accounts";
+  const effectiveGranularity: Granularity =
+    granularityAvailable && granularity === "month" && monthOptions.length > 0 ? "month" : "year";
+
+  const [fromMonth, toMonth] = monthRange;
+  const sliceMonths = (months: PeriodSnapshot[]) => months.filter((m) => m.periodKey >= fromMonth && m.periodKey <= toMonth);
+  const periods = useMemo(
+    () => (effectiveGranularity === "month" ? sliceMonths(projection.months) : years),
+    [effectiveGranularity, projection.months, years, fromMonth, toMonth] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const comparePeriods = useMemo(
+    () => (effectiveGranularity === "month" ? sliceMonths(compareProjection.months) : compareYears),
+    [effectiveGranularity, compareProjection.months, compareYears, fromMonth, toMonth] // eslint-disable-line react-hooks/exhaustive-deps
+  );
   // The Timeline tab shows your whole plan (all income/expenses/events) and the
   // full auto-withdrawal ledger, independent of the chart's year window -- the
   // range picker only narrows the projection views (chart, Accounts, Cash Flow).
@@ -79,6 +118,13 @@ function HomeContent() {
         rangeStart={range[0]}
         rangeEnd={range[1]}
         onRangeChange={(start, end) => setRange([start, end])}
+        granularity={granularity}
+        onGranularityChange={setGranularity}
+        granularityAvailable={granularityAvailable && monthOptions.length > 0}
+        monthOptions={monthOptions}
+        monthStart={monthRange[0]}
+        monthEnd={monthRange[1]}
+        onMonthRangeChange={(start, end) => setPickedMonthRange([start, end])}
         dollarMode={dollarMode}
         onDollarModeChange={setDollarMode}
         compareOptions={compareOptions}
@@ -146,7 +192,8 @@ function HomeContent() {
           <DetailTabs
             active={view}
           accounts={projection.accounts}
-          years={years}
+          periods={periods}
+          granularity={effectiveGranularity}
           timeline={projection.timeline}
           ledger={projection.ledger}
           events={scenario.events}
@@ -162,7 +209,7 @@ function HomeContent() {
               ? {
                   name: compareScenarioRaw!.name,
                   accounts: compareProjection.accounts,
-                  years: compareYears,
+                  periods: comparePeriods,
                   timeline: compareProjection.timeline,
                   ledger: compareProjection.ledger,
                   events: compareScenarioRaw!.events,

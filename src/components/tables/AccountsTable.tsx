@@ -1,19 +1,19 @@
 "use client";
 
 import { createContext, Fragment, useContext, useState } from "react";
-import type { Account, BuyHomeEvent, Id, Person, ScenarioEvent, YearSnapshot } from "@/domain";
+import type { Account, BuyHomeEvent, Granularity, Id, PeriodSnapshot, Person, ScenarioEvent } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ASSET_CLASS_GROUPS, LIABILITY_CLASS_GROUPS, type AccountClassGroup } from "@/lib/labels";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 
 /** Deflate a nominal dollar amount to today's dollars when in real mode. */
-function deflate(value: number, year: YearSnapshot, mode: DollarMode): number {
-  return mode === "real" ? value / year.inflationDeflator : value;
+function deflate(value: number, period: PeriodSnapshot, mode: DollarMode): number {
+  return mode === "real" ? value / period.inflationDeflator : value;
 }
 
-function balanceOf(year: YearSnapshot, accountId: Id): number {
-  return year.accountBalances[accountId] ?? 0;
+function balanceOf(period: PeriodSnapshot, accountId: Id): number {
+  return period.accountBalances[accountId] ?? 0;
 }
 
 // Tracks which year-column is currently hovered so the whole column (its
@@ -34,34 +34,34 @@ function colHoverProps(index: number, col: number | null, setCol: (c: number | n
   };
 }
 
-function RollforwardRows({ accountId, years, mode }: { accountId: Id; years: YearSnapshot[]; mode: DollarMode }) {
+function RollforwardRows({ accountId, periods, mode }: { accountId: Id; periods: PeriodSnapshot[]; mode: DollarMode }) {
   const { col, setCol } = useContext(ColHoverContext);
-  const fields: { label: string; get: (y: YearSnapshot) => number; strong?: boolean }[] = [
-    { label: "Starting balance", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.startingBalance ?? 0 },
-    { label: "Inflation adjustment", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.inflationAdjustment ?? 0 },
-    { label: "Growth", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.growth ?? 0 },
-    { label: "Deposits", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.deposits ?? 0 },
-    { label: "Withdrawals", get: (y) => -(y.rollforwards.find((r) => r.accountId === accountId)?.withdrawals ?? 0) },
+  const fields: { label: string; get: (p: PeriodSnapshot) => number; strong?: boolean }[] = [
+    { label: "Starting balance", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.startingBalance ?? 0 },
+    { label: "Inflation adjustment", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.inflationAdjustment ?? 0 },
+    { label: "Growth", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.growth ?? 0 },
+    { label: "Deposits", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.deposits ?? 0 },
+    { label: "Withdrawals", get: (p) => -(p.rollforwards.find((r) => r.accountId === accountId)?.withdrawals ?? 0) },
     {
       label: "Net deposits / withdrawals",
       strong: true,
-      get: (y) => {
-        const r = y.rollforwards.find((r) => r.accountId === accountId);
+      get: (p) => {
+        const r = p.rollforwards.find((r) => r.accountId === accountId);
         return (r?.deposits ?? 0) - (r?.withdrawals ?? 0);
       },
     },
-    { label: "Ending balance", get: (y) => y.rollforwards.find((r) => r.accountId === accountId)?.endingBalance ?? 0 },
+    { label: "Ending balance", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.endingBalance ?? 0 },
   ];
   return (
     <>
       {fields.map((f) => (
         <tr key={f.label} className={`border-t border-border/40 text-xs hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
           <td className="py-1.5 pl-14">{f.label}</td>
-          {years.map((y, i) => {
+          {periods.map((p, i) => {
             const hover = colHoverProps(i, col, setCol);
-            const v = deflate(f.get(y), y, mode);
+            const v = deflate(f.get(p), p, mode);
             return (
-              <td key={y.year} className={`py-1.5 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+              <td key={p.periodKey} className={`py-1.5 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
                 {f.strong ? (
                   <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : ""}>{formatMoney(v)}</span>
                 ) : (
@@ -94,13 +94,13 @@ function ToggleLabel({ label, expanded, onToggle }: { label: string; expanded: b
 
 function AccountRow({
   account,
-  years,
+  periods,
   editable,
   onEdit,
   mode,
 }: {
   account: Account;
-  years: YearSnapshot[];
+  periods: PeriodSnapshot[];
   editable: boolean;
   onEdit: () => void;
   mode: DollarMode;
@@ -133,16 +133,16 @@ function AccountRow({
             </button>
           )}
         </td>
-        {years.map((y, i) => {
+        {periods.map((p, i) => {
           const hover = colHoverProps(i, col, setCol);
           return (
-            <td key={y.year} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
-              {formatMoney(deflate(balanceOf(y, account.id), y, mode))}
+            <td key={p.periodKey} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+              {formatMoney(deflate(balanceOf(p, account.id), p, mode))}
             </td>
           );
         })}
       </tr>
-      {expanded && <RollforwardRows accountId={account.id} years={years} mode={mode} />}
+      {expanded && <RollforwardRows accountId={account.id} periods={periods} mode={mode} />}
     </>
   );
 }
@@ -150,7 +150,7 @@ function AccountRow({
 function Section({
   title,
   accounts,
-  years,
+  periods,
   groups: groupDefs,
   editableIds,
   onEdit,
@@ -158,7 +158,7 @@ function Section({
 }: {
   title: string;
   accounts: Account[];
-  years: YearSnapshot[];
+  periods: PeriodSnapshot[];
   groups: AccountClassGroup[];
   editableIds: Set<Id>;
   onEdit: (account: Account) => void;
@@ -187,11 +187,11 @@ function Section({
 
   // Excluded accounts are still shown as a row (see AccountRow's badge) but
   // never counted toward a subtotal -- that's the whole point of exclusion.
-  const includedBalance = (year: YearSnapshot, accts: Account[]) =>
-    accts.reduce((s, a) => (a.isExcluded ? s : s + balanceOf(year, a.id)), 0);
+  const includedBalance = (period: PeriodSnapshot, accts: Account[]) =>
+    accts.reduce((s, a) => (a.isExcluded ? s : s + balanceOf(period, a.id)), 0);
 
-  const sectionTotal = (year: YearSnapshot) =>
-    groups.reduce((sum, g) => sum + includedBalance(year, g.accounts), 0);
+  const sectionTotal = (period: PeriodSnapshot) =>
+    groups.reduce((sum, g) => sum + includedBalance(period, g.accounts), 0);
 
   const { col, setCol } = useContext(ColHoverContext);
 
@@ -201,11 +201,11 @@ function Section({
         <td className="py-2.5 pl-2 font-semibold">
           <ToggleLabel label={title} expanded={sectionOpen} onToggle={() => setSectionOpen((v) => !v)} />
         </td>
-        {years.map((y, i) => {
+        {periods.map((p, i) => {
           const hover = colHoverProps(i, col, setCol);
           return (
-            <td key={y.year} className={`py-2.5 pr-2 text-right font-semibold ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
-              {formatMoney(deflate(sectionTotal(y), y, mode))}
+            <td key={p.periodKey} className={`py-2.5 pr-2 text-right font-semibold ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+              {formatMoney(deflate(sectionTotal(p), p, mode))}
             </td>
           );
         })}
@@ -219,11 +219,11 @@ function Section({
                 <td className="py-2 pl-6">
                   <ToggleLabel label={g.label} expanded={groupOpen} onToggle={() => toggleGroup(g.label)} />
                 </td>
-                {years.map((y, i) => {
+                {periods.map((p, i) => {
                   const hover = colHoverProps(i, col, setCol);
                   return (
-                    <td key={y.year} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
-                      {formatMoney(deflate(includedBalance(y, g.accounts), y, mode))}
+                    <td key={p.periodKey} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+                      {formatMoney(deflate(includedBalance(p, g.accounts), p, mode))}
                     </td>
                   );
                 })}
@@ -233,7 +233,7 @@ function Section({
                   <AccountRow
                     key={a.id}
                     account={a}
-                    years={years}
+                    periods={periods}
                     editable={editableIds.has(a.id)}
                     onEdit={() => onEdit(a)}
                     mode={mode}
@@ -248,19 +248,23 @@ function Section({
 
 export function AccountsTable({
   accounts,
-  years,
+  periods,
   editableAccountIds,
   people,
   dollarMode,
   events,
+  granularity,
 }: {
   accounts: Account[];
-  years: YearSnapshot[];
+  /** One column per period -- calendar years or months, depending on `granularity`. */
+  periods: PeriodSnapshot[];
   editableAccountIds: Set<Id>;
   people: Person[];
   dollarMode: DollarMode;
   events: ScenarioEvent[];
+  granularity: Granularity;
 }) {
+  const isMonthly = granularity === "month";
   const [drawerAccount, setDrawerAccount] = useState<Account | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [homeDrawer, setHomeDrawer] = useState<{ open: boolean; account?: Account }>({ open: false });
@@ -290,15 +294,16 @@ export function AccountsTable({
         | undefined)
     : undefined;
 
-  if (years.length === 0) {
+  if (periods.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-panel p-8 text-center text-sm text-dim">
-        No years in the selected range.
+        No {isMonthly ? "months" : "years"}{" "}
+        in the selected range.
       </div>
     );
   }
 
-  const netWorthOf = (y: YearSnapshot) => (dollarMode === "real" ? y.netWorthReal : y.netWorthNominal);
+  const netWorthOf = (p: PeriodSnapshot) => (dollarMode === "real" ? p.netWorthReal : p.netWorthNominal);
 
   return (
     <div className="flex flex-col gap-3">
@@ -321,14 +326,14 @@ export function AccountsTable({
           <thead>
             <tr className="text-left text-xs text-dim">
               <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-2.5 pl-2 font-medium">Account</th>
-              {years.map((y, i) => (
+              {periods.map((p, i) => (
                 <th
-                  key={y.year}
+                  key={p.periodKey}
                   className={`py-2.5 pr-2 text-right font-medium ${hoveredCol === i ? "bg-accent/10 text-foreground" : ""}`}
                   onMouseEnter={() => setHoveredCol(i)}
                   onMouseLeave={() => setHoveredCol(null)}
                 >
-                  {y.year}
+                  {p.periodLabel}
                 </th>
               ))}
             </tr>
@@ -336,14 +341,14 @@ export function AccountsTable({
           <tbody>
             <tr className="border-b border-dim/25">
               <td className="py-2.5 pl-2 font-bold">Net Worth</td>
-              {years.map((y, i) => (
+              {periods.map((p, i) => (
                 <td
-                  key={y.year}
+                  key={p.periodKey}
                   className={`py-2.5 pr-2 text-right font-bold ${hoveredCol === i ? "bg-accent/10" : ""}`}
                   onMouseEnter={() => setHoveredCol(i)}
                   onMouseLeave={() => setHoveredCol(null)}
                 >
-                  {formatMoney(netWorthOf(y))}
+                  {formatMoney(netWorthOf(p))}
                 </td>
               ))}
             </tr>
@@ -352,12 +357,12 @@ export function AccountsTable({
                 panel color) so the gap actually reads as a gap, and its top
                 edge doubles as the lighter border capping the section above. */}
             <tr aria-hidden="true">
-              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={years.length + 1} />
+              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={periods.length + 1} />
             </tr>
             <Section
               title="Assets"
               accounts={accounts.filter((a) => a.category === "asset")}
-              years={years}
+              periods={periods}
               groups={ASSET_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
@@ -368,12 +373,12 @@ export function AccountsTable({
               mode={dollarMode}
             />
             <tr aria-hidden="true">
-              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={years.length + 1} />
+              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={periods.length + 1} />
             </tr>
             <Section
               title="Liabilities"
               accounts={accounts.filter((a) => a.category === "liability")}
-              years={years}
+              periods={periods}
               groups={LIABILITY_CLASS_GROUPS}
               editableIds={editableAccountIds}
               onEdit={(a) => {
@@ -388,7 +393,8 @@ export function AccountsTable({
         </ColHoverContext.Provider>
         </div>
         <p className="border-t border-border px-2 py-2 text-xs text-dim">
-          Click an account to see its year-by-year rollforward. A home&rsquo;s mortgage is edited as part of
+          Click an account to see its {isMonthly ? "month-by-month" : "year-by-year"}{" "}
+          rollforward. A home&rsquo;s mortgage is edited as part of
           that home, not standalone. Extra Savings is the spending hub &mdash; its surplus is swept out monthly,
           so a $0 balance there is normal.
         </p>

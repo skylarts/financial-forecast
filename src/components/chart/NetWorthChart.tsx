@@ -11,7 +11,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, YearSnapshot } from "@/domain";
+import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, PeriodSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { useUiStore } from "@/store/useUiStore";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -156,7 +156,7 @@ export function nextHiddenAccountIds(
 
 interface CompareScenarioData {
   name: string;
-  years: YearSnapshot[];
+  years: PeriodSnapshot[];
   events: ScenarioEvent[];
   incomeSources: IncomeSource[];
   expenses: ExpenseBaseline[];
@@ -193,7 +193,7 @@ export function NetWorthChart({
   accounts: Account[];
   /** Accounts selectable in the drawers opened by clicking a marker -- excludes the mandatory Extra Savings account etc. */
   editableAccounts: Account[];
-  years: YearSnapshot[];
+  years: PeriodSnapshot[];
   dollarMode: DollarMode;
   /** Lets the chart's own fullscreen header drive the same nominal/real
    *  toggle the persistent ViewBar controls -- otherwise there's no way to
@@ -277,7 +277,7 @@ export function NetWorthChart({
 
   const compareByYear = useMemo(() => {
     if (!compareScenario) return null;
-    const map = new Map<number, YearSnapshot>();
+    const map = new Map<number, PeriodSnapshot>();
     for (const y of compareScenario.years) map.set(y.year, y);
     return map;
   }, [compareScenario]);

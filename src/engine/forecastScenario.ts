@@ -2,16 +2,29 @@ import type {
   Id,
   ISODate,
   Scenario,
-  AccountYearRollforward,
-  CashFlowYearRow,
-  YearSnapshot,
+  AccountPeriodRollforward,
+  CashFlowPeriodRow,
+  FederalTaxComponent,
+  Granularity,
+  PeriodSnapshot,
   ProjectionResult,
   ProjectionWarning,
   LedgerEvent,
   SplitStop,
   DrainStop,
 } from "@/domain";
-import { ageOn, compareDates, eachMonthStart, elapsedYears, endOfYear, todayISO, yearOf } from "./dateMath";
+import {
+  ageOn,
+  compareDates,
+  eachMonthStart,
+  elapsedYears,
+  endOfMonth,
+  endOfYear,
+  midMonth,
+  monthColumnLabel,
+  todayISO,
+  yearOf,
+} from "./dateMath";
 import { monthlyRateFromAnnual } from "./growth";
 import { rmdDivisor, rmdStartAgeForBirthYear } from "./rmd";
 import { computeMonthlyPayment, amortizeMonth } from "./amortization";
@@ -67,6 +80,13 @@ interface YearAccumulator {
   otherActivityByItem: Map<Id, number>;
   /** Taxes paid on RMDs and shortfall withdrawals (cash leaving the household). */
   taxesPaid: number;
+  /**
+   * The December true-up posted to the hub (withheld minus the exact bill).
+   * Lives on the accumulator rather than as a local so the monthly snapshot
+   * for December picks it up in its diff like every other flow -- otherwise
+   * the twelve monthly rows wouldn't sum to the annual row.
+   */
+  taxSettlement: number;
   /** Portion of taxesPaid that was withheld from SS/pension deposits landing ON the hub (needed for the hub-scoped reconcile). */
   incomeWithheldFromHub: number;
   /** 10% early-withdrawal penalties charged on pre-59½ tax-deferred withdrawals (part of taxesPaid). */
@@ -114,6 +134,7 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
     hubTransferNet: 0,
     otherActivityByItem: new Map(),
     taxesPaid: 0,
+    taxSettlement: 0,
     incomeWithheldFromHub: 0,
     earlyWithdrawalPenalties: 0,
     afterTaxContributions: 0,
@@ -132,6 +153,77 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
 
 function addTo(map: Map<Id, number>, key: Id, amount: number): void {
   map.set(key, (map.get(key) ?? 0) + amount);
+}
+
+/**
+ * How many plan years get month-by-month snapshots (see
+ * ProjectionResult.months). Bounded on purpose: the monthly views exist to
+ * inspect near-term detail -- an upcoming purchase, a year with lumpy annual
+ * bills -- and a 50-year horizon at monthly resolution is 600 columns nobody
+ * reads. The annual snapshots always cover the full horizon.
+ */
+export const MONTHLY_DETAIL_YEARS = 5;
+
+type RollforwardBucket = { growth: number; deposits: number; withdrawals: number };
+
+/**
+ * Deep copy of the accumulator (numbers by value, every Map and bucket
+ * freshly allocated), taken at the start of each month so the month's own
+ * activity can be recovered by differencing against it at month end.
+ */
+function cloneAccumulator(a: YearAccumulator): YearAccumulator {
+  const out = { ...a } as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(a)) {
+    if (key === "rollforward") {
+      out[key] = new Map([...(value as Map<Id, RollforwardBucket>)].map(([id, b]) => [id, { ...b }]));
+    } else if (value instanceof Map) {
+      out[key] = new Map(value as Map<Id, number>);
+    }
+  }
+  return out as unknown as YearAccumulator;
+}
+
+/**
+ * `after - before`, field by field -- the activity that happened between the
+ * two snapshots. This is what makes monthly rows possible without touching
+ * the ~40 sites that accumulate into the year: every field here is additive,
+ * so a diff of two accumulator states IS a valid accumulator covering just
+ * that span, and can be fed straight into the same period builder the annual
+ * path uses. Walks the object generically, so a new accumulator field is
+ * picked up automatically rather than silently missing from monthly rows.
+ */
+function diffAccumulator(before: YearAccumulator, after: YearAccumulator): YearAccumulator {
+  const prev = before as unknown as Record<string, unknown>;
+  const out = {} as Record<string, unknown>;
+  for (const [key, value] of Object.entries(after)) {
+    if (typeof value === "number") {
+      out[key] = value - (prev[key] as number);
+    } else if (key === "rollforward") {
+      const priorBuckets = prev[key] as Map<Id, RollforwardBucket>;
+      const next = new Map<Id, RollforwardBucket>();
+      for (const [id, bucket] of value as Map<Id, RollforwardBucket>) {
+        const p = priorBuckets.get(id) ?? { growth: 0, deposits: 0, withdrawals: 0 };
+        next.set(id, {
+          growth: bucket.growth - p.growth,
+          deposits: bucket.deposits - p.deposits,
+          withdrawals: bucket.withdrawals - p.withdrawals,
+        });
+      }
+      out[key] = next;
+    } else {
+      // Every remaining field is a Map<Id, number> of per-item totals. Entries
+      // that didn't move this period are dropped so a monthly row lists only
+      // the items that actually posted in it.
+      const priorTotals = prev[key] as Map<Id, number>;
+      const next = new Map<Id, number>();
+      for (const [id, total] of value as Map<Id, number>) {
+        const delta = total - (priorTotals.get(id) ?? 0);
+        if (Math.abs(delta) > 0.005) next.set(id, delta);
+      }
+      out[key] = next;
+    }
+  }
+  return out as unknown as YearAccumulator;
 }
 
 function effectiveAnnualRate(account: EngineAccount, month: string, inflationRatePct: number): number {
@@ -309,7 +401,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const basis = new Map<Id, number>(accounts.map((a) => [a.id, 0]));
   const priorYearEndBalances = new Map<Id, number>();
 
-  const years: YearSnapshot[] = [];
+  const years: PeriodSnapshot[] = [];
+  // Monthly snapshots for the drill-down window only (see MONTHLY_DETAIL_YEARS).
+  const months: PeriodSnapshot[] = [];
+  const monthlyDetailThrough = endOfYear(yearOf(settings.startDate) + MONTHLY_DETAIL_YEARS - 1);
   const ledger: LedgerEvent[] = [];
   const warnings: ProjectionWarning[] = [];
   const warnedThisYear = new Set<string>(); // `${year}:${accountId}`
@@ -489,13 +584,209 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     return provide;
   };
 
-  const months = [...eachMonthStart(settings.startDate, settings.horizonEndDate)];
+  /** Every account outflow for a period, as one gross/net/tax line per source account. */
+  const withdrawalItems = (periodAcc: YearAccumulator) => {
+    const ids = new Set<Id>([...periodAcc.withdrawalNetByAccount.keys(), ...periodAcc.withdrawalTaxByAccount.keys()]);
+    return [...ids]
+      .map((id) => {
+        const net = periodAcc.withdrawalNetByAccount.get(id) ?? 0;
+        const tax = periodAcc.withdrawalTaxByAccount.get(id) ?? 0;
+        const account = accountById.get(id);
+        return {
+          id,
+          label: account?.name ?? id,
+          taxTreatment: account ? effectiveTaxTreatment(account) : ("n/a" as const),
+          gross: net + tax,
+          net,
+          tax,
+        };
+      })
+      .filter((w) => w.gross > 0.005)
+      .sort((a, b) => b.gross - a.gross);
+  };
 
-  for (let i = 0; i < months.length; i++) {
-    const month = months[i];
+  /**
+   * The exact, bracket-computed part of a period's tax picture. Only knowable
+   * once a whole year's income is realized, so it's computed in December and
+   * attached to that year's annual row AND to December's monthly row --
+   * every other month gets NO_EXACT_TAX. See CashFlowPeriodRow's doc comment.
+   */
+  interface ExactTaxFigures {
+    federalTaxTotal: number;
+    federalTaxByComponent: FederalTaxComponent[];
+    ordinaryTaxableIncome: number;
+    taxableSocialSecurityAmount: number;
+  }
+  const NO_EXACT_TAX: ExactTaxFigures = {
+    federalTaxTotal: 0,
+    federalTaxByComponent: [],
+    ordinaryTaxableIncome: 0,
+    taxableSocialSecurityAmount: 0,
+  };
+
+  /**
+   * Builds one PeriodSnapshot from a period's accumulated activity and its
+   * opening balances. THE single place a snapshot is constructed -- the
+   * annual path passes the whole year's accumulator, the monthly path passes
+   * a one-month diff of that same accumulator (see diffAccumulator). Because
+   * both go through here, a year's twelve monthly rows sum to its annual row
+   * by construction rather than by two implementations agreeing.
+   *
+   * Reads `balances` live, so callers must invoke it only when balances are
+   * final for the period (in particular, AFTER December's tax settlement).
+   */
+  const buildPeriodSnapshot = (
+    granularity: Granularity,
+    periodKey: string,
+    periodLabel: string,
+    periodEndDate: ISODate,
+    periodMidDate: ISODate,
+    year: number,
+    periodAcc: YearAccumulator,
+    openingBalances: Map<Id, number>,
+    exactTax: ExactTaxFigures
+  ): PeriodSnapshot => {
+    const toLineItems = (map: Map<Id, number>) =>
+      [...map.entries()]
+        .map(([id, amount]) => ({ id, label: itemLabels.get(id) ?? id, amount, startDate: itemFirstDate.get(id) ?? null }))
+        .sort((a, b) => b.amount - a.amount);
+    const toAccountItems = (map: Map<Id, number>) =>
+      [...map.entries()]
+        .filter(([, amount]) => amount > 0.005)
+        .map(([id, amount]) => ({ id, label: accountById.get(id)?.name ?? id, amount, startDate: null }))
+        .sort((a, b) => b.amount - a.amount);
+
+    const rollforwards: AccountPeriodRollforward[] = accounts.map((account) => {
+      const bucket = periodAcc.rollforward.get(account.id) ?? { growth: 0, deposits: 0, withdrawals: 0 };
+      return {
+        accountId: account.id,
+        year,
+        startingBalance: openingBalances.get(account.id) ?? 0,
+        inflationAdjustment: 0, // folded into growth/deposits per-posting; see forecast engine spec
+        growth: bucket.growth,
+        deposits: bucket.deposits,
+        withdrawals: bucket.withdrawals,
+        endingBalance: balances.get(account.id) ?? 0,
+      };
+    });
+
+    // Excluded accounts don't count toward net worth, KPIs, or subtotals.
+    const totalAssetsNominal = activeAccounts
+      .filter((a) => a.category === "asset")
+      .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
+    const totalLiabilitiesNominal = activeAccounts
+      .filter((a) => a.category === "liability")
+      .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
+    const netWorthNominal = totalAssetsNominal - totalLiabilitiesNominal;
+    // Balances deflate by the inflation elapsed through the period's LAST DAY;
+    // flows, which land throughout the period, deflate to its midpoint.
+    const cumulativeInflation = Math.pow(
+      1 + settings.inflationRatePct,
+      Math.max(0, elapsedYears(settings.startDate, periodEndDate))
+    );
+    const flowInflationDeflator = Math.pow(
+      1 + settings.inflationRatePct,
+      Math.max(0, elapsedYears(settings.startDate, periodMidDate))
+    );
+
+    // "Ending cash on hand" (display only) is the total across every
+    // class="cash" account -- a surplus swept from the hub into checking or an
+    // emergency fund is still cash, not withdrawn or invested.
+    const endingCashBalance = [...cashAccountIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
+    // "Net change in cash" and "Interest earned on cash" -- the reconciling
+    // figures the itemized rows above them must sum to -- stay scoped to the
+    // hub, not every cash account (see CashFlowPeriodRow.netCashFlow).
+    const hubCashStart = [...hubIds].reduce((s, id) => s + (openingBalances.get(id) ?? 0), 0);
+    const hubEndingBalance = [...hubIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
+    const hubCashInterest = [...hubIds].reduce((s, id) => s + (periodAcc.rollforward.get(id)?.growth ?? 0), 0);
+
+    const cashFlow: CashFlowPeriodRow = {
+      year,
+      totalIncome: periodAcc.totalIncome,
+      totalExpenses: periodAcc.totalExpenses,
+      operatingCashFlow: periodAcc.totalIncome - periodAcc.totalExpenses,
+      // Ground truth: the hub's actual measured balance change this period.
+      // Always exactly right, regardless of which mechanism moved the money.
+      netCashFlow: hubEndingBalance - hubCashStart,
+      surplusRouted: periodAcc.surplusRouted,
+      // Cash that flowed in from accounts to cover the operating gap: deficit
+      // draws + RMD proceeds, plus any expense paid directly from an investment
+      // (which offsets that expense, since cash was never touched).
+      withdrawalsToCashNet: periodAcc.deficitCovered + periodAcc.rmdTotal + periodAcc.directExpenseFromAccounts,
+      rmdTotal: periodAcc.rmdTotal,
+      withdrawalTaxes: periodAcc.taxesPaid,
+      taxSettlement: periodAcc.taxSettlement,
+      incomeTaxWithheldFromCash: periodAcc.incomeWithheldFromHub,
+      cashInterest: hubCashInterest,
+      // Edge-case bucket: transfers touching the hub directly, net of income
+      // that bypassed the hub entirely. Zero in the common case.
+      otherAccountActivity: periodAcc.hubTransferNet - periodAcc.directIncomeToOtherAccounts,
+      otherActivityByItem: [...periodAcc.otherActivityByItem.entries()]
+        .filter(([, amount]) => Math.abs(amount) > 0.005)
+        .map(([id, amount]) => ({
+          id,
+          label: itemLabels.get(id) ?? id,
+          amount,
+          startDate: itemFirstDate.get(id) ?? null,
+          accountId: otherActivityAccountId.get(id) ?? null,
+        }))
+        .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)),
+      endingCashBalance,
+      afterTaxContributionTotal: periodAcc.afterTaxContributions,
+      incomeByItem: toLineItems(periodAcc.incomeByItem),
+      expenseByItem: toLineItems(periodAcc.expenseByItem),
+      contributionsByItem: [...periodAcc.contributionsByItem.entries()]
+        .map(([id, amount]) => ({
+          id,
+          label: itemLabels.get(id) ?? id,
+          amount,
+          startDate: itemFirstDate.get(id) ?? null,
+          fromPaycheck: contributionFromPaycheck.get(id) ?? false,
+        }))
+        .sort((a, b) => b.amount - a.amount),
+      surplusByAccount: toAccountItems(periodAcc.surplusByAccount),
+      withdrawalsByAccount: withdrawalItems(periodAcc),
+      capitalGainsRealized: periodAcc.capitalGainsRealized,
+      grossSocialSecurity: periodAcc.grossSocialSecurity,
+      ...exactTax,
+    };
+
+    return {
+      granularity,
+      periodKey,
+      periodLabel,
+      year,
+      date: periodEndDate,
+      totalAssetsNominal,
+      totalLiabilitiesNominal,
+      netWorthNominal,
+      netWorthReal: netWorthNominal / cumulativeInflation,
+      inflationDeflator: cumulativeInflation,
+      flowInflationDeflator,
+      accountBalances: Object.fromEntries(balances),
+      rollforwards,
+      cashFlow,
+    };
+  };
+
+  const simulationMonths = [...eachMonthStart(settings.startDate, settings.horizonEndDate)];
+  // Opening balances / accumulator state for the month currently being
+  // simulated -- the baselines the monthly snapshot differences against.
+  let monthStartBalances = new Map<Id, number>(balances);
+  let accAtMonthStart = cloneAccumulator(acc);
+
+  for (let i = 0; i < simulationMonths.length; i++) {
+    const month = simulationMonths[i];
     currentMonth = month;
     const yearMonth = month.slice(0, 7);
     const isJanuary = month.endsWith("-01-01");
+    // Inside the monthly drill-down window, record this month's opening state
+    // so its own activity can be recovered by differencing at month end.
+    const inMonthlyWindow = compareDates(month, monthlyDetailThrough) <= 0;
+    if (inMonthlyWindow) {
+      monthStartBalances = new Map(balances);
+      accAtMonthStart = cloneAccumulator(acc);
+    }
 
     // Captured BEFORE this month's growth/postings/mortgages/RMDs run, so the
     // surplus split (step 5) can size itself off exactly this month's FRESH
@@ -570,6 +861,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // balance (no embedded gains -- the historical assumption).
         balances.set(account.id, account.startingBalance);
         yearStartBalances.set(account.id, account.startingBalance);
+        // Same for the month baseline, or the account's first monthly
+        // rollforward would open at $0 and report its whole opening balance
+        // as a deposit.
+        monthStartBalances.set(account.id, account.startingBalance);
         basis.set(account.id, Math.min(account.startingCostBasis ?? account.startingBalance, account.startingBalance));
         continue;
       }
@@ -971,49 +1266,20 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       });
     }
 
-    // 8. Year finalization.
-    const nextMonth = i + 1 < months.length ? months[i + 1] : null;
+    // 8. Period finalization -- the annual snapshot (in December), then this
+    //    month's snapshot if it falls in the monthly drill-down window.
+    const nextMonth = i + 1 < simulationMonths.length ? simulationMonths[i + 1] : null;
     const isLastMonthOfYear = !nextMonth || yearOf(nextMonth) !== yearOf(month);
+    // Set in December and reused by BOTH that year's annual row and
+    // December's own monthly row, so the twelve monthly rows still carry the
+    // full year's exact tax bill exactly once between them.
+    let exactTax = NO_EXACT_TAX;
     if (isLastMonthOfYear) {
       // NOTE ON ORDER: the exact federal bill is computed FIRST, then the
       // withholding-vs-exact true-up is posted to the hub, and only then are
       // rollforwards, net worth, and the hub delta measured -- so every
       // ending figure already includes the settlement.
-
-      // Sorted line-item arrays; labels come from itemLabels (posting/mortgage
-      // ids) or the account name (for account-keyed maps).
-      const toLineItems = (map: Map<Id, number>) =>
-        [...map.entries()]
-          .map(([id, amount]) => ({ id, label: itemLabels.get(id) ?? id, amount, startDate: itemFirstDate.get(id) ?? null }))
-          .sort((a, b) => b.amount - a.amount);
-      const toAccountItems = (map: Map<Id, number>) =>
-        [...map.entries()]
-          .filter(([, amount]) => amount > 0.005)
-          .map(([id, amount]) => ({ id, label: accountById.get(id)?.name ?? id, amount, startDate: null }))
-          .sort((a, b) => b.amount - a.amount);
-
-      // Unify every account outflow (drawdowns, RMDs, direct payments) into one
-      // gross/net/tax line per source account, for the Withdrawals section.
-      const withdrawalAccountIds = new Set<Id>([
-        ...acc.withdrawalNetByAccount.keys(),
-        ...acc.withdrawalTaxByAccount.keys(),
-      ]);
-      const withdrawalsByAccount = [...withdrawalAccountIds]
-        .map((id) => {
-          const net = acc.withdrawalNetByAccount.get(id) ?? 0;
-          const tax = acc.withdrawalTaxByAccount.get(id) ?? 0;
-          const account = accountById.get(id);
-          return {
-            id,
-            label: account?.name ?? id,
-            taxTreatment: account ? effectiveTaxTreatment(account) : ("n/a" as const),
-            gross: net + tax,
-            net,
-            tax,
-          };
-        })
-        .filter((w) => w.gross > 0.005)
-        .sort((a, b) => b.gross - a.gross);
+      const withdrawalsByAccount = withdrawalItems(acc);
 
       // Exact federal tax for the year, from real 2026 brackets on the year's
       // actually-realized income -- independent of however approximate the
@@ -1103,164 +1369,68 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // equals federalTaxTotal exactly: refund over-withholding to the hub,
       // charge any shortfall from it. Skipped when no rate table was
       // supplied (raw untaxed engine runs, e.g. most unit tests).
-      let taxSettlement = 0;
       if (ratesByYearOverride !== undefined && extraSavingsAccount) {
-        taxSettlement = acc.taxesPaid - federalTaxTotal;
-        if (Math.abs(taxSettlement) > 0.005) {
+        const settlement = acc.taxesPaid - federalTaxTotal;
+        if (Math.abs(settlement) > 0.005) {
           const hubId = extraSavingsAccount.id;
-          balances.set(hubId, (balances.get(hubId) ?? 0) + taxSettlement);
+          balances.set(hubId, (balances.get(hubId) ?? 0) + settlement);
           const hubBucket = acc.rollforward.get(hubId)!;
-          if (taxSettlement >= 0) hubBucket.deposits += taxSettlement;
-          else hubBucket.withdrawals += -taxSettlement;
+          if (settlement >= 0) hubBucket.deposits += settlement;
+          else hubBucket.withdrawals += -settlement;
+          acc.taxSettlement = settlement;
           ledger.push({
             date: month,
             kind: "tax_settlement",
             accountId: hubId,
-            amount: taxSettlement,
+            amount: settlement,
             note:
-              taxSettlement >= 0
+              settlement >= 0
                 ? `Tax true-up refund (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`
                 : `Tax true-up payment (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`,
           });
-        } else {
-          taxSettlement = 0;
         }
       }
 
+      exactTax = { federalTaxTotal, federalTaxByComponent: [...federalTaxByComponent], ordinaryTaxableIncome, taxableSocialSecurityAmount };
+
       // --- Everything below reads balances AFTER the settlement ----------
-      const rollforwards: AccountYearRollforward[] = accounts.map((account) => {
-        const bucket = acc.rollforward.get(account.id)!;
-        const startingBalance = yearStartBalances.get(account.id) ?? 0;
-        const endingBalance = balances.get(account.id) ?? 0;
-        return {
-          accountId: account.id,
-          year: currentYear,
-          startingBalance,
-          inflationAdjustment: 0, // folded into growth/deposits per-posting; see forecast engine spec
-          growth: bucket.growth,
-          deposits: bucket.deposits,
-          withdrawals: bucket.withdrawals,
-          endingBalance,
-        };
-      });
-
-      // Excluded accounts don't count toward net worth, KPIs, or subtotals.
-      const totalAssetsNominal = activeAccounts
-        .filter((a) => a.category === "asset")
-        .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
-      const totalLiabilitiesNominal = activeAccounts
-        .filter((a) => a.category === "liability")
-        .reduce((s, a) => s + (balances.get(a.id) ?? 0), 0);
-      const netWorthNominal = totalAssetsNominal - totalLiabilitiesNominal;
-      // Deflate end-of-year-N figures by the inflation actually elapsed from
-      // the plan start THROUGH the end of year N (previously the exponent
-      // stopped at the start of year N, overstating every "real" figure by
-      // one year of inflation).
-      const cumulativeInflation = Math.pow(
-        1 + settings.inflationRatePct,
-        Math.max(0, elapsedYears(settings.startDate, endOfYear(currentYear)))
+      years.push(
+        buildPeriodSnapshot(
+          "year",
+          String(currentYear),
+          String(currentYear),
+          endOfYear(currentYear),
+          `${currentYear}-07-01`,
+          currentYear,
+          acc,
+          yearStartBalances,
+          exactTax
+        )
       );
-      // Flows land throughout the year -- mid-year is their average timing,
-      // so real (today's-dollars) flow figures deflate to July 1, not Dec 31.
-      const flowInflationDeflator = Math.pow(
-        1 + settings.inflationRatePct,
-        Math.max(0, elapsedYears(settings.startDate, `${currentYear}-07-01`))
+    }
+
+    // 8b. This month's snapshot, built by differencing the accumulator against
+    //     its state at the start of the month. Runs AFTER the annual block so
+    //     December's row already includes the tax settlement -- otherwise the
+    //     twelve monthly rows wouldn't sum to the annual row.
+    if (inMonthlyWindow) {
+      months.push(
+        buildPeriodSnapshot(
+          "month",
+          yearMonth,
+          monthColumnLabel(yearMonth),
+          endOfMonth(yearMonth),
+          midMonth(yearMonth),
+          yearOf(month),
+          diffAccumulator(accAtMonthStart, acc),
+          monthStartBalances,
+          exactTax
+        )
       );
-      const netWorthReal = netWorthNominal / cumulativeInflation;
+    }
 
-      // "Ending cash on hand" (display only, e.g. the row of that name on the
-      // Cash Flow tab) is the total balance across every class="cash" account
-      // (Extra Savings, checking, an emergency fund, etc.) -- a surplus swept
-      // from the hub into checking or an emergency fund is still cash, not
-      // withdrawn or invested.
-      const endingCashBalance = [...cashAccountIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
-
-      // "Net change in cash" and "Interest earned on cash" -- the reconciling
-      // figures that must sum exactly from the itemized rows above them --
-      // stay scoped to the hub specifically, not every cash account (see the
-      // reconcile identity on CashFlowYearRow.netCashFlow).
-      const hubCashStart = [...hubIds].reduce((s, id) => s + (yearStartBalances.get(id) ?? 0), 0);
-      const hubEndingBalance = [...hubIds].reduce((s, id) => s + (balances.get(id) ?? 0), 0);
-      const hubCashInterest = [...hubIds].reduce((s, id) => s + (acc.rollforward.get(id)?.growth ?? 0), 0);
-
-      const operatingCashFlow = acc.totalIncome - acc.totalExpenses;
-      // Cash that flowed in from accounts to cover the operating gap: deficit
-      // draws + RMD proceeds, plus any expense paid directly from an investment
-      // (which offsets that expense, since cash was never touched).
-      const withdrawalsToCashNet = acc.deficitCovered + acc.rmdTotal + acc.directExpenseFromAccounts;
-      // Edge-case bucket: transfers touching the hub directly, net of income
-      // that bypassed the hub entirely. Zero in the common case where income
-      // lands on and expenses pay from the hub with no direct hub transfers.
-      const otherAccountActivity = acc.hubTransferNet - acc.directIncomeToOtherAccounts;
-      // Itemized breakdown of that scalar -- same signed amounts recorded at
-      // each accumulation site, so the items sum exactly to the total (only
-      // sub-cent noise is filtered). Sorted by magnitude, biggest first.
-      const otherActivityByItem = [...acc.otherActivityByItem.entries()]
-        .filter(([, amount]) => Math.abs(amount) > 0.005)
-        .map(([id, amount]) => ({
-          id,
-          label: itemLabels.get(id) ?? id,
-          amount,
-          startDate: itemFirstDate.get(id) ?? null,
-          accountId: otherActivityAccountId.get(id) ?? null,
-        }))
-        .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
-      // Ground truth: the hub's actual measured balance change this year.
-      // Always exactly right, regardless of which mechanism moved the money.
-      const netCashFlow = hubEndingBalance - hubCashStart;
-
-      const cashFlow: CashFlowYearRow = {
-        year: currentYear,
-        totalIncome: acc.totalIncome,
-        totalExpenses: acc.totalExpenses,
-        operatingCashFlow,
-        netCashFlow,
-        surplusRouted: acc.surplusRouted,
-        withdrawalsToCashNet,
-        rmdTotal: acc.rmdTotal,
-        withdrawalTaxes: acc.taxesPaid,
-        taxSettlement,
-        incomeTaxWithheldFromCash: acc.incomeWithheldFromHub,
-        cashInterest: hubCashInterest,
-        otherAccountActivity,
-        otherActivityByItem,
-        endingCashBalance,
-        afterTaxContributionTotal: acc.afterTaxContributions,
-        incomeByItem: toLineItems(acc.incomeByItem),
-        expenseByItem: toLineItems(acc.expenseByItem),
-        contributionsByItem: [...acc.contributionsByItem.entries()]
-          .map(([id, amount]) => ({
-            id,
-            label: itemLabels.get(id) ?? id,
-            amount,
-            startDate: itemFirstDate.get(id) ?? null,
-            fromPaycheck: contributionFromPaycheck.get(id) ?? false,
-          }))
-          .sort((a, b) => b.amount - a.amount),
-        surplusByAccount: toAccountItems(acc.surplusByAccount),
-        withdrawalsByAccount,
-        federalTaxTotal,
-        federalTaxByComponent,
-        ordinaryTaxableIncome,
-        capitalGainsRealized: acc.capitalGainsRealized,
-        grossSocialSecurity: acc.grossSocialSecurity,
-        taxableSocialSecurityAmount,
-      };
-
-      years.push({
-        year: currentYear,
-        date: endOfYear(currentYear),
-        totalAssetsNominal,
-        totalLiabilitiesNominal,
-        netWorthNominal,
-        netWorthReal,
-        inflationDeflator: cumulativeInflation,
-        flowInflationDeflator,
-        accountBalances: Object.fromEntries(balances),
-        rollforwards,
-        cashFlow,
-      });
-
+    // 8c. Roll the year forward (after both snapshots have been taken).
+    if (isLastMonthOfYear) {
       for (const [id, balance] of balances) priorYearEndBalances.set(id, balance);
       for (const [id, balance] of balances) yearStartBalances.set(id, balance);
       if (nextMonth) currentYear = yearOf(nextMonth);
@@ -1307,6 +1477,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     computedAt: new Date().toISOString(),
     accounts,
     years,
+    months,
     timeline: resolved.timeline,
     ledger,
     kpis: {
