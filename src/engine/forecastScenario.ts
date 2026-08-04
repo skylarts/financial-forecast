@@ -1149,9 +1149,16 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     const yearsSinceStart = currentYear - yearOf(settings.startDate);
     const inflationFactor = Math.pow(1 + settings.inflationRatePct, Math.max(0, yearsSinceStart));
     const activeSplitStops = splitStops.filter(({ stop }) => isSplitStopActive(stop, month));
-    if (extraSavingsAccount) {
-      const freshSurplus = (balances.get(extraSavingsAccount.id) ?? 0) - extraSavingsMonthStart;
-      let remaining = freshSurplus;
+    // Offers `amount` (cash sitting in Extra Savings right now) to the split
+    // order and returns what was actually claimed. Shared by the monthly
+    // fresh-surplus split below and December's tax true-up refund (step 8):
+    // the refund is ordinary surplus cash, but it posts after this step has
+    // already run for December, and the fresh-surplus rule means no later
+    // month ever re-offers it -- so it needs to be routed explicitly at the
+    // point it lands rather than left to strand in the hub as cash.
+    const routeThroughSplitOrder = (amount: number): number => {
+      if (!extraSavingsAccount || amount <= 0.005) return 0;
+      let remaining = amount;
       for (const { account: target, stop } of activeSplitStops) {
         if (remaining <= 0.005) break;
         if (target.id === extraSavingsAccount.id) continue;
@@ -1178,6 +1185,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
           note: `Surplus split from ${extraSavingsAccount.name} to ${target.name}`,
         });
       }
+      return amount - remaining;
+    };
+    if (extraSavingsAccount) {
+      routeThroughSplitOrder((balances.get(extraSavingsAccount.id) ?? 0) - extraSavingsMonthStart);
     }
 
     // 5b. Cap overflow. The split above only catches money entering a target
@@ -1278,9 +1289,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     let exactTax = NO_EXACT_TAX;
     if (isLastMonthOfYear) {
       // NOTE ON ORDER: the exact federal bill is computed FIRST, then the
-      // withholding-vs-exact true-up is posted to the hub, and only then are
-      // rollforwards, net worth, and the hub delta measured -- so every
-      // ending figure already includes the settlement.
+      // withholding-vs-exact true-up is posted to the hub and a refund routed
+      // through the split order, and only then are rollforwards, net worth,
+      // and the hub delta measured -- so every ending figure already includes
+      // both the settlement and its routing.
       const withdrawalsByAccount = withdrawalItems(acc);
 
       // Exact federal tax for the year, from real 2026 brackets on the year's
@@ -1390,6 +1402,16 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
                 ? `Tax true-up refund (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`
                 : `Tax true-up payment (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`,
           });
+          // A refund is surplus cash like any other, so route it through the
+          // fill order now. Step 5 already ran for December and the
+          // fresh-surplus rule means no later month will ever re-offer it --
+          // without this it sits in the hub as idle cash indefinitely, which
+          // reads as "Extra Savings mysteriously accumulating a balance".
+          // Clamped to the hub's actual balance so a reserve deliberately
+          // left unclaimed in an earlier month is never swept along with it.
+          if (settlement > 0) {
+            routeThroughSplitOrder(Math.min(settlement, balances.get(hubId) ?? 0));
+          }
         }
       }
 
