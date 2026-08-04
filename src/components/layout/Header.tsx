@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { Scenario } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useUiStore } from "@/store/useUiStore";
@@ -362,6 +363,12 @@ export function Header({
             {v}
           </button>
         ))}
+        <Link
+          href="/portfolio"
+          className="ml-2 whitespace-nowrap rounded-md border border-border px-2.5 py-1 text-[12px] font-medium text-dim transition-colors hover:border-accent hover:text-foreground"
+        >
+          Portfolio →
+        </Link>
       </nav>
 
       <div className="flex items-center gap-2">
