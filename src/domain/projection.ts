@@ -216,7 +216,19 @@ export interface TimelineRow {
  */
 export interface LedgerEvent {
   date: ISODate;
-  kind: "rmd" | "deficit_withdrawal" | "mortgage_payment" | "surplus_route" | "cap_overflow" | "tax_settlement" | "home_sale";
+  kind:
+    | "rmd"
+    | "deficit_withdrawal"
+    | "mortgage_payment"
+    | "surplus_route"
+    | "cap_overflow"
+    | "tax_settlement"
+    | "home_sale"
+    /** A bill aimed at one account exceeded its balance: the account was left at
+     *  exactly $0 and the remainder charged to the hub for the drain order to
+     *  cover. `accountId` is the hub the money came from, `toAccountId` the
+     *  emptied account whose bill it paid. */
+    | "shortfall_spill";
   accountId: Id;
   toAccountId?: Id;
   amount: number;
@@ -259,7 +271,17 @@ export interface PeriodSnapshot {
 
 export interface ProjectionWarning {
   year: number;
-  kind: "insufficient_funds" | "unlinked_mortgage" | "routing_conflict" | "early_withdrawal_penalty" | "unamortized_debt";
+  kind:
+    | "insufficient_funds"
+    | "unlinked_mortgage"
+    | "routing_conflict"
+    | "early_withdrawal_penalty"
+    | "unamortized_debt"
+    /** An account was drawn all the way to $0 and something it was funding had
+     *  to be covered by the withdrawal routing instead. Informational, not
+     *  necessarily a problem -- it's the expected end state of deliberately
+     *  spending an account down (a 529, say). */
+    | "account_depleted";
   message: string;
   accountId?: Id;
 }

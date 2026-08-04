@@ -25,6 +25,7 @@ const LEDGER_KIND_LABELS: Record<LedgerEvent["kind"], string> = {
   cap_overflow: "Cap overflow",
   tax_settlement: "Tax true-up",
   home_sale: "Home sale",
+  shortfall_spill: "Account emptied",
 };
 
 // Visual tone per row type, and a sort tiebreak so items sharing a start date

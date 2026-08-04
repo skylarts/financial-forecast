@@ -586,6 +586,75 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     return provide;
   };
 
+  // ---------------------------------------------------------------------
+  // The no-overdraft rule. An asset account can only ever hand over money it
+  // actually holds: every outflow aimed at a SPECIFIC account (a tuition bill
+  // paid straight from a 529, a transfer out of a brokerage, an RMD, a
+  // cap-overflow rebalance) is sized by these two helpers, so the account
+  // lands at exactly $0 rather than going negative -- which, left unchecked,
+  // then compounds under the growth step into a runaway fictional debt.
+  //
+  // The one deliberate exception is the spending hub itself: it's allowed to
+  // dip below $0 mid-month precisely so the deficit cascade (step 6) can see
+  // the shortfall and pull from the drain order. If the cascade can't cover
+  // it either, the hub STAYS negative -- that's the household genuinely
+  // running out of money, and it must stay visible in net worth and in the
+  // "insufficient funds" warning rather than being quietly clamped away.
+  // ---------------------------------------------------------------------
+
+  /**
+   * The largest NET amount that can leave `account` without overdrawing it
+   * once the withdrawal's own tax is realized at the source -- the same
+   * `available / (1 + rate)` gross-up the deficit cascade uses, since
+   * estimatedWithdrawalRate reproduces exactly what realizeWithdrawalTax will
+   * charge on this balance. Liabilities pass through untouched (their
+   * balances are amounts owed, not funds to spend).
+   */
+  const affordableOutflow = (account: EngineAccount, requested: number): number => {
+    if (requested <= 0) return 0;
+    if (account.category !== "asset") return requested;
+    const balance = balances.get(account.id) ?? 0;
+    if (balance <= 0) return 0;
+    return Math.min(requested, balance / (1 + estimatedWithdrawalRate(account)));
+  };
+
+  /**
+   * Charges `unmet` -- the part of a directed outflow the account itself
+   * couldn't cover -- to the spending hub, so the money still comes from
+   * somewhere real. The hub's balance drops now and the deficit cascade
+   * (step 6, later this same month) refills it from the drain order in list
+   * order: exactly the "next account in the withdrawal routing" behavior,
+   * reusing the one cascade rather than duplicating it here.
+   *
+   * Callers own their cash-flow bookkeeping for the spilled amount -- an
+   * expense needs none (the full expense is already in totalExpenses, and
+   * only the part the source DID fund is offset via directExpenseFromAccounts),
+   * whereas a transfer leg has to record the hub leg itself.
+   */
+  const chargeShortfallToHub = (source: EngineAccount, unmet: number, label: string, month: ISODate): void => {
+    if (!primarySpendingAccountId || primarySpendingAccountId === source.id || unmet <= 0.005) return;
+    balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) - unmet);
+    acc.rollforward.get(primarySpendingAccountId)!.withdrawals += unmet;
+    ledger.push({
+      date: month,
+      kind: "shortfall_spill",
+      accountId: primarySpendingAccountId,
+      toAccountId: source.id,
+      amount: unmet,
+      note: `${source.name} is out of money -- ${label} covered by the withdrawal routing instead`,
+    });
+    const warnKey = `${currentYear}:depleted:${source.id}`;
+    if (!warnedThisYear.has(warnKey)) {
+      warnedThisYear.add(warnKey);
+      warnings.push({
+        year: currentYear,
+        kind: "account_depleted",
+        accountId: source.id,
+        message: `${source.name} is fully drawn down as of ${month} -- what it can't cover is taken from the next account in your withdrawal routing.`,
+      });
+    }
+  };
+
   /** Every account outflow for a period, as one gross/net/tax line per source account. */
   const withdrawalItems = (periodAcc: YearAccumulator) => {
     const ids = new Set<Id>([...periodAcc.withdrawalNetByAccount.keys(), ...periodAcc.withdrawalTaxByAccount.keys()]);
@@ -817,24 +886,44 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const proceeds = homeValue * (1 - account.saleInfo.sellingCostsPct) - mortgageBalance;
       const targetId = account.saleInfo.proceedsAccountId ?? primarySpendingAccountId;
       if (targetId && Math.abs(proceeds) > 0.005) {
-        balances.set(targetId, (balances.get(targetId) ?? 0) + proceeds);
+        // An underwater sale (mortgage payoff exceeding the home's equity)
+        // makes "proceeds" a DEBIT on the target account -- clamp it like any
+        // other outflow so a small proceeds account can't be driven negative.
+        const targetAccount = accountById.get(targetId);
+        let applied = proceeds;
+        if (proceeds < 0 && targetAccount && primarySpendingAccountId && !hubIds.has(targetId)) {
+          applied = -affordableOutflow(targetAccount, -proceeds);
+          const unmet = -proceeds - -applied;
+          if (unmet > 0.005) {
+            chargeShortfallToHub(targetAccount, unmet, `Home sale shortfall: ${account.name}`, month);
+            acc.hubTransferNet -= unmet;
+            recordOtherActivity(
+              `${account.id}:sale:unfunded`,
+              `Home sale: ${account.name} (${targetAccount.name} empty -- covered from cash)`,
+              account.id,
+              -unmet,
+              month
+            );
+          }
+        }
+        balances.set(targetId, (balances.get(targetId) ?? 0) + applied);
         const targetBucket = acc.rollforward.get(targetId);
         if (targetBucket) {
-          if (proceeds >= 0) targetBucket.deposits += proceeds;
-          else targetBucket.withdrawals += -proceeds;
+          if (applied >= 0) targetBucket.deposits += applied;
+          else targetBucket.withdrawals += -applied;
         }
         // Asset-for-asset swap (home equity -> cash): reconcile like any
         // other transfer leg landing on the hub directly.
         if (hubIds.has(targetId)) {
-          acc.hubTransferNet += proceeds;
-          recordOtherActivity(`${account.id}:sale`, `Home sale: ${account.name}`, account.id, proceeds, month);
+          acc.hubTransferNet += applied;
+          recordOtherActivity(`${account.id}:sale`, `Home sale: ${account.name}`, account.id, applied, month);
         }
         ledger.push({
           date: month,
           kind: "home_sale",
           accountId: account.id,
           toAccountId: targetId,
-          amount: proceeds,
+          amount: applied,
           note: `Sold ${account.name}: value ${Math.round(homeValue).toLocaleString()} − selling costs − mortgage payoff ${Math.round(mortgageBalance).toLocaleString()}`,
         });
       }
@@ -872,9 +961,16 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       }
       if (account.isExcluded) continue;
       if (account.class === "credit_card" || account.class === "loan" || account.class === "mortgage") continue;
+      // Never compound a balance that isn't there. Only the spending hub can
+      // legitimately sit below $0 (see the no-overdraft rule above), and
+      // applying a growth rate to an overdrawn balance would manufacture a
+      // snowballing loss no real account charges -- it would also grow the
+      // hole faster than the deficit cascade could ever close it.
+      const balance = balances.get(account.id) ?? 0;
+      if (balance <= 0) continue;
       const rate = monthlyRateFromAnnual(effectiveAnnualRate(account, month, settings.inflationRatePct));
       if (!rate) continue;
-      const growthAmount = (balances.get(account.id) ?? 0) * rate;
+      const growthAmount = balance * rate;
       balances.set(account.id, (balances.get(account.id) ?? 0) + growthAmount);
       acc.rollforward.get(account.id)!.growth += growthAmount;
     }
@@ -892,6 +988,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // the debt. Paydown is capped at the remaining balance; any excess is
       // returned to the spending hub rather than vanishing.
       let liabilityExcessToHub = 0;
+      // The net amount that actually left the target account for this posting
+      // (0 for an inflow). Usually the full request; less when the account
+      // ran dry and the no-overdraft rule capped it.
+      let outflowApplied = posting.amount < 0 ? -posting.amount : 0;
       if (posting.amount > 0 && targetAccount && targetAccount.category === "liability") {
         const owed = balances.get(posting.accountId) ?? 0;
         const applied = Math.min(posting.amount, owed);
@@ -908,6 +1008,41 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
               `${posting.label} (excess over payoff, returned to cash)`,
               posting.accountId,
               liabilityExcessToHub,
+              posting.date
+            );
+          }
+        }
+      } else if (
+        posting.amount < 0 &&
+        targetAccount &&
+        targetAccount.category === "asset" &&
+        primarySpendingAccountId &&
+        !hubIds.has(posting.accountId)
+      ) {
+        // An outflow aimed at a SPECIFIC asset account -- a tuition bill paid
+        // straight from a 529, a transfer out of a brokerage. It can only
+        // take what the account holds (net of the tax that draw realizes), so
+        // an over-sized withdrawal rate empties the account to exactly $0
+        // instead of driving it negative; the rest is charged to the hub and
+        // picked up by the drain order below.
+        outflowApplied = affordableOutflow(targetAccount, -posting.amount);
+        balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) - outflowApplied);
+        if (bucket) bucket.withdrawals += outflowApplied;
+        const unmet = -posting.amount - outflowApplied;
+        if (unmet > 0.005) {
+          chargeShortfallToHub(targetAccount, unmet, posting.label, month);
+          // An EXPENSE needs no further bookkeeping: its full amount is
+          // already in totalExpenses, and only the part this account actually
+          // funded is offset via directExpenseFromAccounts below -- so the
+          // hub's drop reconciles on its own. A transfer leg has no such
+          // line, so the hub's share of it has to be recorded here.
+          if (posting.category !== "expense") {
+            acc.hubTransferNet -= unmet;
+            recordOtherActivity(
+              `${posting.sourceId}:unfunded`,
+              `${posting.label} (${targetAccount.name} empty -- covered from cash)`,
+              posting.accountId,
+              -unmet,
               posting.date
             );
           }
@@ -1008,8 +1143,8 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
 
       // Any outflow from a taxable / tax-deferred account (a transfer out, or an
       // expense paid straight from it) is a sale that realizes tax.
-      if (posting.amount < 0) {
-        const outAmount = -posting.amount;
+      if (outflowApplied > 0) {
+        const outAmount = outflowApplied;
         const tax = realizeWithdrawalTax(posting.accountId, outAmount);
         // Money leaving a NON-hub asset account (a savings/investment) counts
         // as a withdrawal in the Cash Flow tab -- a direct expense paid from it,
@@ -1067,9 +1202,21 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // otherwise overpay/overcharge a loan that's paying off with less than
         // a full payment remaining.
         const actualPayment = step.interestPortion + principalPortion;
-        balances.set(payerId, (balances.get(payerId) ?? 0) - actualPayment);
+        // Paying from a non-hub account (a mortgage set to draw on a savings
+        // account) can't overdraw it -- whatever that account is short is
+        // charged to the hub for the drain order to cover, same as any other
+        // directed outflow. The hub itself is exempt, by design.
+        const payer = accountById.get(payerId);
+        const paidFromPayer =
+          payer && payer.category === "asset" && primarySpendingAccountId && !hubIds.has(payerId)
+            ? affordableOutflow(payer, actualPayment)
+            : actualPayment;
+        balances.set(payerId, (balances.get(payerId) ?? 0) - paidFromPayer);
         const payerBucket = acc.rollforward.get(payerId);
-        if (payerBucket) payerBucket.withdrawals += actualPayment;
+        if (payerBucket) payerBucket.withdrawals += paidFromPayer;
+        if (payer && actualPayment - paidFromPayer > 0.005) {
+          chargeShortfallToHub(payer, actualPayment - paidFromPayer, `Mortgage payment (${account.name})`, month);
+        }
         acc.totalExpenses += actualPayment;
         addTo(acc.expenseByItem, account.id, actualPayment);
         itemLabels.set(account.id, `Mortgage payment (${account.name})`);
@@ -1106,7 +1253,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         const divisor = rmdDivisor(age);
         const priorBalance = priorYearEndBalances.get(account.id) ?? 0;
         if (!divisor || priorBalance <= 0) continue;
-        const rmdAmount = priorBalance / divisor;
+        // Sized off the PRIOR Dec-31 balance, as the IRS requires -- but the
+        // account may hold less than that by now (a big withdrawal, a down
+        // market), so distribute at most what's actually left after its own
+        // tax rather than overdrawing it.
+        const rmdAmount = affordableOutflow(account, priorBalance / divisor);
+        if (rmdAmount <= 0.005) continue;
         balances.set(account.id, (balances.get(account.id) ?? 0) - rmdAmount);
         acc.rollforward.get(account.id)!.withdrawals += rmdAmount;
         acc.rmdTotal += rmdAmount;
@@ -1211,7 +1363,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         const destCap = effectiveMaxBalance(dest.stop, yearsSinceStart, settings.inflationRatePct);
         const room = destCap - (balances.get(dest.account.id) ?? 0);
         if (room <= 0) continue; // next target also full -- keep spilling onward
-        const move = Math.min(excess, room);
+        // Capped by what the over-cap account can actually part with once the
+        // sale's tax is realized -- otherwise a cap of $0 would move the whole
+        // balance out and the tax on top would leave it negative.
+        const move = Math.min(room, affordableOutflow(over.account, excess));
+        if (move <= 0.005) continue;
         balances.set(over.account.id, (balances.get(over.account.id) ?? 0) - move);
         balances.set(dest.account.id, (balances.get(dest.account.id) ?? 0) + move);
         acc.rollforward.get(over.account.id)!.withdrawals += move;
@@ -1260,6 +1416,18 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
           shortfall -= drawFromSource(source, spender, offered, month, floor);
         }
       }
+    }
+
+    // 6b. Floating-point tidy-up. A draw sized to empty an account exactly
+    //     (available / (1 + tax rate), with the tax then charged back at the
+    //     source) lands on zero in real arithmetic but can leave a residue of
+    //     a billionth of a cent on either side of it in floating point -- which
+    //     renders as "-$0" in the balances table. Snap those to a true zero, at
+    //     a threshold far below a cent so no real money is ever moved.
+    for (const account of activeAccounts) {
+      if (account.category !== "asset") continue;
+      const balance = balances.get(account.id) ?? 0;
+      if (balance !== 0 && Math.abs(balance) < 1e-6) balances.set(account.id, 0);
     }
 
     // 7. Warnings -- any (non-excluded) asset account still negative after the above.
