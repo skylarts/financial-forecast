@@ -7,6 +7,7 @@ import {
   TRANSACTION_TYPE_GROUPS,
   TRANSACTION_TYPE_LABELS,
   type Portfolio,
+  type PortfolioAccount,
   type Transaction,
   type TransactionType,
 } from "@/domain/portfolio";
@@ -53,41 +54,102 @@ function TxSortHeader({
   );
 }
 
-const BLANK = {
-  date: new Date().toISOString().slice(0, 10),
-  type: "buy" as TransactionType,
-  symbol: "",
-  quantity: "",
-  price: "",
-  amount: "",
-  fees: "",
-  lotId: "",
-  acquiredDate: "",
-};
-
-function AddTransactionForm({
-  accountId,
-  onDone,
-}: {
+interface TxFormState {
   accountId: string;
-  onDone: () => void;
-}) {
-  const addTransaction = usePortfolioStore((s) => s.addTransaction);
-  const [form, setForm] = useState(BLANK);
+  date: string;
+  type: TransactionType;
+  symbol: string;
+  quantity: string;
+  price: string;
+  amount: string;
+  fees: string;
+  lotId: string;
+  acquiredDate: string;
+}
 
-  const set = (patch: Partial<typeof BLANK>) => setForm((f) => ({ ...f, ...patch }));
-  const num = (raw: string) => {
-    const value = Number.parseFloat(raw);
-    return Number.isFinite(value) ? Math.abs(value) : 0;
+function blankForm(accountId: string): TxFormState {
+  return {
+    accountId,
+    date: new Date().toISOString().slice(0, 10),
+    type: "buy",
+    symbol: "",
+    quantity: "",
+    price: "",
+    amount: "",
+    fees: "",
+    lotId: "",
+    acquiredDate: "",
   };
+}
 
-  const needsSymbol = form.type !== "cash_deposit" && form.type !== "cash_withdrawal" && form.type !== "interest" && form.type !== "fee";
-  const canSubmit = form.date !== "" && (!needsSymbol || form.symbol.trim() !== "");
+/** Converts a stored transaction back into editable form strings. */
+function formFromTransaction(tx: Transaction): TxFormState {
+  return {
+    accountId: tx.accountId,
+    date: tx.date,
+    type: tx.type,
+    symbol: tx.symbol ?? "",
+    quantity: tx.quantity > 0 ? String(tx.quantity) : "",
+    price: tx.price > 0 ? String(tx.price) : "",
+    amount: tx.amount === null ? "" : String(tx.amount),
+    fees: tx.fees > 0 ? String(tx.fees) : "",
+    lotId: tx.lotId ?? "",
+    acquiredDate: tx.acquiredDate ?? "",
+  };
+}
+
+/**
+ * The add and edit forms are the same fields end to end, so they share one
+ * component -- keeping them separate would mean every future field (or every
+ * future bug) has to be fixed twice.
+ */
+function TransactionForm({
+  accounts,
+  initial,
+  submitLabel,
+  onSubmit,
+  onCancel,
+  /** After a successful add, clear everything but account/date/type -- a
+   *  statement is almost always entered as a run of similar rows. Editing
+   *  never sets this: there is exactly one save, and it should close. */
+  resetAfterSubmit = false,
+}: {
+  accounts: PortfolioAccount[];
+  initial: TxFormState;
+  submitLabel: string;
+  onSubmit: (form: TxFormState) => void;
+  onCancel: () => void;
+  resetAfterSubmit?: boolean;
+}) {
+  const [form, setForm] = useState(initial);
+
+  const set = (patch: Partial<TxFormState>) => setForm((f) => ({ ...f, ...patch }));
+
+  const needsSymbol =
+    form.type !== "cash_deposit" &&
+    form.type !== "cash_withdrawal" &&
+    form.type !== "interest" &&
+    form.type !== "fee";
+  const canSubmit = form.date !== "" && form.accountId !== "" && (!needsSymbol || form.symbol.trim() !== "");
   const opensLot = opensLotOn(form.type) !== null;
 
   return (
     <div className="mb-4 rounded-md border border-border bg-panel-2 p-3">
       <div className="flex flex-wrap items-end gap-2">
+        <label className="text-[11.5px] text-dim-2">
+          <span className="mb-0.5 block">Account</span>
+          <select
+            value={form.accountId}
+            onChange={(e) => set({ accountId: e.target.value })}
+            className={`${INPUT} w-36`}
+          >
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="text-[11.5px] text-dim-2">
           <span className="mb-0.5 block">Date</span>
           <input type="date" value={form.date} onChange={(e) => set({ date: e.target.value })} className={INPUT} />
@@ -183,37 +245,36 @@ function AddTransactionForm({
             variant="primary"
             onClick={() => {
               if (!canSubmit) return;
-              addTransaction({
-                accountId,
-                date: form.date,
-                type: form.type,
-                symbol: form.symbol.trim() ? normalizeSymbol(form.symbol) : null,
-                quantity: num(form.quantity),
-                price: num(form.price),
-                amount: form.amount.trim() === "" ? null : num(form.amount),
-                fees: num(form.fees),
-                lotId: form.lotId.trim() || null,
-                acquiredDate: form.acquiredDate || null,
-                note: "",
-                importBatchId: null,
-                sourceHash: null,
-              });
-              setForm({ ...BLANK, date: form.date, type: form.type });
+              onSubmit(form);
+              if (resetAfterSubmit) {
+                setForm({ ...blankForm(form.accountId), date: form.date, type: form.type });
+              }
             }}
             className={canSubmit ? "" : "pointer-events-none opacity-40"}
           >
-            Add
+            {submitLabel}
           </Btn>
-          <Btn onClick={onDone}>Done</Btn>
+          <Btn onClick={onCancel}>Cancel</Btn>
         </div>
       </div>
     </div>
   );
 }
 
+/** Blank strings mean "use the computed default" for shares/price/fees, but an
+ *  explicit zero (a $0 fee, a dividend's 0 shares) must survive as zero, not
+ *  vanish into the same default. */
+function num(raw: string): number {
+  const value = Number.parseFloat(raw);
+  return Number.isFinite(value) ? Math.abs(value) : 0;
+}
+
 export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
+  const addTransaction = usePortfolioStore((s) => s.addTransaction);
+  const updateTransaction = usePortfolioStore((s) => s.updateTransaction);
   const removeTransaction = usePortfolioStore((s) => s.removeTransaction);
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [accountFilter, setAccountFilter] = useState<string>("all");
   const [symbolFilter, setSymbolFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
@@ -333,7 +394,13 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             </Btn>
           )}
           {portfolio.accounts.length > 0 && (
-            <Btn variant="primary" onClick={() => setAdding((v) => !v)}>
+            <Btn
+              variant="primary"
+              onClick={() => {
+                setEditingId(null);
+                setAdding((v) => !v);
+              }}
+            >
               {adding ? "Hide form" : "Add transaction"}
             </Btn>
           )}
@@ -341,7 +408,30 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
       </div>
 
       {adding && defaultAccountId && (
-        <AddTransactionForm accountId={defaultAccountId} onDone={() => setAdding(false)} />
+        <TransactionForm
+          accounts={portfolio.accounts}
+          initial={blankForm(defaultAccountId)}
+          submitLabel="Add"
+          resetAfterSubmit
+          onCancel={() => setAdding(false)}
+          onSubmit={(form) =>
+            addTransaction({
+              accountId: form.accountId,
+              date: form.date,
+              type: form.type,
+              symbol: form.symbol.trim() ? normalizeSymbol(form.symbol) : null,
+              quantity: num(form.quantity),
+              price: num(form.price),
+              amount: form.amount.trim() === "" ? null : num(form.amount),
+              fees: num(form.fees),
+              lotId: form.lotId.trim() || null,
+              acquiredDate: form.acquiredDate || null,
+              note: "",
+              importBatchId: null,
+              sourceHash: null,
+            })
+          }
+        />
       )}
 
       {rows.length === 0 ? (
@@ -365,40 +455,81 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((tx: Transaction) => (
-                <tr key={tx.id} className="border-b border-border-soft hover:bg-panel-2">
-                  <td className={`${CELL} text-left text-dim`}>{shortDate(tx.date)}</td>
-                  <td className={`${CELL} text-left text-dim`}>
-                    {accountNames.get(tx.accountId) ?? "—"}
-                  </td>
-                  <td className={`${CELL} text-left text-foreground`}>
-                    {TRANSACTION_TYPE_LABELS[tx.type]}
-                  </td>
-                  <td className={`${CELL} text-left font-semibold text-foreground`}>
-                    {tx.symbol ?? "—"}
-                  </td>
-                  <td className={`${CELL} text-right text-dim`}>
-                    {tx.quantity > 0 ? shares(tx.quantity) : "—"}
-                  </td>
-                  <td className={`${CELL} text-right text-dim`}>
-                    {tx.price > 0 ? price(tx.price) : "—"}
-                  </td>
-                  <td className={`${CELL} text-right text-dim`}>
-                    {tx.amount === null ? money(tx.quantity * tx.price) : money(tx.amount)}
-                  </td>
-                  <td className={`${CELL} text-left text-dim-2`}>{tx.lotId ?? "—"}</td>
-                  <td className={`${CELL} text-right`}>
-                    <button
-                      type="button"
-                      onClick={() => removeTransaction(tx.id)}
-                      title="Delete this transaction"
-                      className="text-dim-2 hover:text-negative"
-                    >
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((tx: Transaction) =>
+                editingId === tx.id ? (
+                  <tr key={tx.id}>
+                    <td colSpan={9} className="p-0">
+                      <TransactionForm
+                        accounts={portfolio.accounts}
+                        initial={formFromTransaction(tx)}
+                        submitLabel="Save"
+                        onCancel={() => setEditingId(null)}
+                        onSubmit={(form) => {
+                          updateTransaction(tx.id, {
+                            accountId: form.accountId,
+                            date: form.date,
+                            type: form.type,
+                            symbol: form.symbol.trim() ? normalizeSymbol(form.symbol) : null,
+                            quantity: num(form.quantity),
+                            price: num(form.price),
+                            amount: form.amount.trim() === "" ? null : num(form.amount),
+                            fees: num(form.fees),
+                            lotId: form.lotId.trim() || null,
+                            acquiredDate: form.acquiredDate || null,
+                          });
+                          setEditingId(null);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={tx.id} className="border-b border-border-soft hover:bg-panel-2">
+                    <td className={`${CELL} text-left text-dim`}>{shortDate(tx.date)}</td>
+                    <td className={`${CELL} text-left text-dim`}>
+                      {accountNames.get(tx.accountId) ?? "—"}
+                    </td>
+                    <td className={`${CELL} text-left text-foreground`}>
+                      {TRANSACTION_TYPE_LABELS[tx.type]}
+                    </td>
+                    <td className={`${CELL} text-left font-semibold text-foreground`}>
+                      {tx.symbol ?? "—"}
+                    </td>
+                    <td className={`${CELL} text-right text-dim`}>
+                      {tx.quantity > 0 ? shares(tx.quantity) : "—"}
+                    </td>
+                    <td className={`${CELL} text-right text-dim`}>
+                      {tx.price > 0 ? price(tx.price) : "—"}
+                    </td>
+                    <td className={`${CELL} text-right text-dim`}>
+                      {tx.amount === null ? money(tx.quantity * tx.price) : money(tx.amount)}
+                    </td>
+                    <td className={`${CELL} text-left text-dim-2`}>{tx.lotId ?? "—"}</td>
+                    <td className={`${CELL} text-right`}>
+                      <div className="flex items-center justify-end gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAdding(false);
+                            setEditingId(tx.id);
+                          }}
+                          title="Edit this transaction"
+                          className="text-dim-2 hover:text-foreground"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeTransaction(tx.id)}
+                          title="Delete this transaction"
+                          className="text-dim-2 hover:text-negative"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ),
+              )}
             </tbody>
           </table>
         </div>
