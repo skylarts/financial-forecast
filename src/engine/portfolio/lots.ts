@@ -1,10 +1,11 @@
 import type { ISODate, Id } from "@/domain";
 import {
-  LOT_CLOSING_TYPES,
-  LOT_OPENING_TYPES,
-  lotCostBasis,
+  closesLotOn,
+  lotCloseValue,
+  lotOpenValue,
   normalizeSymbol,
-  saleProceeds,
+  opensLotOn,
+  type PositionSide,
   type Transaction,
   type TransactionType,
 } from "@/domain/portfolio";
@@ -18,10 +19,11 @@ export interface OpenLot {
   id: string;
   accountId: Id;
   symbol: string;
+  side: PositionSide;
   acquiredDate: ISODate;
-  /** Shares still held. */
+  /** Shares still held (long) or still owed (short). Always positive. */
   quantity: number;
-  /** Basis of the shares still held. */
+  /** Cost of the shares still held, or proceeds still owed against, per side. */
   costBasis: number;
   openTxId: Id;
 }
@@ -32,10 +34,13 @@ export interface ClosedLot {
   id: string;
   accountId: Id;
   symbol: string;
+  side: PositionSide;
   acquiredDate: ISODate;
   disposedDate: ISODate;
   quantity: number;
+  /** What opening these shares cost (long) or brought in (short). */
   costBasis: number;
+  /** What closing them brought in (long) or cost (short). */
   proceeds: number;
   gain: number;
   term: HoldingTerm;
@@ -70,9 +75,9 @@ export interface LotLedger {
  * only ordering that never manufactures a phantom disposal.
  */
 function typeRank(type: TransactionType): number {
-  if (LOT_OPENING_TYPES.includes(type)) return 0;
+  if (opensLotOn(type)) return 0;
   if (type === "split") return 1;
-  if (LOT_CLOSING_TYPES.includes(type)) return 2;
+  if (closesLotOn(type)) return 2;
   return 3;
 }
 
@@ -97,18 +102,23 @@ export function holdingTerm(acquiredDate: ISODate, disposedDate: ISODate): Holdi
   return new Date(`${disposedDate}T00:00:00`) > oneYearOn ? "long" : "short";
 }
 
-function positionKey(accountId: Id, symbol: string): string {
-  return `${accountId}::${symbol}`;
+function positionKey(accountId: Id, symbol: string, side: PositionSide): string {
+  return `${accountId}::${symbol}::${side}`;
 }
 
 /**
  * Replays a transaction ledger into open and closed tax lots.
  *
+ * Long and short lots are kept in separate queues, so a sell only ever draws
+ * down shares you own and a cover only ever draws down shares you owe. Without
+ * that split, opening a short would look identical to selling stock you never
+ * bought.
+ *
  * Disposals honor the statement's own lot id when it carries one, which keeps
  * realized gains matching what the brokerage reported; without one they fall
- * back to FIFO. Selling more shares than the ledger knows about is recorded
+ * back to FIFO. Closing more shares than the ledger knows about is recorded
  * against a zero-basis lot and flagged -- an imported history that starts
- * mid-stream is normal, and dropping the sale entirely would understate
+ * mid-stream is normal, and dropping the trade entirely would understate
  * proceeds far more badly than an overstated gain does.
  */
 export function buildLotLedger(transactions: readonly Transaction[]): LotLedger {
@@ -119,19 +129,22 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
   for (const tx of sortForReplay(transactions)) {
     if (tx.symbol === null) continue;
     const symbol = normalizeSymbol(tx.symbol);
-    const key = positionKey(tx.accountId, symbol);
-    const lots = open.get(key) ?? [];
-    if (!open.has(key)) open.set(key, lots);
+    const openSide = opensLotOn(tx.type);
+    const closeSide = closesLotOn(tx.type);
 
-    if (LOT_OPENING_TYPES.includes(tx.type)) {
+    if (openSide) {
       if (tx.quantity <= 0) continue;
+      const key = positionKey(tx.accountId, symbol, openSide);
+      const lots = open.get(key) ?? [];
+      if (!open.has(key)) open.set(key, lots);
       lots.push({
         id: tx.lotId ?? tx.id,
         accountId: tx.accountId,
         symbol,
+        side: openSide,
         acquiredDate: tx.acquiredDate ?? tx.date,
         quantity: tx.quantity,
-        costBasis: lotCostBasis(tx),
+        costBasis: lotOpenValue(tx),
         openTxId: tx.id,
       });
       continue;
@@ -148,17 +161,26 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
         });
         continue;
       }
-      // Basis per lot is unchanged by a split; only the share count moves.
-      for (const lot of lots) lot.quantity *= ratio;
+      // Basis per lot is unchanged by a split; only the share count moves. A
+      // split applies to a borrowed position exactly as it does to an owned one.
+      for (const side of ["long", "short"] as const) {
+        for (const lot of open.get(positionKey(tx.accountId, symbol, side)) ?? []) {
+          lot.quantity *= ratio;
+        }
+      }
       continue;
     }
 
-    if (!LOT_CLOSING_TYPES.includes(tx.type)) continue;
+    if (!closeSide) continue;
     if (tx.quantity <= 0) continue;
 
+    const key = positionKey(tx.accountId, symbol, closeSide);
+    const lots = open.get(key) ?? [];
+    if (!open.has(key)) open.set(key, lots);
+
     let remaining = tx.quantity;
-    const proceeds = tx.type === "sell" ? saleProceeds(tx) : 0;
-    const perShareProceeds = proceeds / tx.quantity;
+    const closeValue = tx.type === "transfer_out" ? 0 : lotCloseValue(tx);
+    const perShareClose = closeValue / tx.quantity;
 
     const named = tx.lotId ? lots.filter((lot) => lot.id === tx.lotId) : [];
     if (tx.lotId && named.length === 0) {
@@ -166,7 +188,7 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
         txId: tx.id,
         date: tx.date,
         symbol,
-        message: `Lot "${tx.lotId}" named by this sale isn't open — fell back to oldest-first.`,
+        message: `Lot "${tx.lotId}" named by this trade isn't open — fell back to oldest-first.`,
       });
     }
     // Specific identification when the statement named a lot, oldest-first
@@ -178,54 +200,60 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
       if (remaining <= EPSILON) break;
       if (lot.quantity <= EPSILON) continue;
       const taken = Math.min(lot.quantity, remaining);
-      const basis = (lot.costBasis / lot.quantity) * taken;
-      const share = perShareProceeds * taken;
+      const openValue = (lot.costBasis / lot.quantity) * taken;
+      const close = perShareClose * taken;
 
       closedLots.push({
         id: lot.id,
         accountId: tx.accountId,
         symbol,
+        side: closeSide,
         acquiredDate: lot.acquiredDate,
         disposedDate: tx.date,
         quantity: taken,
-        costBasis: basis,
-        proceeds: share,
-        gain: share - basis,
+        costBasis: openValue,
+        proceeds: close,
+        // A short profits when it costs less to cover than it brought in, so
+        // its gain runs the opposite way to a long's.
+        gain: closeSide === "short" ? openValue - close : close - openValue,
         term: holdingTerm(lot.acquiredDate, tx.date),
-        taxable: tx.type === "sell",
+        taxable: tx.type !== "transfer_out",
         openTxId: lot.openTxId,
         closeTxId: tx.id,
       });
 
       lot.quantity -= taken;
-      lot.costBasis -= basis;
+      lot.costBasis -= openValue;
       remaining -= taken;
     }
 
     if (remaining > EPSILON) {
-      const share = perShareProceeds * remaining;
+      const close = perShareClose * remaining;
       closedLots.push({
         id: `${tx.id}-unmatched`,
         accountId: tx.accountId,
         symbol,
+        side: closeSide,
         acquiredDate: tx.date,
         disposedDate: tx.date,
         quantity: remaining,
         costBasis: 0,
-        proceeds: share,
-        gain: share,
+        proceeds: close,
+        gain: closeSide === "short" ? -close : close,
         term: "short",
-        taxable: tx.type === "sell",
+        taxable: tx.type !== "transfer_out",
         openTxId: tx.id,
         closeTxId: tx.id,
       });
+      const amount = remaining.toLocaleString(undefined, { maximumFractionDigits: 4 });
       warnings.push({
         txId: tx.id,
         date: tx.date,
         symbol,
-        message: `Sold ${remaining.toLocaleString(undefined, {
-          maximumFractionDigits: 4,
-        })} more shares than the ledger holds — counted at zero cost basis, so the gain is overstated. Add the missing purchase.`,
+        message:
+          closeSide === "short"
+            ? `Covered ${amount} more shares than the ledger shows shorted — counted at zero basis. Add the missing short sale.`
+            : `Sold ${amount} more shares than the ledger holds — counted at zero cost basis, so the gain is overstated. Add the missing purchase, or record it as "Sell short" if this opened a short position.`,
       });
     }
 

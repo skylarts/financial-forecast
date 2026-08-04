@@ -2,10 +2,10 @@
 
 import { useMemo, useState } from "react";
 import {
-  LOT_OPENING_TYPES,
+  opensLotOn,
   normalizeSymbol,
+  TRANSACTION_TYPE_GROUPS,
   TRANSACTION_TYPE_LABELS,
-  transactionTypeSchema,
   type Portfolio,
   type Transaction,
   type TransactionType,
@@ -13,11 +13,45 @@ import {
 import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { money, price, shares, shortDate } from "@/lib/portfolio/format";
 import { Btn } from "@/components/ui/controls";
+import { sortMarker, useSort, type SortAccessors } from "./useSort";
 
 const INPUT =
   "rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none focus:border-accent";
 const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
+
+type TxColumn = "date" | "account" | "type" | "symbol" | "quantity" | "price" | "amount";
+
+function TxSortHeader({
+  label,
+  column,
+  align,
+  sort,
+  onToggle,
+}: {
+  label: string;
+  column: TxColumn;
+  align: "left" | "right";
+  sort: { key: TxColumn; direction: "asc" | "desc" };
+  onToggle: (column: TxColumn) => void;
+}) {
+  const alignClass = align === "left" ? "text-left" : "text-right";
+  return (
+    <th className={`${HEAD} ${alignClass}`}>
+      <button
+        type="button"
+        onClick={() => onToggle(column)}
+        title={`Sort by ${label.toLowerCase()}`}
+        className={`w-full ${alignClass} uppercase tracking-wide transition-colors hover:text-foreground ${
+          sort.key === column ? "text-foreground" : ""
+        }`}
+      >
+        {label}
+        {sortMarker(sort, column)}
+      </button>
+    </th>
+  );
+}
 
 const BLANK = {
   date: new Date().toISOString().slice(0, 10),
@@ -49,7 +83,7 @@ function AddTransactionForm({
 
   const needsSymbol = form.type !== "cash_deposit" && form.type !== "cash_withdrawal" && form.type !== "interest" && form.type !== "fee";
   const canSubmit = form.date !== "" && (!needsSymbol || form.symbol.trim() !== "");
-  const opensLot = LOT_OPENING_TYPES.includes(form.type);
+  const opensLot = opensLotOn(form.type) !== null;
 
   return (
     <div className="mb-4 rounded-md border border-border bg-panel-2 p-3">
@@ -65,10 +99,14 @@ function AddTransactionForm({
             onChange={(e) => set({ type: e.target.value as TransactionType })}
             className={INPUT}
           >
-            {transactionTypeSchema.options.map((type) => (
-              <option key={type} value={type}>
-                {TRANSACTION_TYPE_LABELS[type]}
-              </option>
+            {TRANSACTION_TYPE_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.types.map((type) => (
+                  <option key={type} value={type}>
+                    {TRANSACTION_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
@@ -178,19 +216,50 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
   const [adding, setAdding] = useState(false);
   const [accountFilter, setAccountFilter] = useState<string>("all");
   const [symbolFilter, setSymbolFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   const accountNames = useMemo(
     () => new Map(portfolio.accounts.map((a) => [a.id, a.name])),
     [portfolio.accounts],
   );
 
-  const rows = useMemo(() => {
+  const accessors = useMemo<SortAccessors<Transaction, TxColumn>>(
+    () => ({
+      date: (tx) => tx.date,
+      account: (tx) => accountNames.get(tx.accountId) ?? "",
+      type: (tx) => TRANSACTION_TYPE_LABELS[tx.type],
+      symbol: (tx) => tx.symbol ?? "",
+      quantity: (tx) => tx.quantity,
+      price: (tx) => tx.price,
+      amount: (tx) => tx.amount ?? tx.quantity * tx.price,
+    }),
+    [accountNames],
+  );
+  const { sort, toggle, apply } = useSort<Transaction, TxColumn>(accessors, "date");
+
+  const filtered = useMemo(() => {
     const query = symbolFilter.trim().toUpperCase();
+    // A group selection matches every type in that group, so "Short" pulls both
+    // the opening sale and the cover without needing two passes.
+    const groupTypes =
+      typeFilter.startsWith("group:")
+        ? TRANSACTION_TYPE_GROUPS.find((g) => g.label === typeFilter.slice(6))?.types ?? []
+        : null;
+
     return portfolio.transactions
       .filter((tx) => accountFilter === "all" || tx.accountId === accountFilter)
       .filter((tx) => !query || (tx.symbol ?? "").includes(query))
-      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  }, [portfolio.transactions, accountFilter, symbolFilter]);
+      .filter((tx) =>
+        typeFilter === "all" ? true : groupTypes ? groupTypes.includes(tx.type) : tx.type === typeFilter,
+      )
+      .filter((tx) => (!fromDate || tx.date >= fromDate) && (!toDate || tx.date <= toDate));
+  }, [portfolio.transactions, accountFilter, symbolFilter, typeFilter, fromDate, toDate]);
+
+  const rows = useMemo(() => apply(filtered), [apply, filtered]);
+  const filtersActive =
+    accountFilter !== "all" || symbolFilter !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
 
   const defaultAccountId = accountFilter === "all" ? portfolio.accounts[0]?.id : accountFilter;
 
@@ -220,6 +289,49 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             placeholder="Filter by symbol"
             className={`${INPUT} w-40`}
           />
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
+            className={INPUT}
+          >
+            <option value="all">All types</option>
+            {TRANSACTION_TYPE_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                <option value={`group:${group.label}`}>All {group.label.toLowerCase()}</option>
+                {group.types.map((type) => (
+                  <option key={type} value={type}>
+                    {TRANSACTION_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+            From
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className={INPUT}
+            />
+          </label>
+          <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+            To
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={INPUT} />
+          </label>
+          {filtersActive && (
+            <Btn
+              onClick={() => {
+                setAccountFilter("all");
+                setSymbolFilter("");
+                setTypeFilter("all");
+                setFromDate("");
+                setToDate("");
+              }}
+            >
+              Clear filters
+            </Btn>
+          )}
           {portfolio.accounts.length > 0 && (
             <Btn variant="primary" onClick={() => setAdding((v) => !v)}>
               {adding ? "Hide form" : "Add transaction"}
@@ -241,13 +353,13 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-border">
-                <th className={`${HEAD} text-left`}>Date</th>
-                <th className={`${HEAD} text-left`}>Account</th>
-                <th className={`${HEAD} text-left`}>Type</th>
-                <th className={`${HEAD} text-left`}>Symbol</th>
-                <th className={`${HEAD} text-right`}>Shares</th>
-                <th className={`${HEAD} text-right`}>Price</th>
-                <th className={`${HEAD} text-right`}>Amount</th>
+                <TxSortHeader label="Date" column="date" align="left" sort={sort} onToggle={toggle} />
+                <TxSortHeader label="Account" column="account" align="left" sort={sort} onToggle={toggle} />
+                <TxSortHeader label="Type" column="type" align="left" sort={sort} onToggle={toggle} />
+                <TxSortHeader label="Symbol" column="symbol" align="left" sort={sort} onToggle={toggle} />
+                <TxSortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
+                <TxSortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
+                <TxSortHeader label="Amount" column="amount" align="right" sort={sort} onToggle={toggle} />
                 <th className={`${HEAD} text-left`}>Lot</th>
                 <th className={`${HEAD} text-right`}></th>
               </tr>

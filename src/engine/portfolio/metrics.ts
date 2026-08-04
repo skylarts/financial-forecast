@@ -1,9 +1,12 @@
 import type { ISODate, Id } from "@/domain";
 import {
+  closesLotOn,
   normalizeSymbol,
+  opensLotOn,
   signedCashFlow,
   type AssetClass,
   type Portfolio,
+  type PositionSide,
   type Security,
   type Transaction,
 } from "@/domain/portfolio";
@@ -25,7 +28,10 @@ export interface Holding {
   symbol: string;
   name: string;
   assetClass: AssetClass;
+  side: PositionSide;
+  /** Shares owned (long) or owed (short). Always positive; read `side` for direction. */
   quantity: number;
+  /** Cost paid to open, for a long. Proceeds received, for a short. */
   costBasis: number;
   avgCostPerShare: number;
   price: number | null;
@@ -144,6 +150,29 @@ function returnFlows(
   return flows;
 }
 
+/**
+ * An internal rate of return needs capital committed up front to be a return
+ * *on* anything, and a short commits none -- it takes cash in at the open and
+ * pays it out at the close. Run on the raw flows it yields a borrowing rate,
+ * where a profitable short reports as a large negative number; flipping the
+ * signs is no better, since it then reports the proceeds as if they were an
+ * investment and calls a winning position a loss.
+ *
+ * So shorts get no annualized figure at all. The unrealized return percentage,
+ * measured against the proceeds, is the honest way to read a short's
+ * performance, and printing a confidently wrong number beside it would be worse
+ * than printing none.
+ */
+function annualizedReturn(
+  side: PositionSide,
+  transactions: readonly Transaction[],
+  terminalValue: number,
+  asOf: ISODate,
+): number | null {
+  if (side === "short") return null;
+  return xirr(returnFlows(transactions, terminalValue, asOf));
+}
+
 function todayIso(): ISODate {
   return new Date().toISOString().slice(0, 10);
 }
@@ -184,7 +213,7 @@ export function analyzePortfolio(
 
   const lotsByPosition = new Map<string, OpenLot[]>();
   for (const lot of openLots) {
-    const key = `${lot.accountId}::${lot.symbol}`;
+    const key = `${lot.accountId}::${lot.symbol}::${lot.side}`;
     const bucket = lotsByPosition.get(key);
     if (bucket) bucket.push(lot);
     else lotsByPosition.set(key, [lot]);
@@ -192,24 +221,44 @@ export function analyzePortfolio(
 
   const holdings: Holding[] = [];
   for (const [key, lots] of lotsByPosition) {
-    const { accountId, symbol } = lots[0];
+    const { accountId, symbol, side } = lots[0];
     const security = securities.get(symbol);
     const quote = priceFor(symbol, prices, security);
     const quantity = lots.reduce((sum, lot) => sum + lot.quantity, 0);
     const costBasis = lots.reduce((sum, lot) => sum + lot.costBasis, 0);
-    // Without a quote, cost basis is the honest stand-in for market value: it
-    // keeps weightings summing to 100% instead of silently zeroing a position.
-    const marketValue = quote ? quantity * quote.price : costBasis;
-    const unrealizedGain = quote ? marketValue - costBasis : 0;
 
+    // A short is a liability: its market value is what covering would cost, so
+    // it carries into every total as a negative, and it gains when the price
+    // falls below the proceeds it opened at.
+    const exposure = quote ? quantity * quote.price : costBasis;
+    const marketValue = side === "short" ? -exposure : exposure;
+    const unrealizedGain = !quote ? 0 : side === "short" ? costBasis - exposure : exposure - costBasis;
+
+    // Only the transactions on this side belong to this position -- otherwise a
+    // symbol held both long and short would double-count its own history.
     const positionTxs = transactions.filter(
-      (tx) => tx.accountId === accountId && tx.symbol !== null && normalizeSymbol(tx.symbol) === symbol,
+      (tx) =>
+        tx.accountId === accountId &&
+        tx.symbol !== null &&
+        normalizeSymbol(tx.symbol) === symbol &&
+        (opensLotOn(tx.type) === side || closesLotOn(tx.type) === side),
     );
     const realizedGain = closedLots
-      .filter((lot) => lot.taxable && lot.accountId === accountId && lot.symbol === symbol)
+      .filter(
+        (lot) => lot.taxable && lot.accountId === accountId && lot.symbol === symbol && lot.side === side,
+      )
       .reduce((sum, lot) => sum + lot.gain, 0);
-    const income = positionTxs
-      .filter((tx) => tx.type === "dividend" || tx.type === "interest")
+    // Dividends follow the shares, so they land on the long side. A short pays
+    // them out instead, which shows up as its own transaction.
+    const income = transactions
+      .filter(
+        (tx) =>
+          tx.accountId === accountId &&
+          tx.symbol !== null &&
+          normalizeSymbol(tx.symbol) === symbol &&
+          side === "long" &&
+          (tx.type === "dividend" || tx.type === "interest"),
+      )
       .reduce((sum, tx) => sum + signedCashFlow(tx), 0);
 
     holdings.push({
@@ -218,6 +267,7 @@ export function analyzePortfolio(
       symbol,
       name: security?.name || prices[symbol]?.name || symbol,
       assetClass: security?.assetClass ?? "other",
+      side,
       quantity,
       costBasis,
       avgCostPerShare: quantity > 0 ? costBasis / quantity : 0,
@@ -230,7 +280,7 @@ export function analyzePortfolio(
       realizedGain,
       income,
       totalGain: unrealizedGain + realizedGain + income,
-      irr: xirr(returnFlows(positionTxs, marketValue, asOf)),
+      irr: annualizedReturn(side, positionTxs, marketValue, asOf),
       lots: [...lots].sort((a, b) => (a.acquiredDate < b.acquiredDate ? -1 : 1)),
     });
   }

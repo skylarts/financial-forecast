@@ -190,6 +190,76 @@ describe("analyzePortfolio", () => {
   });
 });
 
+describe("short positions", () => {
+  const shorted = () =>
+    portfolio([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+      tx({ type: "buy_to_cover", date: "2025-06-01", quantity: 40, price: 30 }),
+    ]);
+
+  it("values the open short as a liability", () => {
+    const result = analyzePortfolio(
+      shorted(),
+      { VTI: { price: 20, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+
+    expect(result.holdings[0].side).toBe("short");
+    expect(result.holdings[0].quantity).toBe(60);
+    expect(result.holdings[0].marketValue).toBe(-1200);
+    expect(result.summary.marketValue).toBe(-1200);
+  });
+
+  it("gains as the price falls below the proceeds it opened at", () => {
+    const result = analyzePortfolio(
+      shorted(),
+      { VTI: { price: 20, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+
+    // 60 shares shorted at $50 brought in $3,000; covering now would cost $1,200.
+    expect(result.holdings[0].costBasis).toBe(3000);
+    expect(result.holdings[0].unrealizedGain).toBe(1800);
+  });
+
+  it("realizes the spread between the short price and the cover price", () => {
+    const result = analyzePortfolio(shorted(), {}, { asOf: "2026-08-04" });
+
+    expect(result.summary.realizedGain).toBe(800);
+  });
+
+  it("reports no annualized return for a short rather than a misleading one", () => {
+    const result = analyzePortfolio(
+      shorted(),
+      { VTI: { price: 20, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+
+    // A short commits no capital, so there is nothing to compute a return on --
+    // and on raw flows this profitable position would report a large negative.
+    expect(result.holdings[0].irr).toBeNull();
+    expect(result.holdings[0].unrealizedGainPct).toBeCloseTo(0.6, 6);
+  });
+
+  it("keeps a long and a short in the same symbol as separate positions", () => {
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2025-01-01", quantity: 10, price: 100 }),
+        tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+      ]),
+      { VTI: { price: 40, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+
+    expect(result.holdings).toHaveLength(2);
+    const long = result.holdings.find((h) => h.side === "long");
+    const short = result.holdings.find((h) => h.side === "short");
+    expect(long?.marketValue).toBe(400);
+    expect(short?.marketValue).toBe(-4000);
+    expect(result.summary.marketValue).toBe(-3600);
+  });
+});
+
 describe("xirr", () => {
   it("solves a clean doubling over one year", () => {
     const rate = xirr([

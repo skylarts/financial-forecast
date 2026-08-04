@@ -147,6 +147,101 @@ describe("buildLotLedger", () => {
   });
 });
 
+describe("short positions", () => {
+  it("opens a short lot without touching long lots", () => {
+    const { openLots } = buildLotLedger([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+    ]);
+
+    expect(openLots).toHaveLength(1);
+    expect(openLots[0].side).toBe("short");
+    expect(openLots[0].quantity).toBe(100);
+    expect(openLots[0].costBasis).toBe(5000);
+  });
+
+  it("does not warn about an oversell when the shares were shorted", () => {
+    const { warnings, openLots } = buildLotLedger([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+    ]);
+
+    expect(warnings).toHaveLength(0);
+    expect(openLots[0].side).toBe("short");
+  });
+
+  it("profits when the cover costs less than the short brought in", () => {
+    const { closedLots, openLots } = buildLotLedger([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+      tx({ type: "buy_to_cover", date: "2025-06-01", quantity: 100, price: 30 }),
+    ]);
+
+    expect(openLots).toHaveLength(0);
+    expect(closedLots[0].side).toBe("short");
+    expect(closedLots[0].costBasis).toBe(5000);
+    expect(closedLots[0].proceeds).toBe(3000);
+    expect(closedLots[0].gain).toBe(2000);
+  });
+
+  it("loses when the cover costs more than the short brought in", () => {
+    const { closedLots } = buildLotLedger([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+      tx({ type: "buy_to_cover", date: "2025-06-01", quantity: 100, price: 65 }),
+    ]);
+
+    expect(closedLots[0].gain).toBe(-1500);
+  });
+
+  it("charges fees against the short in both directions", () => {
+    const { closedLots } = buildLotLedger([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50, fees: 10 }),
+      tx({ type: "buy_to_cover", date: "2025-06-01", quantity: 100, price: 30, fees: 10 }),
+    ]);
+
+    expect(closedLots[0].costBasis).toBe(4990);
+    expect(closedLots[0].proceeds).toBe(3010);
+    expect(closedLots[0].gain).toBe(1980);
+  });
+
+  it("keeps a sell off short lots and a cover off long lots", () => {
+    const { closedLots, warnings } = buildLotLedger([
+      tx({ type: "buy", date: "2025-01-01", quantity: 10, price: 100 }),
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+      tx({ type: "sell", date: "2025-03-01", quantity: 10, price: 120 }),
+    ]);
+
+    // The sell must draw on the 10 owned shares, not the 100 shorted ones.
+    expect(warnings).toHaveLength(0);
+    expect(closedLots).toHaveLength(1);
+    expect(closedLots[0].side).toBe("long");
+    expect(closedLots[0].gain).toBe(200);
+  });
+
+  it("flags covering more shares than were ever shorted", () => {
+    const { warnings } = buildLotLedger([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 50, price: 50 }),
+      tx({ type: "buy_to_cover", date: "2025-06-01", quantity: 80, price: 30 }),
+    ]);
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("more shares than the ledger shows shorted");
+  });
+
+  it("tells the user about the short option when a sale outruns the ledger", () => {
+    const { warnings } = buildLotLedger([tx({ type: "sell", date: "2025-03-10", quantity: 8, price: 200 })]);
+
+    expect(warnings[0].message).toContain("Sell short");
+  });
+
+  it("applies a split to short lots too", () => {
+    const { openLots } = buildLotLedger([
+      tx({ type: "short_sell", date: "2025-02-01", quantity: 100, price: 50 }),
+      tx({ type: "split", date: "2025-03-01", quantity: 2 }),
+    ]);
+
+    expect(openLots[0].quantity).toBe(200);
+    expect(openLots[0].costBasis).toBe(5000);
+  });
+});
+
 describe("holdingTerm", () => {
   it("treats exactly one year as short-term", () => {
     expect(holdingTerm("2024-01-10", "2025-01-10")).toBe("short");

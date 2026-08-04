@@ -247,6 +247,10 @@ const TYPE_PATTERNS: [RegExp, TransactionType][] = [
   [/split/i, "split"],
   [/(transfer|journal|received).*(in|received)|in\s*bound/i, "transfer_in"],
   [/(transfer|journal|delivered).*(out|delivered)/i, "transfer_out"],
+  // Short wording must be tested before plain buy/sell, since every one of
+  // these strings also contains the word "buy" or "sold".
+  [/(sell|sold|sale)\s*(-|_)?\s*short|short\s*(sell|sale)/i, "short_sell"],
+  [/(buy|bought)\s*(-|_)?\s*to\s*cover|cover\s*short|short\s*cover/i, "buy_to_cover"],
   [/buy|bought|purchase|you\s*bought/i, "buy"],
   [/sell|sold|redemption|redeem|you\s*sold/i, "sell"],
   [/fee|commission|charge/i, "fee"],

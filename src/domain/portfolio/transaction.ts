@@ -9,6 +9,10 @@ import { idSchema, isoDateSchema } from "../common";
 export const transactionTypeSchema = z.enum([
   "buy",
   "sell",
+  /** Opens a short: borrowed shares sold, cash in, position owed. */
+  "short_sell",
+  /** Closes a short: shares bought back to return, cash out. */
+  "buy_to_cover",
   /** Cash dividend paid out, no share change. */
   "dividend",
   /** Dividend or capital gain reinvested -- pays cash out and opens a new lot. */
@@ -28,6 +32,8 @@ export type TransactionType = z.infer<typeof transactionTypeSchema>;
 export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   buy: "Buy",
   sell: "Sell",
+  short_sell: "Sell short",
+  buy_to_cover: "Buy to cover",
   dividend: "Dividend",
   reinvest: "Reinvest",
   split: "Split",
@@ -39,21 +45,71 @@ export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   cash_withdrawal: "Withdrawal",
 };
 
+/**
+ * Transaction types grouped for the pickers. Opening a short and covering one
+ * are kept in their own group rather than mixed in with ordinary buys and
+ * sells, because choosing the wrong one silently changes which lots a trade
+ * draws down -- and that is exactly the mistake that makes a legitimate short
+ * look like selling shares you never owned.
+ */
+export const TRANSACTION_TYPE_GROUPS: { label: string; types: TransactionType[] }[] = [
+  { label: "Buy / sell", types: ["buy", "sell"] },
+  { label: "Short", types: ["short_sell", "buy_to_cover"] },
+  { label: "Income", types: ["dividend", "reinvest", "interest"] },
+  { label: "Transfers", types: ["transfer_in", "transfer_out"] },
+  { label: "Other", types: ["split", "fee", "cash_deposit", "cash_withdrawal"] },
+];
+
+/**
+ * Which direction a position runs. Long lots are shares owned; short lots are
+ * shares owed, opened by selling borrowed stock and closed by buying it back.
+ * Lots are tracked per side so a sell can never be matched against a short
+ * position (or a cover against a long one), which is what stops a legitimate
+ * short from reading as selling more shares than you hold.
+ */
+export type PositionSide = "long" | "short";
+
 /** Types that change share count and therefore drive lot accounting. */
 export const SHARE_TRANSACTION_TYPES: readonly TransactionType[] = [
   "buy",
   "sell",
+  "short_sell",
+  "buy_to_cover",
   "reinvest",
   "split",
   "transfer_in",
   "transfer_out",
 ];
 
-/** Types that open a new tax lot. */
-export const LOT_OPENING_TYPES: readonly TransactionType[] = ["buy", "reinvest", "transfer_in"];
+/** Types that open a new tax lot, and the side they open it on. */
+const LOT_OPENING: Partial<Record<TransactionType, PositionSide>> = {
+  buy: "long",
+  reinvest: "long",
+  transfer_in: "long",
+  short_sell: "short",
+};
 
-/** Types that close shares out of existing lots. */
-export const LOT_CLOSING_TYPES: readonly TransactionType[] = ["sell", "transfer_out"];
+/** Types that close shares out of existing lots, and the side they close. */
+const LOT_CLOSING: Partial<Record<TransactionType, PositionSide>> = {
+  sell: "long",
+  transfer_out: "long",
+  buy_to_cover: "short",
+};
+
+/** The side this type opens a lot on, or null if it opens nothing. */
+export function opensLotOn(type: TransactionType): PositionSide | null {
+  return LOT_OPENING[type] ?? null;
+}
+
+/** The side this type closes lots on, or null if it closes nothing. */
+export function closesLotOn(type: TransactionType): PositionSide | null {
+  return LOT_CLOSING[type] ?? null;
+}
+
+/** True for the types that open a short rather than a long position. */
+export function isShortType(type: TransactionType): boolean {
+  return type === "short_sell" || type === "buy_to_cover";
+}
 
 export const transactionSchema = z.object({
   id: idSchema,
@@ -106,8 +162,10 @@ export function signedCashFlow(tx: Transaction): number {
   switch (tx.type) {
     case "buy":
     case "reinvest":
+    case "buy_to_cover":
       return -(derived ? gross + tx.fees : gross);
     case "sell":
+    case "short_sell":
       return derived ? gross - tx.fees : gross;
     case "dividend":
     case "interest":
@@ -123,14 +181,23 @@ export function signedCashFlow(tx: Transaction): number {
   }
 }
 
-/** Total dollars paid to open a lot, fees included -- the cost basis. */
-export function lotCostBasis(tx: Transaction): number {
+/**
+ * Dollars booked against a lot when it opens: cost paid for a long (its basis),
+ * proceeds received for a short (what the cover has to beat). Fees always work
+ * against you, so they add to a long's cost and subtract from a short's take.
+ */
+export function lotOpenValue(tx: Transaction): number {
   const gross = tx.amount ?? tx.quantity * tx.price;
-  return tx.amount === null ? gross + tx.fees : gross;
+  if (tx.amount !== null) return gross;
+  return opensLotOn(tx.type) === "short" ? gross - tx.fees : gross + tx.fees;
 }
 
-/** Proceeds received when closing shares, net of fees. */
-export function saleProceeds(tx: Transaction): number {
+/**
+ * Dollars booked when a lot closes: proceeds received selling a long, cost paid
+ * covering a short. Same fee asymmetry, in the same direction.
+ */
+export function lotCloseValue(tx: Transaction): number {
   const gross = tx.amount ?? tx.quantity * tx.price;
-  return tx.amount === null ? gross - tx.fees : gross;
+  if (tx.amount !== null) return gross;
+  return closesLotOn(tx.type) === "short" ? gross + tx.fees : gross - tx.fees;
 }

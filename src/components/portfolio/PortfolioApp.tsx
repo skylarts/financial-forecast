@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import {
   ASSET_CLASS_LABELS,
   assetClassSchema,
@@ -17,21 +16,38 @@ import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import type { ImportRow } from "@/lib/portfolio/importer";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
-import { HoldingsTable } from "./HoldingsTable";
+import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
 import { HoldingDetail } from "./HoldingDetail";
 import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
 import { TransactionsPanel } from "./TransactionsPanel";
+import { ReconcilePanel } from "./ReconcilePanel";
 
 const TABS = [
   { value: "holdings", label: "Holdings" },
   { value: "allocation", label: "Allocation" },
   { value: "realized", label: "Realized" },
   { value: "transactions", label: "Transactions" },
+  { value: "reconcile", label: "Reconcile" },
   { value: "accounts", label: "Accounts" },
 ] as const;
 
 type Tab = (typeof TABS)[number]["value"];
+
+const GROUPINGS = [
+  { value: "none", label: "Flat" },
+  { value: "account", label: "By account" },
+  { value: "assetClass", label: "By class" },
+  { value: "side", label: "By side" },
+] as const;
+
+const SIDE_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "long", label: "Long" },
+  { value: "short", label: "Short" },
+] as const;
+
+type SideFilter = (typeof SIDE_FILTERS)[number]["value"];
 
 function Stat({ label, value, tone, hint }: { label: string; value: string; tone?: string; hint?: string }) {
   return (
@@ -97,6 +113,12 @@ export function PortfolioApp() {
   const [importing, setImporting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
+  const [search, setSearch] = useState("");
+  const [assetClassFilter, setAssetClassFilter] = useState<AssetClass | "all">("all");
+  const [sideFilter, setSideFilter] = useState<SideFilter>("all");
+  const [hideSmall, setHideSmall] = useState(false);
+  const [grouping, setGrouping] = useState<HoldingGrouping>("none");
+
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
   const { prices, loading: pricesLoading, refresh } = usePrices(symbols);
 
@@ -112,6 +134,33 @@ export function PortfolioApp() {
     () => new Map(portfolio.accounts.map((a) => [a.id, a.name])),
     [portfolio.accounts],
   );
+
+  /**
+   * Filters narrow which rows are listed, never how they're valued. Weights and
+   * the summary tiles stay computed across the whole account scope, so hiding
+   * small positions can't make the remaining ones look like a bigger share of
+   * the portfolio than they are.
+   */
+  const visibleHoldings = useMemo(() => {
+    const query = search.trim().toUpperCase();
+    // "Small" is relative to the portfolio, not a fixed dollar figure: half a
+    // percent is roughly where a position stops moving the needle at any size.
+    const threshold = hideSmall ? 0.005 : 0;
+    return analysis.holdings.filter((h) => {
+      if (query && !h.symbol.includes(query) && !h.name.toUpperCase().includes(query)) return false;
+      if (assetClassFilter !== "all" && h.assetClass !== assetClassFilter) return false;
+      if (sideFilter !== "all" && h.side !== sideFilter) return false;
+      if (Math.abs(h.weight) < threshold) return false;
+      return true;
+    });
+  }, [analysis.holdings, search, assetClassFilter, sideFilter, hideSmall]);
+
+  /** Only offer classes actually present, so the filter never lists dead ends. */
+  const presentAssetClasses = useMemo(
+    () => [...new Set(analysis.holdings.map((h) => h.assetClass))].sort(),
+    [analysis.holdings],
+  );
+  const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
 
   const securityFor = (symbol: string) =>
     portfolio.securities.find((s) => normalizeSymbol(s.symbol) === symbol);
@@ -150,15 +199,7 @@ export function PortfolioApp() {
     <>
       <ThemeSync />
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-panel px-6 py-3">
-        <div className="flex items-center gap-4">
-          <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
-          <Link
-            href="/"
-            className="rounded-md border border-border px-2.5 py-1 text-[12px] text-dim transition-colors hover:border-accent hover:text-foreground"
-          >
-            ← Forecast
-          </Link>
-        </div>
+        <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={scopeAccountId}
@@ -256,13 +297,81 @@ export function PortfolioApp() {
       <main className="flex-1">
         {tab === "holdings" && (
           <div className="p-5">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search symbol or name"
+                className="w-52 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
+              />
+              {presentAssetClasses.length > 1 && (
+                <select
+                  value={assetClassFilter}
+                  onChange={(e) => setAssetClassFilter(e.target.value as AssetClass | "all")}
+                  className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
+                >
+                  <option value="all">All asset classes</option>
+                  {presentAssetClasses.map((cls) => (
+                    <option key={cls} value={cls}>
+                      {ASSET_CLASS_LABELS[cls]}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {hasShorts && (
+                <Segmented
+                  options={SIDE_FILTERS}
+                  value={sideFilter}
+                  onChange={setSideFilter}
+                  size="sm"
+                  ariaLabel="Filter by position side"
+                />
+              )}
+              <Segmented
+                options={GROUPINGS}
+                value={grouping}
+                onChange={setGrouping}
+                size="sm"
+                ariaLabel="Group holdings"
+              />
+              <label className="flex items-center gap-1.5 text-[12px] text-dim">
+                <input
+                  type="checkbox"
+                  checked={hideSmall}
+                  onChange={(e) => setHideSmall(e.target.checked)}
+                />
+                Hide under 0.5%
+              </label>
+              {visibleHoldings.length !== analysis.holdings.length && (
+                <span className="text-[11.5px] text-dim-2">
+                  Showing {visibleHoldings.length} of {analysis.holdings.length}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearch("");
+                      setAssetClassFilter("all");
+                      setSideFilter("all");
+                      setHideSmall(false);
+                    }}
+                    className="ml-2 underline hover:text-foreground"
+                  >
+                    Clear filters
+                  </button>
+                </span>
+              )}
+            </div>
             <HoldingsTable
-              holdings={analysis.holdings}
+              holdings={visibleHoldings}
               accountNames={accountNames}
               showAccount={scopeAccountId === "all"}
+              grouping={grouping}
               onSelect={setSelected}
             />
           </div>
+        )}
+
+        {tab === "reconcile" && (
+          <ReconcilePanel accounts={portfolio.accounts} holdings={analysis.holdings} />
         )}
 
         {tab === "allocation" && (
