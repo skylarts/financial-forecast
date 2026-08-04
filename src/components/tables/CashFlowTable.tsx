@@ -404,7 +404,7 @@ export function CashFlowTable({
 
   // A plain reconciling line item (signed, dimmer than a summary row).
   const reconcileRow = (label: string, get: (yi: number) => number, hint?: string) => (
-    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+    <tr className="border-t border-border text-dim hover:bg-accent/15">
       <td className="py-3 pl-2">
         <span className="inline-flex items-center gap-1">
           {label}
@@ -441,7 +441,7 @@ export function CashFlowTable({
 
   const itemRows = (items: { id: string; label: string }[], maps: Map<string, number>[], indent = "pl-10") =>
     items.map((item) => (
-      <tr key={item.id} className="border-t border-border/40 text-dim hover:bg-accent/15">
+      <tr key={item.id} className="border-t border-border text-dim hover:bg-accent/15">
         <td className={`py-3 ${indent}`}>{item.label}</td>
         {cells((yi) => maps[yi].get(item.id) ?? 0)}
       </tr>
@@ -453,7 +453,7 @@ export function CashFlowTable({
   // doubles as the lighter border that caps off the section above.
   const spacerRow = (key: string) => (
     <tr key={key} aria-hidden="true">
-      <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={col} />
+      <td className="h-3 border-y border-dim/25 !border-r-0 !bg-background p-0" colSpan={col} />
     </tr>
   );
 
@@ -468,7 +468,7 @@ export function CashFlowTable({
   return (
     <div className="flex flex-col gap-2">
       <div className="max-h-[85vh] overflow-auto rounded-lg border border-border bg-panel">
-        <table className="w-full border-separate border-spacing-0 text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <table className="w-full border-separate border-spacing-0 text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:pr-4 [&_thead_th:first-child]:border-r [&_thead_th:first-child]:border-border [&_thead_th:first-child]:pr-4">
           <thead>
             <tr className="text-left text-xs text-dim">
               <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-3.5 pl-2 font-medium">Category</th>
@@ -500,7 +500,7 @@ export function CashFlowTable({
                 ? expenseGroups.map((g) =>
                     g.grouped ? (
                       <Fragment key={g.key}>
-                        <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggle(`exp:${g.key}`)}>
+                        <tr className="cursor-pointer border-t border-border hover:bg-accent/15" onClick={() => toggle(`exp:${g.key}`)}>
                           <td className="py-3 pl-6 font-medium">
                             <ToggleLabel
                               label={g.label}
@@ -513,7 +513,7 @@ export function CashFlowTable({
                         {isOpen(`exp:${g.key}`) && itemRows(g.items, expenseMaps, "pl-12")}
                       </Fragment>
                     ) : (
-                      <tr key={g.key} className="border-t border-border/40 text-dim hover:bg-accent/15">
+                      <tr key={g.key} className="border-t border-border text-dim hover:bg-accent/15">
                         <td className="py-3 pl-10">{g.label}</td>
                         {cells((yi) => expenseMaps[yi].get(g.items[0].id) ?? 0)}
                       </tr>
@@ -555,7 +555,7 @@ export function CashFlowTable({
                     const acctKey = `aa:${a.id}`;
                     return (
                       <Fragment key={a.id}>
-                        <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggle(acctKey)}>
+                        <tr className="cursor-pointer border-t border-border hover:bg-accent/15" onClick={() => toggle(acctKey)}>
                           <td className="py-3 pl-6 font-medium">
                             <ToggleLabel label={a.label} expanded={isOpen(acctKey)} onToggle={() => toggle(acctKey)} />
                           </td>
@@ -589,11 +589,11 @@ export function CashFlowTable({
                                 </tr>
                                 {hasTax && isOpen(`wd:acct:${a.id}`) && (
                                   <>
-                                    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+                                    <tr className="border-t border-border text-dim hover:bg-accent/15">
                                       <td className="py-3 pl-[4.5rem] text-xs italic">Estimated withholding</td>
                                       {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
                                     </tr>
-                                    <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+                                    <tr className="border-t border-border text-dim hover:bg-accent/15">
                                       <td className="py-3 pl-[4.5rem] text-xs italic">Net withdrawal</td>
                                       {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
                                     </tr>
@@ -624,7 +624,7 @@ export function CashFlowTable({
                 that isn't tied to any account, shown whenever present so the
                 visible rows always sum exactly to the bottom line. */}
             {hasCashInterest && (
-              <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
+              <tr className="border-t border-border text-dim hover:bg-accent/15">
                 <td className="py-3 pl-2">Interest earned on cash</td>
                 {cells((yi) => periods[yi].cashFlow.cashInterest)}
               </tr>
