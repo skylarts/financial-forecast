@@ -5,9 +5,35 @@ import { planSchema } from "@/domain";
 import { usePlanStore } from "@/store/usePlanStore";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { createClient } from "@/lib/supabase/client";
+import { getHouseholdId } from "@/lib/supabase/household";
 import { migrateLegacyBuyHomeEvents } from "@/lib/migrateLegacyBuyHome";
 
 const SYNC_DEBOUNCE_MS = 1500;
+
+/** Resolves the signed-in user's household id (if their email is paired with
+ * a spouse -- see supabase/household_linking.sql), so useCloudSync can key
+ * the shared plan row off the household instead of the individual user.
+ * `resolved` stays false until the lookup for the *current* user settles,
+ * so callers don't briefly sync to a user-scoped row before household
+ * membership is known. */
+function useHouseholdId(userId: string | undefined, email: string | null | undefined) {
+  const [householdId, setHouseholdId] = useState<string | null>(null);
+  const [resolved, setResolved] = useState(false);
+  const resolvingForUserId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    if (resolvingForUserId.current === userId) return;
+    resolvingForUserId.current = userId;
+    setResolved(false);
+    void getHouseholdId(email).then((id) => {
+      setHouseholdId(id);
+      setResolved(true);
+    });
+  }, [userId, email]);
+
+  return { householdId, resolved };
+}
 
 /** Mounted once near the root. While signed out, this is a no-op and the app
  * behaves exactly as it does today (local-only). While signed in, it pulls
@@ -27,22 +53,29 @@ export function useCloudSync(): { cloudSyncReady: boolean } {
   const { user } = useAuth();
   const hasHydrated = usePlanStore((s) => s.hasHydrated);
   const loadPlan = usePlanStore((s) => s.loadPlan);
+  const { householdId, resolved: householdResolved } = useHouseholdId(user?.id, user?.email);
   const pulledForUserId = useRef<string | null>(null);
   const [pullCompleteForUserId, setPullCompleteForUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user || !hasHydrated) return;
+    if (!user || !hasHydrated || !householdResolved) return;
     if (pulledForUserId.current === user.id) return;
     pulledForUserId.current = user.id;
 
     const supabase = createClient();
+    // A household member's plan lives in the row shared with their spouse,
+    // keyed by household_id instead of user_id -- see
+    // supabase/household_linking.sql. Unpaired users keep the original
+    // per-user row.
+    const filterColumn = householdId ? "household_id" : "user_id";
+    const filterValue = householdId ?? user.id;
 
     (async () => {
       try {
         const { data, error } = await supabase
           .from("plans")
           .select("plan")
-          .eq("user_id", user.id)
+          .eq(filterColumn, filterValue)
           .maybeSingle();
 
         if (error) {
@@ -68,15 +101,23 @@ export function useCloudSync(): { cloudSyncReady: boolean } {
 
         // No cloud row yet -- push the current local plan up as the first copy.
         const localPlan = usePlanStore.getState().plan;
-        await supabase.from("plans").upsert({ user_id: user.id, plan: localPlan, updated_at: new Date().toISOString() });
+        await supabase.from("plans").upsert(
+          {
+            user_id: user.id,
+            ...(householdId ? { household_id: householdId } : {}),
+            plan: localPlan,
+            updated_at: new Date().toISOString(),
+          },
+          householdId ? { onConflict: "household_id" } : undefined
+        );
       } finally {
         setPullCompleteForUserId(user.id);
       }
     })();
-  }, [user, hasHydrated, loadPlan]);
+  }, [user, hasHydrated, householdId, householdResolved, loadPlan]);
 
   useEffect(() => {
-    if (!user || !hasHydrated) return;
+    if (!user || !hasHydrated || !householdResolved) return;
 
     const supabase = createClient();
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -91,7 +132,15 @@ export function useCloudSync(): { cloudSyncReady: boolean } {
         const plan = usePlanStore.getState().plan;
         void supabase
           .from("plans")
-          .upsert({ user_id: user.id, plan, updated_at: new Date().toISOString() })
+          .upsert(
+            {
+              user_id: user.id,
+              ...(householdId ? { household_id: householdId } : {}),
+              plan,
+              updated_at: new Date().toISOString(),
+            },
+            householdId ? { onConflict: "household_id" } : undefined
+          )
           .then(({ error }) => {
             if (error) console.warn("Failed to sync plan to the cloud.", error);
           });
@@ -102,7 +151,7 @@ export function useCloudSync(): { cloudSyncReady: boolean } {
       if (timer) clearTimeout(timer);
       unsubscribe();
     };
-  }, [user, hasHydrated]);
+  }, [user, hasHydrated, householdId, householdResolved]);
 
   return { cloudSyncReady: !user || pullCompleteForUserId === user.id };
 }
