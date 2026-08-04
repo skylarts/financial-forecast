@@ -56,13 +56,13 @@ function RollforwardRows({ accountId, periods, mode }: { accountId: Id; periods:
   return (
     <>
       {fields.map((f) => (
-        <tr key={f.label} className={`border-t border-border/40 text-xs hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
-          <td className="py-1.5 pl-14">{f.label}</td>
+        <tr key={f.label} className={`border-t border-border text-xs hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
+          <td className="py-2 pl-14">{f.label}</td>
           {periods.map((p, i) => {
             const hover = colHoverProps(i, col, setCol);
             const v = deflate(f.get(p), p, mode);
             return (
-              <td key={p.periodKey} className={`py-1.5 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+              <td key={p.periodKey} className={`py-2 pr-6 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
                 {f.strong ? (
                   <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : ""}>{formatMoney(v)}</span>
                 ) : (
@@ -112,8 +112,8 @@ function AccountRow({
   const { col, setCol } = useContext(ColHoverContext);
   return (
     <>
-      <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggleExpanded(rowKey)}>
-        <td className="py-2 pl-10">
+      <tr className="cursor-pointer border-t border-border hover:bg-accent/15" onClick={() => toggleExpanded(rowKey)}>
+        <td className="py-2.5 pl-10">
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}
           {account.isExtraSavings && (
@@ -139,7 +139,7 @@ function AccountRow({
         {periods.map((p, i) => {
           const hover = colHoverProps(i, col, setCol);
           return (
-            <td key={p.periodKey} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+            <td key={p.periodKey} className={`py-2.5 pr-6 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
               {formatMoney(deflate(balanceOf(p, account.id), p, mode))}
             </td>
           );
@@ -199,13 +199,13 @@ function Section({
   return (
     <>
       <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={setSectionOpen}>
-        <td className="py-2.5 pl-2 font-semibold">
+        <td className="py-3 pl-2 font-semibold">
           <ToggleLabel label={title} expanded={sectionOpen} onToggle={setSectionOpen} />
         </td>
         {periods.map((p, i) => {
           const hover = colHoverProps(i, col, setCol);
           return (
-            <td key={p.periodKey} className={`py-2.5 pr-2 text-right font-semibold ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+            <td key={p.periodKey} className={`py-3 pr-6 text-right font-semibold ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
               {formatMoney(deflate(sectionTotal(p), p, mode))}
             </td>
           );
@@ -216,14 +216,14 @@ function Section({
           const groupOpen = accountsExpanded.includes(groupKey(g.label));
           return (
             <Fragment key={g.label}>
-              <tr className="cursor-pointer border-t border-border/40 text-dim hover:bg-accent/15" onClick={() => toggleGroup(g.label)}>
-                <td className="py-2 pl-6">
+              <tr className="cursor-pointer border-t border-border text-dim hover:bg-accent/15" onClick={() => toggleGroup(g.label)}>
+                <td className="py-2.5 pl-6">
                   <ToggleLabel label={g.label} expanded={groupOpen} onToggle={() => toggleGroup(g.label)} />
                 </td>
                 {periods.map((p, i) => {
                   const hover = colHoverProps(i, col, setCol);
                   return (
-                    <td key={p.periodKey} className={`py-2 pr-2 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
+                    <td key={p.periodKey} className={`py-2.5 pr-6 text-right ${hover.className}`} onMouseEnter={hover.onMouseEnter} onMouseLeave={hover.onMouseLeave}>
                       {formatMoney(deflate(includedBalance(p, g.accounts), p, mode))}
                     </td>
                   );
@@ -323,14 +323,14 @@ export function AccountsTable({
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <div className="max-h-[85vh] overflow-auto">
         <ColHoverContext.Provider value={{ col: hoveredCol, setCol: setHoveredCol }}>
-        <table className="w-full border-separate border-spacing-0 text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+        <table className="w-full border-separate border-spacing-0 text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:pr-6 [&_thead_th:first-child]:border-r [&_thead_th:first-child]:border-border [&_thead_th:first-child]:pr-6">
           <thead>
             <tr className="text-left text-xs text-dim">
-              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-2.5 pl-2 font-medium">Account</th>
+              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-3 pl-2 font-medium">Account</th>
               {periods.map((p, i) => (
                 <th
                   key={p.periodKey}
-                  className={`py-2.5 pr-2 text-right font-medium ${hoveredCol === i ? "bg-accent/10 text-foreground" : ""}`}
+                  className={`py-3 pr-6 text-right font-medium ${hoveredCol === i ? "bg-accent/10 text-foreground" : ""}`}
                   onMouseEnter={() => setHoveredCol(i)}
                   onMouseLeave={() => setHoveredCol(null)}
                 >
@@ -341,11 +341,11 @@ export function AccountsTable({
           </thead>
           <tbody>
             <tr className="border-b border-dim/25">
-              <td className="py-2.5 pl-2 font-bold">Net Worth</td>
+              <td className="py-3 pl-2 font-bold">Net Worth</td>
               {periods.map((p, i) => (
                 <td
                   key={p.periodKey}
-                  className={`py-2.5 pr-2 text-right font-bold ${hoveredCol === i ? "bg-accent/10" : ""}`}
+                  className={`py-3 pr-6 text-right font-bold ${hoveredCol === i ? "bg-accent/10" : ""}`}
                   onMouseEnter={() => setHoveredCol(i)}
                   onMouseLeave={() => setHoveredCol(null)}
                 >
@@ -358,7 +358,7 @@ export function AccountsTable({
                 panel color) so the gap actually reads as a gap, and its top
                 edge doubles as the lighter border capping the section above. */}
             <tr aria-hidden="true">
-              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={periods.length + 1} />
+              <td className="h-3 border-y border-dim/25 !border-r-0 !bg-background p-0" colSpan={periods.length + 1} />
             </tr>
             <Section
               title="Assets"
@@ -374,7 +374,7 @@ export function AccountsTable({
               mode={dollarMode}
             />
             <tr aria-hidden="true">
-              <td className="h-3 border-y border-dim/25 !bg-background p-0" colSpan={periods.length + 1} />
+              <td className="h-3 border-y border-dim/25 !border-r-0 !bg-background p-0" colSpan={periods.length + 1} />
             </tr>
             <Section
               title="Liabilities"
@@ -393,7 +393,7 @@ export function AccountsTable({
         </table>
         </ColHoverContext.Provider>
         </div>
-        <p className="border-t border-border px-2 py-2 text-xs text-dim">
+        <p className="border-t border-border px-2 py-2.5 text-xs text-dim">
           Click an account to see its {isMonthly ? "month-by-month" : "year-by-year"}{" "}
           rollforward. A home&rsquo;s mortgage is edited as part of
           that home, not standalone. Extra Savings is the spending hub &mdash; its surplus is swept out monthly,
