@@ -324,7 +324,7 @@ export function CashFlowTable({
   // Sum of a row's deflated per-year values across the selected range.
   const totalOf = (get: (yi: number) => number) => periods.reduce((s, _y, yi) => s + d(get(yi), yi), 0);
 
-  const totalCellClass = "py-2 pr-3 text-right tabular-nums bg-background/40 font-medium";
+  const totalCellClass = "py-3 pr-4 text-right tabular-nums bg-background/40 font-medium";
 
   // Column highlight: hovering any cell in a year's column highlights that
   // whole column, including its header -- tracked here since it has to reach
@@ -355,7 +355,7 @@ export function CashFlowTable({
       {periods.map((p, yi) => {
         const v = d(get(yi), yi);
         return (
-          <td key={p.periodKey} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+          <td key={p.periodKey} className={`py-3 pr-4 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
             {Math.abs(v) < 0.5 ? (
               <span className="text-dim">—</span>
             ) : opts?.signed ? (
@@ -376,7 +376,7 @@ export function CashFlowTable({
     opts?: { totalIsMeaningful?: boolean; strong?: boolean; hint?: string; balance?: boolean }
   ) => (
     <tr className={`border-t hover:bg-accent/15 ${opts?.strong ? "border-dim/25" : "border-border"}`}>
-      <td className="py-2.5 pl-2 font-bold">
+      <td className="py-3.5 pl-2 font-bold">
         <span className="inline-flex items-center gap-1">
           {label}
           {opts?.hint && <InfoTooltip text={opts.hint} />}
@@ -385,7 +385,7 @@ export function CashFlowTable({
       {periods.map((p, yi) => {
         const v = opts?.balance ? dBalance(get(yi), yi) : d(get(yi), yi);
         return (
-          <td key={p.periodKey} className={`py-2 pr-3 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+          <td key={p.periodKey} className={`py-3 pr-4 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
             <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
           </td>
         );
@@ -405,7 +405,7 @@ export function CashFlowTable({
   // A plain reconciling line item (signed, dimmer than a summary row).
   const reconcileRow = (label: string, get: (yi: number) => number, hint?: string) => (
     <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-      <td className="py-2 pl-2">
+      <td className="py-3 pl-2">
         <span className="inline-flex items-center gap-1">
           {label}
           {hint && <InfoTooltip text={hint} />}
@@ -414,7 +414,7 @@ export function CashFlowTable({
       {periods.map((p, yi) => {
         const v = d(get(yi), yi);
         return (
-          <td key={p.periodKey} className={`py-2 pr-3 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+          <td key={p.periodKey} className={`py-3 pr-4 text-right tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
             {Math.abs(v) < 0.5 ? (
               <span className="text-dim">—</span>
             ) : (
@@ -429,7 +429,7 @@ export function CashFlowTable({
 
   const sectionHeader = (key: string, label: string, get: (yi: number) => number, hint?: string, opts?: { signed?: boolean }) => (
     <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={() => toggle(key)}>
-      <td className="py-2.5 pl-2 font-semibold">
+      <td className="py-3.5 pl-2 font-semibold">
         <span className="inline-flex items-center gap-1">
           <ToggleLabel label={label} expanded={isOpen(key)} onToggle={() => toggle(key)} />
           {hint && <InfoTooltip text={hint} />}
@@ -442,7 +442,7 @@ export function CashFlowTable({
   const itemRows = (items: { id: string; label: string }[], maps: Map<string, number>[], indent = "pl-10") =>
     items.map((item) => (
       <tr key={item.id} className="border-t border-border/40 text-dim hover:bg-accent/15">
-        <td className={`py-2 ${indent}`}>{item.label}</td>
+        <td className={`py-3 ${indent}`}>{item.label}</td>
         {cells((yi) => maps[yi].get(item.id) ?? 0)}
       </tr>
     ));
@@ -459,7 +459,7 @@ export function CashFlowTable({
 
   const emptyRow = (text: string) => (
     <tr className="text-xs text-dim">
-      <td className="py-2 pl-10" colSpan={col}>
+      <td className="py-3 pl-10" colSpan={col}>
         {text}
       </td>
     </tr>
@@ -471,17 +471,17 @@ export function CashFlowTable({
         <table className="w-full border-separate border-spacing-0 text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead>
             <tr className="text-left text-xs text-dim">
-              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-2.5 pl-2 font-medium">Category</th>
+              <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-3.5 pl-2 font-medium">Category</th>
               {periods.map((p, yi) => (
                 <th
                   key={p.periodKey}
-                  className={`py-2.5 pr-3 text-right font-medium ${colHoverClass(yi)}`}
+                  className={`py-3.5 pr-4 text-right font-medium ${colHoverClass(yi)}`}
                   {...colHoverProps(yi)}
                 >
                   {p.periodLabel}
                 </th>
               ))}
-              <th className="bg-background/40 py-2.5 pr-3 text-right font-medium">
+              <th className="bg-background/40 py-3.5 pr-4 text-right font-medium">
                 Total ({periods[0].periodLabel}–{periods[periods.length - 1].periodLabel})
               </th>
             </tr>
@@ -501,7 +501,7 @@ export function CashFlowTable({
                     g.grouped ? (
                       <Fragment key={g.key}>
                         <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggle(`exp:${g.key}`)}>
-                          <td className="py-2 pl-6 font-medium">
+                          <td className="py-3 pl-6 font-medium">
                             <ToggleLabel
                               label={g.label}
                               expanded={isOpen(`exp:${g.key}`)}
@@ -514,7 +514,7 @@ export function CashFlowTable({
                       </Fragment>
                     ) : (
                       <tr key={g.key} className="border-t border-border/40 text-dim hover:bg-accent/15">
-                        <td className="py-2 pl-10">{g.label}</td>
+                        <td className="py-3 pl-10">{g.label}</td>
                         {cells((yi) => expenseMaps[yi].get(g.items[0].id) ?? 0)}
                       </tr>
                     )
@@ -556,7 +556,7 @@ export function CashFlowTable({
                     return (
                       <Fragment key={a.id}>
                         <tr className="cursor-pointer border-t border-border/40 hover:bg-accent/15" onClick={() => toggle(acctKey)}>
-                          <td className="py-2 pl-6 font-medium">
+                          <td className="py-3 pl-6 font-medium">
                             <ToggleLabel label={a.label} expanded={isOpen(acctKey)} onToggle={() => toggle(acctKey)} />
                           </td>
                           {cells((yi) => netOf(a.id, a.fromPaycheck, yi), { signed: true })}
@@ -565,9 +565,9 @@ export function CashFlowTable({
                           <>
                             {hasDeposit && (
                               <tr className="text-dim hover:bg-accent/15">
-                                <td className="py-2 pl-12">
+                                <td className="py-3 pl-12">
                                   Deposited / saved
-                                  {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck, excluded from net</span>}
+                                  {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
                                 </td>
                                 {cells((yi) => depositOf(a.id, yi))}
                               </tr>
@@ -578,7 +578,7 @@ export function CashFlowTable({
                                   className={`text-dim hover:bg-accent/15 ${hasTax ? "cursor-pointer" : ""}`}
                                   onClick={hasTax ? () => toggle(`wd:acct:${a.id}`) : undefined}
                                 >
-                                  <td className="py-2 pl-12">
+                                  <td className="py-3 pl-12">
                                     {hasTax ? (
                                       <ToggleLabel label="Withdrawn" expanded={isOpen(`wd:acct:${a.id}`)} onToggle={() => toggle(`wd:acct:${a.id}`)} />
                                     ) : (
@@ -590,11 +590,11 @@ export function CashFlowTable({
                                 {hasTax && isOpen(`wd:acct:${a.id}`) && (
                                   <>
                                     <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                                      <td className="py-2 pl-[4.5rem] text-xs italic">Estimated withholding</td>
+                                      <td className="py-3 pl-[4.5rem] text-xs italic">Estimated withholding</td>
                                       {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
                                     </tr>
                                     <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                                      <td className="py-2 pl-[4.5rem] text-xs italic">Net withdrawal</td>
+                                      <td className="py-3 pl-[4.5rem] text-xs italic">Net withdrawal</td>
                                       {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
                                     </tr>
                                   </>
@@ -603,7 +603,7 @@ export function CashFlowTable({
                             )}
                             {hasOther && (
                               <tr className="text-dim hover:bg-accent/15">
-                                <td className="py-2 pl-12">Other activity</td>
+                                <td className="py-3 pl-12">Other activity</td>
                                 {cells((yi) => -otherOf(a.id, yi), { signed: true })}
                               </tr>
                             )}
@@ -625,7 +625,7 @@ export function CashFlowTable({
                 visible rows always sum exactly to the bottom line. */}
             {hasCashInterest && (
               <tr className="border-t border-border/40 text-dim hover:bg-accent/15">
-                <td className="py-2 pl-2">Interest earned on cash</td>
+                <td className="py-3 pl-2">Interest earned on cash</td>
                 {cells((yi) => periods[yi].cashFlow.cashInterest)}
               </tr>
             )}
@@ -656,7 +656,7 @@ export function CashFlowTable({
               <>
                 {spacerRow("spacer:taxes")}
                 <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={() => toggle("taxes")}>
-                  <td className="py-2.5 pl-2 font-bold">
+                  <td className="py-3.5 pl-2 font-bold">
                     <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
                       <ToggleLabel label="Taxes (informational)" expanded={isOpen("taxes")} onToggle={() => toggle("taxes")} />
                       <InfoTooltip
@@ -675,7 +675,7 @@ export function CashFlowTable({
                   <>
                     {/* 1. The actual bracket-computed bill, by income component. */}
                     <tr className="cursor-pointer border-t border-border hover:bg-accent/15" onClick={() => toggle("federalTax")}>
-                      <td className="py-2.5 pl-2 font-bold">
+                      <td className="py-3.5 pl-2 font-bold">
                         <span className="inline-flex items-center gap-1">
                           <ToggleLabel label="Federal tax (actual bill)" expanded={isOpen("federalTax")} onToggle={() => toggle("federalTax")} />
                           <InfoTooltip text="The exact bill for the year from real IRS brackets on actual realized income -- and, after the year-end true-up, exactly what the household actually paid. Expand to see which income sources it came from. Tax is computed on the household's joint income, so it can't be split per person." />
@@ -684,7 +684,7 @@ export function CashFlowTable({
                       {periods.map((p, yi) => {
                         const v = d(-periods[yi].cashFlow.federalTaxTotal, yi);
                         return (
-                          <td key={p.periodKey} className={`py-2 pr-3 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
+                          <td key={p.periodKey} className={`py-3 pr-4 text-right font-semibold tabular-nums ${colHoverClass(yi)}`} {...colHoverProps(yi)}>
                             <span className={v < 0 ? "text-negative" : v > 0 ? "text-positive" : "text-dim"}>{formatMoney(v)}</span>
                           </td>
                         );
@@ -703,7 +703,7 @@ export function CashFlowTable({
                       <>
                         {sectionHeader(
                           "withholdings",
-                          "Estimated withholdings (total withheld)",
+                          "Estimated withholdings",
                           (yi) =>
                             -withholdingItems.reduce((s, it) => s + (wdTaxMaps[yi].get(it.id) ?? 0), 0) -
                             periods[yi].cashFlow.incomeTaxWithheldFromCash,
@@ -728,7 +728,7 @@ export function CashFlowTable({
                     {/* 3. December settlement of withheld vs. actual. */}
                     {hasSettlement &&
                       reconcileRow(
-                        "Tax true-up (year-end settlement)",
+                        "Tax true-up (year-end)",
                         (yi) => periods[yi].cashFlow.taxSettlement,
                         "Each December the estimated withholding is settled against the exact bracket-computed bill -- positive is a refund back into cash, negative is extra tax owed. After this, the year's total withheld plus this settlement equals the Federal tax (actual bill) line above exactly."
                       )}
