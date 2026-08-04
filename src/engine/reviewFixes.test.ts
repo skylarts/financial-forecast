@@ -379,3 +379,65 @@ describe("review M11 -- credit cards amortize when given loan terms, warn when n
     expect(result.warnings.some((w) => w.kind === "unamortized_debt" && w.accountId === card.id)).toBe(true);
   });
 });
+
+describe("December tax refund is routed through the split order, not stranded in the hub", () => {
+  // Regression: the true-up posts to the hub in step 8, AFTER step 5's split
+  // has already run for December. Since the split only ever considers the
+  // month's own fresh surplus, a refund left unrouted here is never re-offered
+  // in any later month -- it silently accumulates as idle cash in Extra
+  // Savings, which reads to a user as "my spending hub is mysteriously getting
+  // funded". See the routeThroughSplitOrder call in forecastScenario.
+  function refundScenario() {
+    const hub = makeAccount({ class: "cash", name: "Extra Savings", isSpendingAccount: true, startingBalance: 0, growthRatePct: 0 });
+    const ira = makeAccount({
+      class: "tax_deferred", name: "Trad IRA", taxTreatment: "tax_deferred",
+      startingBalance: 2_000_000, growthRatePct: 0, withdrawalPriority: 1,
+    });
+    const brokerage = makeAccount({
+      class: "taxable_investment", name: "Brokerage", taxTreatment: "taxable",
+      startingBalance: 0, growthRatePct: 0, isSurplusTarget: true, surplusTargetPriority: 1,
+    });
+    const spend = makeExpense({ amount: 80_000 / 12, frequency: "monthly", growthRatePct: 0 });
+    return makeScenario({
+      accounts: [hub, ira, brokerage],
+      expenses: [spend],
+      startDate: "2026-01-01",
+      horizonEndDate: "2026-12-31",
+      filingStatus: "marriedFilingJointly",
+    });
+  }
+
+  it("sweeps the refund into the split target instead of leaving it as hub cash", () => {
+    const scenario = refundScenario();
+    const hub = scenario.accounts.find((a) => a.isExtraSavings)!;
+    const brokerage = scenario.accounts.find((a) => a.name === "Brokerage")!;
+    const result = projectScenario(scenario);
+    const y = result.years[0];
+
+    // The refund is real money, not a rounding artifact.
+    expect(y.cashFlow.taxSettlement).toBeGreaterThan(1_000);
+    // It was routed, not stranded: the hub ends flat and the split target got it.
+    expect(y.accountBalances[hub.id]).toBeCloseTo(0, 2);
+    expect(y.cashFlow.surplusRouted).toBeGreaterThanOrEqual(y.cashFlow.taxSettlement - 0.01);
+    expect(y.accountBalances[brokerage.id]).toBeGreaterThanOrEqual(y.cashFlow.taxSettlement - 0.01);
+  });
+
+  it("still reconciles exactly once the refund is routed", () => {
+    const result = projectScenario(refundScenario());
+    for (const y of result.years) {
+      const cf = y.cashFlow;
+      const derived =
+        cf.operatingCashFlow -
+        cf.incomeTaxWithheldFromCash +
+        cf.withdrawalsToCashNet +
+        cf.taxSettlement -
+        cf.afterTaxContributionTotal -
+        cf.surplusRouted +
+        cf.cashInterest +
+        cf.otherAccountActivity;
+      expect(derived).toBeCloseTo(cf.netCashFlow, 4);
+      // And the settlement still lands the cash tax exactly on the bracket bill.
+      expect(cf.withdrawalTaxes - cf.taxSettlement).toBeCloseTo(cf.federalTaxTotal, 2);
+    }
+  });
+});

@@ -382,7 +382,7 @@ export function buildLlmExport(scenario: Scenario): string {
 
     lines.push(section("Year-by-Year Projection"));
     lines.push(
-      "All figures are nominal (future dollars) except the last column. Income is take-home plus gross Social Security/pension; Surplus routed is cash swept from the hub(s) into the fill order; Withdrawals is net cash pulled from accounts to cover the gap (including RMD proceeds); Ending cash is the hub balance only, not every cash account."
+      "All figures are nominal (future dollars) except the last column. Income is take-home plus gross Social Security/pension; Surplus routed is cash swept from the hub(s) into the fill order; Withdrawals is net cash pulled from accounts to cover the gap (including RMD proceeds); Ending cash is the combined balance of EVERY cash-class account (the spending hub plus any other cash accounts such as checking or a cash reserve), not the hub alone -- so a rise in this column can reflect a non-hub cash account growing rather than cash piling up in the hub."
     );
     lines.push("");
     lines.push(
