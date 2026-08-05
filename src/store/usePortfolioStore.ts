@@ -48,6 +48,13 @@ interface PortfolioState {
   removeAccount: (id: string) => void;
 
   addTransaction: (tx: Omit<Transaction, "id">) => string;
+  /**
+   * Appends many rows in one write, spanning accounts. Distinct from
+   * `importTransactions`, which stamps a single account and a batch id --
+   * generated dividends belong to whichever account held the shares, and
+   * looping `addTransaction` would re-tidy the whole ledger once per row.
+   */
+  addTransactions: (txs: readonly Omit<Transaction, "id">[]) => number;
   updateTransaction: (id: string, patch: Partial<Omit<Transaction, "id">>) => void;
   removeTransaction: (id: string) => void;
   /** Returns the batch id, so a bad import can be rolled back wholesale. */
@@ -106,6 +113,15 @@ export const usePortfolioStore = create<PortfolioState>()(
             transactions: [...p.transactions, { ...tx, id }],
           }));
           return id;
+        },
+
+        addTransactions: (txs) => {
+          if (txs.length === 0) return 0;
+          mutate((p) => ({
+            ...p,
+            transactions: [...p.transactions, ...txs.map((tx) => ({ ...tx, id: nanoid() }))],
+          }));
+          return txs.length;
         },
 
         updateTransaction: (id, patch) =>
