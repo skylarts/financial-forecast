@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  canonicalizeSymbol,
   contractMultiplier,
   formatOptionSymbol,
   isExpiredOption,
   isOptionSymbol,
   parseOptionSymbol,
+  toOccSymbol,
+  underlyingSymbol,
 } from "./optionSymbol";
 
 describe("parseOptionSymbol", () => {
@@ -46,6 +49,78 @@ describe("parseOptionSymbol", () => {
 
   it("rejects a zero strike", () => {
     expect(parseOptionSymbol("AAPL260918C00000000")).toBeNull();
+  });
+
+  it("reads an unpadded strike as plain dollars", () => {
+    // The form a brokerage app shows: no padding, no thousandths. Reading "15"
+    // as fifteen thousandths would misprice the contract by 1000x.
+    expect(parseOptionSymbol("KLAR260508C15")).toEqual({
+      underlying: "KLAR",
+      expiry: "2026-05-08",
+      right: "call",
+      strike: 15,
+    });
+    expect(parseOptionSymbol("KLAR280121C17.5")?.strike).toBe(17.5);
+  });
+
+  it("reads a contract written out with slashes", () => {
+    expect(parseOptionSymbol("KLAR 01/21/2028 17.50 C")).toEqual({
+      underlying: "KLAR",
+      expiry: "2028-01-21",
+      right: "call",
+      strike: 17.5,
+    });
+  });
+
+  it("reads the other orders and spellings statements use", () => {
+    const expected = { underlying: "KLAR", expiry: "2028-01-21", right: "put" as const, strike: 17.5 };
+    expect(parseOptionSymbol("KLAR 2028-01-21 17.50 Put")).toEqual(expected);
+    expect(parseOptionSymbol("KLAR 1/21/28 P 17.5")).toEqual(expected);
+    expect(parseOptionSymbol("KLAR Jan 21 2028 17.50 PUT")).toEqual(expected);
+  });
+
+  it("reads back its own display format", () => {
+    const canonical = "AAPL260918C00250000";
+    expect(parseOptionSymbol(formatOptionSymbol(canonical))).toEqual(parseOptionSymbol(canonical));
+  });
+
+  it("rejects a written contract missing a piece", () => {
+    expect(parseOptionSymbol("KLAR 01/21/2028 C")).toBeNull();
+    expect(parseOptionSymbol("KLAR 01/21/2028 17.50")).toBeNull();
+    expect(parseOptionSymbol("KLAR 01/32/2028 17.50 C")).toBeNull();
+  });
+});
+
+describe("toOccSymbol", () => {
+  it("pads the strike into the form the feed indexes", () => {
+    expect(
+      toOccSymbol({ underlying: "KLAR", expiry: "2028-01-21", right: "call", strike: 17.5 }),
+    ).toBe("KLAR280121C00017500");
+  });
+});
+
+describe("canonicalizeSymbol", () => {
+  it("folds every spelling of one contract onto the same symbol", () => {
+    for (const spelling of [
+      "KLAR 01/21/2028 17.50 C",
+      "KLAR280121C17.5",
+      "KLAR280121C00017500",
+      "  klar 01/21/2028 17.5 call  ",
+    ]) {
+      expect(canonicalizeSymbol(spelling)).toBe("KLAR280121C00017500");
+    }
+  });
+
+  it("leaves an ordinary ticker alone but for case and space", () => {
+    expect(canonicalizeSymbol(" vti ")).toBe("VTI");
+    expect(canonicalizeSymbol("brk-b")).toBe("BRK-B");
+  });
+});
+
+describe("underlyingSymbol", () => {
+  it("names the ticker a contract is written on", () => {
+    expect(underlyingSymbol("KLAR280121C00017500")).toBe("KLAR");
+    expect(underlyingSymbol("VTI")).toBe("VTI");
   });
 });
 

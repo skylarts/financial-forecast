@@ -15,6 +15,7 @@ import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
 import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
+import { useSecurityProfiles } from "@/store/useSecurityProfiles";
 import { lotTermLabel, money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import type { ImportRow } from "@/lib/portfolio/importer";
 import { Btn, Segmented } from "@/components/ui/controls";
@@ -134,6 +135,8 @@ export function PortfolioApp() {
     stale: staleSymbols,
     refresh,
   } = usePrices(symbols);
+
+  const { profiles: securityProfiles, loading: classifying } = useSecurityProfiles(symbols);
 
   const analysis = useMemo(
     () =>
@@ -458,23 +461,36 @@ export function PortfolioApp() {
             <AllocationBars title="By holding" slices={analysis.bySymbol} />
 
             <div>
-              <h3 className="mb-2 text-[13px] font-semibold text-foreground">Classify holdings</h3>
+              <div className="mb-2 flex items-baseline justify-between">
+                <h3 className="text-[13px] font-semibold text-foreground">Classify holdings</h3>
+                <span className="text-[11.5px] text-dim-2">
+                  {classifying
+                    ? "Reading classes from the feed…"
+                    : "Classes come from the feed. Change one and your choice sticks."}
+                </span>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {[...new Set(analysis.holdings.map((h) => h.symbol))].map((symbol) => {
                   const security = securityFor(symbol);
+                  const profile = securityProfiles[symbol];
+                  const isManual = security?.assetClassSource === "manual";
                   return (
                     <label
                       key={symbol}
+                      title={formatOptionSymbol(symbol)}
                       className="flex items-center gap-1.5 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px]"
                     >
                       <span className="font-semibold text-foreground">{symbol}</span>
                       <select
-                        value={security?.assetClass ?? "other"}
+                        value={security?.assetClass ?? profile?.assetClass ?? "other"}
                         onChange={(e) =>
                           upsertSecurity({
                             symbol,
-                            name: security?.name ?? "",
+                            name: security?.name ?? profile?.name ?? "",
                             assetClass: e.target.value as AssetClass,
+                            // Picking from this list is the disagreement that
+                            // pins a class: nothing re-derives it afterwards.
+                            assetClassSource: "manual",
                             manualPrice: security?.manualPrice ?? null,
                             manualPriceDate: security?.manualPriceDate ?? null,
                           })
@@ -487,6 +503,34 @@ export function PortfolioApp() {
                           </option>
                         ))}
                       </select>
+                      {isManual && profile ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            upsertSecurity({
+                              symbol,
+                              name: security?.name || profile.name,
+                              assetClass: profile.assetClass,
+                              assetClassSource: "auto",
+                              manualPrice: security?.manualPrice ?? null,
+                              manualPriceDate: security?.manualPriceDate ?? null,
+                            })
+                          }
+                          title={`Go back to the feed's answer: ${
+                            ASSET_CLASS_LABELS[profile.assetClass]
+                          }, ${profile.basis}.`}
+                          className="text-[11px] text-dim-2 hover:text-foreground"
+                        >
+                          ↺
+                        </button>
+                      ) : profile ? (
+                        <span
+                          title={`Read from the feed: ${profile.basis}.`}
+                          className="text-[10.5px] uppercase tracking-wide text-dim-2"
+                        >
+                          auto
+                        </span>
+                      ) : null}
                     </label>
                   );
                 })}

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   opensLotOn,
   closesLotOn,
+  formatOptionSymbol,
   isOptionLifecycleType,
   normalizeSymbol,
   parseLotIds,
@@ -17,6 +18,7 @@ import {
 import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { money, price, shares, shortDate } from "@/lib/portfolio/format";
 import { Btn } from "@/components/ui/controls";
+import { SymbolField } from "./SymbolField";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
 
 const INPUT =
@@ -181,15 +183,15 @@ function TransactionForm({
             ))}
           </select>
         </label>
-        <label className="text-[11.5px] text-dim-2">
-          <span className="mb-0.5 block">Symbol</span>
-          <input
-            value={form.symbol}
-            onChange={(e) => set({ symbol: e.target.value })}
-            placeholder="VTI"
-            className={`${INPUT} w-24`}
-          />
-        </label>
+      </div>
+
+      {needsSymbol && (
+        <div className="mt-2 flex">
+          <SymbolField value={form.symbol} onChange={(symbol) => set({ symbol })} />
+        </div>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-end gap-2">
         <label className="text-[11.5px] text-dim-2">
           <span className="mb-0.5 block">
             {form.type === "split" ? "Ratio" : isOptionLifecycleType(form.type) ? "Contracts" : "Shares"}
@@ -540,7 +542,12 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
                     <td className={`${CELL} text-left text-foreground`}>
                       {TRANSACTION_TYPE_LABELS[tx.type]}
                     </td>
-                    <td className={`${CELL} text-left font-semibold text-foreground`}>
+                    <td
+                      className={`${CELL} text-left font-semibold text-foreground`}
+                      // A contract symbol is unreadable at a glance, so the
+                      // statement wording is one hover away.
+                      title={tx.symbol ? formatOptionSymbol(tx.symbol) : undefined}
+                    >
                       {tx.symbol ?? "—"}
                     </td>
                     <td className={`${CELL} text-right text-dim`}>

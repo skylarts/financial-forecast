@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isoDateSchema } from "../common";
+import { canonicalizeSymbol } from "./optionSymbol";
 
 export const assetClassSchema = z.enum([
   "us_equity",
@@ -36,6 +37,13 @@ export const securitySchema = z.object({
   name: z.string().default(""),
   assetClass: assetClassSchema.default("other"),
   /**
+   * Whether the class was worked out from the feed or chosen by hand. Only
+   * "auto" rows are ever re-derived, so a class the user set stays set -- and
+   * a security saved before this field existed reads as "manual", because the
+   * only way it got a class back then was somebody picking one.
+   */
+  assetClassSource: z.enum(["auto", "manual"]).default("manual"),
+  /**
    * Overrides the quote feed. Set for anything the feed can't price -- private
    * holdings, an obscure fund, a stale delisted ticker on a closed position.
    */
@@ -44,6 +52,12 @@ export const securitySchema = z.object({
 });
 export type Security = z.infer<typeof securitySchema>;
 
+/**
+ * The one spelling of a symbol the rest of the app works in. Ordinary tickers
+ * are just upper-cased; option contracts are rewritten to canonical OCC, so the
+ * three ways a statement might spell one contract all land on the same holding
+ * and all reach the quote feed under the name it knows.
+ */
 export function normalizeSymbol(raw: string): string {
-  return raw.trim().toUpperCase();
+  return canonicalizeSymbol(raw);
 }
