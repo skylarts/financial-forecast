@@ -36,3 +36,19 @@ export function shortDate(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${m}/${d}/${y}`;
 }
+
+/**
+ * How a closed lot's holding period reads in a table.
+ *
+ * An untaxed disposal has no meaningful term, so it names the reason instead --
+ * shares that merely moved accounts, or an option whose premium was folded into
+ * the shares it delivered rather than realized on its own.
+ */
+export function lotTermLabel(lot: {
+  taxable: boolean;
+  term: "long" | "short";
+  untaxedReason?: "transfer" | "premium_absorbed";
+}): string {
+  if (lot.taxable) return lot.term === "long" ? "Long" : "Short";
+  return lot.untaxedReason === "premium_absorbed" ? "In basis" : "Transfer";
+}

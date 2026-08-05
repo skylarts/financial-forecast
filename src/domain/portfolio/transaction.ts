@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { idSchema, isoDateSchema } from "../common";
+import { contractMultiplier } from "./optionSymbol";
 
 /**
  * Every transaction type the ledger replays. The set is deliberately small:
@@ -19,6 +20,16 @@ export const transactionTypeSchema = z.enum([
   "reinvest",
   /** Ratio split; `quantity` carries the new-shares-per-old-share multiplier. */
   "split",
+  /**
+   * An option contract reached expiry worthless. Closes the contract's lot at
+   * nothing: a long writes the premium off, a short keeps it. Applies to
+   * whichever side the position is on, so it needs no long/short variant.
+   */
+  "option_expire",
+  /** A long option was exercised -- the contract is used, not sold. */
+  "option_exercise",
+  /** A short option was assigned -- the contract is called away against you. */
+  "option_assign",
   /** Shares moved in from elsewhere, carrying their original basis and date. */
   "transfer_in",
   "transfer_out",
@@ -37,6 +48,9 @@ export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   dividend: "Dividend",
   reinvest: "Reinvest",
   split: "Split",
+  option_expire: "Expired",
+  option_exercise: "Exercised",
+  option_assign: "Assigned",
   transfer_in: "Transfer in",
   transfer_out: "Transfer out",
   interest: "Interest",
@@ -56,6 +70,7 @@ export const TRANSACTION_TYPE_GROUPS: { label: string; types: TransactionType[] 
   { label: "Buy / sell", types: ["buy", "sell"] },
   { label: "Short", types: ["short_sell", "buy_to_cover"] },
   { label: "Income", types: ["dividend", "reinvest", "interest"] },
+  { label: "Options", types: ["option_expire", "option_exercise", "option_assign"] },
   { label: "Transfers", types: ["transfer_in", "transfer_out"] },
   { label: "Other", types: ["split", "fee", "cash_deposit", "cash_withdrawal"] },
 ];
@@ -77,9 +92,39 @@ export const SHARE_TRANSACTION_TYPES: readonly TransactionType[] = [
   "buy_to_cover",
   "reinvest",
   "split",
+  "option_expire",
+  "option_exercise",
+  "option_assign",
   "transfer_in",
   "transfer_out",
 ];
+
+/**
+ * How an option contract left the book, for the types that retire one.
+ *
+ * These close a lot on whichever side the contract is held, rather than on a
+ * side fixed by the type: a contract can expire whether you are long it or
+ * short it, and forcing the user to pick would just be a way to get it wrong.
+ */
+export const OPTION_LIFECYCLE_TYPES: readonly TransactionType[] = [
+  "option_expire",
+  "option_exercise",
+  "option_assign",
+];
+
+export function isOptionLifecycleType(type: TransactionType): boolean {
+  return OPTION_LIFECYCLE_TYPES.includes(type);
+}
+
+/**
+ * True when the type retires a contract into a stock position rather than
+ * writing it off. Exercise and assignment both deliver shares, so the premium
+ * is absorbed into what those shares cost or fetched -- it is not a gain in its
+ * own right, which is exactly what separates them from an expiry.
+ */
+export function deliversShares(type: TransactionType): boolean {
+  return type === "option_exercise" || type === "option_assign";
+}
 
 /** Types that open a new tax lot, and the side they open it on. */
 const LOT_OPENING: Partial<Record<TransactionType, PositionSide>> = {
@@ -153,13 +198,27 @@ export const transactionSchema = z.object({
 export type Transaction = z.infer<typeof transactionSchema>;
 
 /**
+ * Gross dollars a transaction moved, before fees.
+ *
+ * An explicit `amount` is always in dollars already and is trusted as-is.
+ * Deriving it has to go through the contract multiplier: an option quoted at
+ * $2.40 moves $240 per contract, and multiplying shares by premium alone would
+ * book every option trade at a hundredth of its real size.
+ */
+function grossAmount(tx: Transaction): number {
+  if (tx.amount !== null) return tx.amount;
+  const multiplier = tx.symbol === null ? 1 : contractMultiplier(tx.symbol);
+  return tx.quantity * tx.price * multiplier;
+}
+
+/**
  * Cash actually moved by a transaction, signed from the account's point of
  * view: negative means cash left the account. Statements are inconsistent about
  * whether `amount` includes fees, so an explicit amount is trusted as-is and
  * only a derived one has fees applied.
  */
 export function signedCashFlow(tx: Transaction): number {
-  const gross = tx.amount ?? tx.quantity * tx.price;
+  const gross = grossAmount(tx);
   const derived = tx.amount === null;
   switch (tx.type) {
     case "buy":
@@ -180,6 +239,13 @@ export function signedCashFlow(tx: Transaction): number {
     case "transfer_in":
     case "transfer_out":
       return 0;
+    // Retiring a contract moves no cash on its own. Exercise and assignment do
+    // move cash, but through the stock leg that delivers the shares -- counting
+    // it here as well would book the same dollars twice.
+    case "option_expire":
+    case "option_exercise":
+    case "option_assign":
+      return 0;
   }
 }
 
@@ -189,7 +255,7 @@ export function signedCashFlow(tx: Transaction): number {
  * against you, so they add to a long's cost and subtract from a short's take.
  */
 export function lotOpenValue(tx: Transaction): number {
-  const gross = tx.amount ?? tx.quantity * tx.price;
+  const gross = grossAmount(tx);
   if (tx.amount !== null) return gross;
   return opensLotOn(tx.type) === "short" ? gross - tx.fees : gross + tx.fees;
 }
@@ -199,7 +265,7 @@ export function lotOpenValue(tx: Transaction): number {
  * covering a short. Same fee asymmetry, in the same direction.
  */
 export function lotCloseValue(tx: Transaction): number {
-  const gross = tx.amount ?? tx.quantity * tx.price;
+  const gross = grossAmount(tx);
   if (tx.amount !== null) return gross;
   return closesLotOn(tx.type) === "short" ? gross + tx.fees : gross - tx.fees;
 }

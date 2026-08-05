@@ -5,7 +5,7 @@ import type { Transaction } from "@/domain/portfolio";
 import { TRANSACTION_TYPE_LABELS } from "@/domain/portfolio";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { Holding } from "@/engine/portfolio/metrics";
-import { money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
+import { lotTermLabel, money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Segmented } from "@/components/ui/controls";
 import { PriceChart, type PricePoint } from "./PriceChart";
 
@@ -219,7 +219,7 @@ export function HoldingDetail({
                     <td className={`${CELL} text-right text-dim`}>{money(lot.proceeds)}</td>
                     <td className={`${CELL} text-right ${toneFor(lot.gain)}`}>{money(lot.gain)}</td>
                     <td className={`${CELL} text-right text-dim`}>
-                      {lot.taxable ? (lot.term === "long" ? "Long" : "Short") : "Transfer"}
+                      {lotTermLabel(lot)}
                     </td>
                   </tr>
                 ))}
