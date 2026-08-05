@@ -87,6 +87,7 @@ interface ChartResult {
   meta?: ChartMeta;
   timestamp?: number[];
   indicators?: { quote?: { close?: (number | null)[] }[] };
+  events?: { dividends?: Record<string, { amount?: number; date?: number }> };
 }
 
 /** Outcome of one chart request, keeping "no such symbol" apart from "it broke". */
@@ -102,10 +103,14 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function requestChart(symbol: string, range: string): Promise<ChartOutcome> {
+async function requestChart(
+  symbol: string,
+  range: string,
+  withEvents = false,
+): Promise<ChartOutcome> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol,
-  )}?range=${range}&interval=1d`;
+  )}?range=${range}&interval=1d${withEvents ? "&events=div" : ""}`;
 
   const response = await fetch(url, {
     headers: { accept: "application/json", "user-agent": "Mozilla/5.0" },
@@ -135,13 +140,17 @@ async function requestChart(symbol: string, range: string): Promise<ChartOutcome
  * The retry is the fix for prices that "just don't show up": a single throttled
  * or dropped request used to blank the row until the next manual refresh.
  */
-async function fetchChart(symbol: string, range: string): Promise<ChartOutcome> {
+async function fetchChart(
+  symbol: string,
+  range: string,
+  withEvents = false,
+): Promise<ChartOutcome> {
   if (!isValidSymbol(symbol)) return { status: "unknown_symbol" };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     let outcome: ChartOutcome;
     try {
-      outcome = await requestChart(symbol, range);
+      outcome = await requestChart(symbol, range, withEvents);
     } catch {
       outcome = { status: "fetch_failed" };
     }
@@ -235,6 +244,48 @@ export async function fetchQuotes(symbols: readonly string[]): Promise<Map<strin
   }
 
   return results;
+}
+
+export interface DividendEvent {
+  /** Ex-dividend date: own the shares before this and the payment is yours. */
+  date: ISODate;
+  /** Dollars per share. */
+  amount: number;
+}
+
+const dividendCache = new Map<string, CacheEntry<DividendEvent[]>>();
+
+/**
+ * Every dividend the feed has on record for a symbol, oldest first.
+ *
+ * Cached as long as price history is: a dividend that has already been declared
+ * never changes, and the next one is a quarter away.
+ *
+ * The dates are ex-dates, not pay dates. That is the one that decides who gets
+ * paid -- ownership before the ex-date is what entitles you -- and it is the
+ * only one the feed reports.
+ */
+export async function fetchDividends(symbol: string, range = "10y"): Promise<DividendEvent[]> {
+  const key = `${symbol.toUpperCase()}::${range}`;
+  const cached = dividendCache.get(key);
+  if (cached && Date.now() - cached.fetchedAt < HISTORY_TTL_MS) return cached.value;
+
+  const outcome = await fetchChart(symbol, range, true);
+  if (outcome.status !== "ok") return cached?.value ?? [];
+
+  const raw = outcome.result.events?.dividends ?? {};
+  const events: DividendEvent[] = [];
+  for (const entry of Object.values(raw)) {
+    if (typeof entry?.amount !== "number" || typeof entry?.date !== "number") continue;
+    if (entry.amount <= 0) continue;
+    events.push({ date: isoFromEpochSeconds(entry.date), amount: entry.amount });
+  }
+  events.sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  // A symbol that genuinely pays nothing caches as an empty list, so it isn't
+  // re-asked on every visit. Only a failed request falls back to what's held.
+  dividendCache.set(key, { value: events, fetchedAt: Date.now() });
+  return events;
 }
 
 /** Daily closes for one symbol, oldest first. Empty when the feed has nothing. */

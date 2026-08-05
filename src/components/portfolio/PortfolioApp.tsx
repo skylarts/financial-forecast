@@ -18,6 +18,7 @@ import { usePrices } from "@/store/usePriceStore";
 import { useSecurityProfiles } from "@/store/useSecurityProfiles";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import type { ImportRow } from "@/lib/portfolio/importer";
+import { toTransaction, type ProposedDividend } from "@/engine/portfolio/dividends";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
@@ -29,6 +30,7 @@ import { RealizedPanel } from "./RealizedPanel";
 import { AllocationPanel, type AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PerformancePanel } from "./PerformancePanel";
+import { DividendSyncDialog } from "./DividendSyncDialog";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 
@@ -75,6 +77,7 @@ export function PortfolioApp() {
   const hasHydrated = usePortfolioStore((s) => s.hasHydrated);
   const importTransactions = usePortfolioStore((s) => s.importTransactions);
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
+  const addTransactions = usePortfolioStore((s) => s.addTransactions);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
   const addAccount = usePortfolioStore((s) => s.addAccount);
 
@@ -85,6 +88,7 @@ export function PortfolioApp() {
   const [scopeAccountId, setScopeAccountId] = useState<string>("all");
   const [selected, setSelected] = useState<Holding | null>(null);
   const [importing, setImporting] = useState(false);
+  const [syncingDividends, setSyncingDividends] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
@@ -305,6 +309,21 @@ export function PortfolioApp() {
     }
   };
 
+  /**
+   * Writes the dividends the user accepted.
+   *
+   * One store write rather than one per row: a first sync on a long-held
+   * dividend payer can be a couple of hundred payments, and each write re-tidies
+   * the whole ledger.
+   */
+  const handleApplyDividends = (proposals: ProposedDividend[]) => {
+    const added = addTransactions(proposals.map(toTransaction));
+    setSyncingDividends(false);
+    setFlash(
+      `Added ${added} dividend${added === 1 ? "" : "s"}. They're ordinary transactions now — edit or delete any of them.`,
+    );
+  };
+
   const handlePush = (account: PortfolioAccount, value: number, costBasis: number) => {
     const target = scenario.accounts.find((a) => a.id === account.forecastAccountId);
     if (!target) return;
@@ -338,6 +357,12 @@ export function PortfolioApp() {
           </select>
           <Btn onClick={refresh} title="Refetch quotes now">
             {pricesLoading ? "Refreshing…" : "Refresh prices"}
+          </Btn>
+          <Btn
+            onClick={() => setSyncingDividends(true)}
+            title="Work out dividends from what you held on each ex-date"
+          >
+            Sync dividends
           </Btn>
           <Btn
             variant="primary"
@@ -683,6 +708,15 @@ export function PortfolioApp() {
             (lot) => lot.accountId === selected.accountId && lot.symbol === selected.symbol,
           )}
           onClose={() => setSelected(null)}
+        />
+      )}
+
+      {syncingDividends && (
+        <DividendSyncDialog
+          portfolio={portfolio}
+          scopeAccountId={scopeAccountId}
+          onClose={() => setSyncingDividends(false)}
+          onApply={handleApplyDividends}
         />
       )}
 
