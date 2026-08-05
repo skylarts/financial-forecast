@@ -249,8 +249,9 @@ export function PortfolioApp() {
         <div className="border-b border-border bg-panel-2 px-6 py-2">
           <details>
             <summary className="cursor-pointer text-[12.5px] text-accent">
-              {analysis.warnings.length} transaction
-              {analysis.warnings.length === 1 ? "" : "s"} need a look
+              {analysis.warnings.length === 1
+                ? "1 transaction needs a look"
+                : `${analysis.warnings.length} transactions need a look`}
             </summary>
             <ul className="mt-1.5 space-y-1">
               {analysis.warnings.map((warning, i) => (

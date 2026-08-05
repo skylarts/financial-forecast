@@ -12,6 +12,7 @@ import {
   type Transaction,
 } from "@/domain/portfolio";
 import type { DraftTransaction } from "@/lib/portfolio/importer";
+import { withAssignedLotIds } from "@/lib/portfolio/lotAssignment";
 
 const STORAGE_KEY = "portfolio-tracker";
 
@@ -53,9 +54,14 @@ export const usePortfolioStore = create<PortfolioState>()(
   persist(
     (set, get) => {
       /** Every mutation funnels through here so no path can forget to stamp
-       *  lastSavedAt and silently skip the cloud push. */
+       *  lastSavedAt and silently skip the cloud push -- and so no path can
+       *  leave a transaction without a lot id, whether it arrived from the
+       *  add form, an import, or an edit that cleared the field. */
       const mutate = (update: (portfolio: Portfolio) => Portfolio) =>
-        set((state) => ({ portfolio: update(state.portfolio), lastSavedAt: Date.now() }));
+        set((state) => ({
+          portfolio: withAssignedLotIds(update(state.portfolio)),
+          lastSavedAt: Date.now(),
+        }));
 
       return {
         portfolio: emptyPortfolio,
@@ -144,14 +150,15 @@ export const usePortfolioStore = create<PortfolioState>()(
             ),
           })),
 
-        loadPortfolio: (portfolio) => set({ portfolio, lastSavedAt: Date.now() }),
+        loadPortfolio: (portfolio) =>
+          set({ portfolio: withAssignedLotIds(portfolio), lastSavedAt: Date.now() }),
 
         importJson: (raw) => {
           const result = portfolioSchema.safeParse(raw);
           if (!result.success) {
             return { ok: false, error: "That file isn't a portfolio backup this app can read." };
           }
-          set({ portfolio: result.data, lastSavedAt: Date.now() });
+          set({ portfolio: withAssignedLotIds(result.data), lastSavedAt: Date.now() });
           return { ok: true };
         },
       };
@@ -160,6 +167,16 @@ export const usePortfolioStore = create<PortfolioState>()(
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ portfolio: state.portfolio, lastSavedAt: state.lastSavedAt }),
+      /**
+       * Backfills lot ids onto a ledger saved before they were assigned, which
+       * is every ledger imported from a brokerage export. Done here rather than
+       * as a one-shot migration so a portfolio arriving from anywhere -- an old
+       * browser, a restored backup -- comes back fully identified.
+       */
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<PortfolioState>) };
+        return { ...merged, portfolio: withAssignedLotIds(merged.portfolio) };
+      },
       onRehydrateStorage: () => (state) => state?.setHasHydrated(true),
     },
   ),

@@ -5,6 +5,7 @@ import {
   lotOpenValue,
   normalizeSymbol,
   opensLotOn,
+  parseLotIds,
   type PositionSide,
   type Transaction,
   type TransactionType,
@@ -50,6 +51,12 @@ export interface ClosedLot {
    * corrupt every realized-gain figure downstream.
    */
   taxable: boolean;
+  /**
+   * True when no open lot backed these shares and they were booked at zero
+   * basis. Callers that trace a disposal back to its acquisition have to skip
+   * these -- the "lot" they name never existed.
+   */
+  unmatched: boolean;
   openTxId: Id;
   closeTxId: Id;
 }
@@ -114,17 +121,19 @@ function positionKey(accountId: Id, symbol: string, side: PositionSide): string 
  * that split, opening a short would look identical to selling stock you never
  * bought.
  *
- * Disposals honor the statement's own lot id when it carries one, which keeps
- * realized gains matching what the brokerage reported; without one they fall
- * back to FIFO. Closing more shares than the ledger knows about is recorded
- * against a zero-basis lot and flagged -- an imported history that starts
- * mid-stream is normal, and dropping the trade entirely would understate
+ * Disposals honor the lot ids a trade names, in the order it names them, which
+ * keeps realized gains matching what the brokerage reported; a trade naming
+ * none falls back to FIFO. Closing more shares than the ledger knows about is
+ * recorded against a zero-basis lot and flagged -- an imported history that
+ * starts mid-stream is normal, and dropping the trade entirely would understate
  * proceeds far more badly than an overstated gain does.
  */
 export function buildLotLedger(transactions: readonly Transaction[]): LotLedger {
   const open = new Map<string, OpenLot[]>();
   const closedLots: ClosedLot[] = [];
   const warnings: LedgerWarning[] = [];
+  /** Every lot id handed out so far, to catch two lots answering to one name. */
+  const issued = new Set<string>();
 
   for (const tx of sortForReplay(transactions)) {
     if (tx.symbol === null) continue;
@@ -137,8 +146,20 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
       const key = positionKey(tx.accountId, symbol, openSide);
       const lots = open.get(key) ?? [];
       if (!open.has(key)) open.set(key, lots);
+      // A purchase names exactly one lot -- its own. If a statement crammed
+      // several ids into the field, the first is the one being opened.
+      const lotId = parseLotIds(tx.lotId)[0] ?? tx.id;
+      if (issued.has(lotId)) {
+        warnings.push({
+          txId: tx.id,
+          date: tx.date,
+          symbol,
+          message: `Lot id "${lotId}" is already in use by an earlier purchase, so a sale naming it can't tell the two apart. Give this one a different id.`,
+        });
+      }
+      issued.add(lotId);
       lots.push({
-        id: tx.lotId ?? tx.id,
+        id: lotId,
         accountId: tx.accountId,
         symbol,
         side: openSide,
@@ -182,19 +203,61 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
     const closeValue = tx.type === "transfer_out" ? 0 : lotCloseValue(tx);
     const perShareClose = closeValue / tx.quantity;
 
-    const named = tx.lotId ? lots.filter((lot) => lot.id === tx.lotId) : [];
-    if (tx.lotId && named.length === 0) {
+    // Specific identification when the trade named lots, oldest-first
+    // otherwise. Lots are appended in replay order, which is already
+    // date-ascending, so the array itself is the FIFO queue.
+    const namedIds = parseLotIds(tx.lotId);
+    const claimed = new Set<OpenLot>();
+    const candidates: OpenLot[] = [];
+    const missing: string[] = [];
+    let namedShares = 0;
+
+    for (const id of namedIds) {
+      const matches = lots.filter((lot) => lot.id === id && lot.quantity > EPSILON);
+      if (matches.length === 0) {
+        missing.push(id);
+        continue;
+      }
+      for (const lot of matches) {
+        if (claimed.has(lot)) continue;
+        claimed.add(lot);
+        candidates.push(lot);
+        namedShares += lot.quantity;
+      }
+    }
+    // Anything the trade didn't name still queues up behind what it did. A lot
+    // that comes up short is a bookkeeping error worth flagging, but the shares
+    // did leave the account from somewhere, and drawing the rest from the next
+    // oldest lot is far closer to the truth than booking it at zero basis.
+    for (const lot of lots) {
+      if (!claimed.has(lot)) candidates.push(lot);
+    }
+
+    if (missing.length > 0) {
+      const names = missing.map((id) => `"${id}"`).join(", ");
       warnings.push({
         txId: tx.id,
         date: tx.date,
         symbol,
-        message: `Lot "${tx.lotId}" named by this trade isn't open — fell back to oldest-first.`,
+        message:
+          missing.length === 1
+            ? `Lot ${names} named by this trade isn't open — fell back to oldest-first.`
+            : `Lots ${names} named by this trade aren't open — fell back to oldest-first.`,
+      });
+    } else if (namedIds.length > 0 && tx.quantity > namedShares + EPSILON) {
+      const wanted = tx.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 });
+      const had = namedShares.toLocaleString(undefined, { maximumFractionDigits: 4 });
+      const names = namedIds.map((id) => `"${id}"`).join(", ");
+      warnings.push({
+        txId: tx.id,
+        date: tx.date,
+        symbol,
+        message:
+          namedIds.length === 1
+            ? `Lot ${names} is oversold: this trade closes ${wanted} shares but only ${had} were open in that lot. The rest came from the next oldest lots — name another lot if that's wrong.`
+            : `Lots ${names} are oversold: this trade closes ${wanted} shares but only ${had} were open across them. The rest came from the next oldest lots — name another lot if that's wrong.`,
       });
     }
-    // Specific identification when the statement named a lot, oldest-first
-    // otherwise. Lots are appended in replay order, which is already
-    // date-ascending, so the array itself is the FIFO queue.
-    const candidates = named.length > 0 ? named : lots;
 
     for (const lot of candidates) {
       if (remaining <= EPSILON) break;
@@ -218,6 +281,7 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
         gain: closeSide === "short" ? openValue - close : close - openValue,
         term: holdingTerm(lot.acquiredDate, tx.date),
         taxable: tx.type !== "transfer_out",
+        unmatched: false,
         openTxId: lot.openTxId,
         closeTxId: tx.id,
       });
@@ -242,6 +306,7 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
         gain: closeSide === "short" ? -close : close,
         term: "short",
         taxable: tx.type !== "transfer_out",
+        unmatched: true,
         openTxId: tx.id,
         closeTxId: tx.id,
       });

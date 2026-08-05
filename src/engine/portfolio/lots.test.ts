@@ -76,6 +76,58 @@ describe("buildLotLedger", () => {
     expect(closedLots[0].costBasis).toBe(500);
   });
 
+  it("closes several named lots in the order the trade names them", () => {
+    const { closedLots, openLots } = buildLotLedger([
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, lotId: "LOT-A" }),
+      tx({ type: "buy", date: "2024-06-10", quantity: 10, price: 150, lotId: "LOT-B" }),
+      tx({ type: "buy", date: "2024-09-10", quantity: 10, price: 175, lotId: "LOT-C" }),
+      tx({ type: "sell", date: "2025-03-10", quantity: 15, price: 200, lotId: "LOT-C, LOT-A" }),
+    ]);
+
+    expect(closedLots.map((lot) => lot.id)).toEqual(["LOT-C", "LOT-A"]);
+    expect(closedLots[0].quantity).toBe(10);
+    expect(closedLots[1].quantity).toBe(5);
+    // The untouched middle lot is left whole, and A keeps its remainder.
+    expect(openLots.map((lot) => [lot.id, lot.quantity])).toEqual([
+      ["LOT-A", 5],
+      ["LOT-B", 10],
+    ]);
+  });
+
+  it("warns when a named lot is oversold but still draws the rest from real lots", () => {
+    const { closedLots, warnings } = buildLotLedger([
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, lotId: "LOT-A" }),
+      tx({ type: "buy", date: "2024-06-10", quantity: 10, price: 150, lotId: "LOT-B" }),
+      tx({ type: "sell", date: "2025-03-10", quantity: 14, price: 200, lotId: "LOT-B" }),
+    ]);
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain('Lot "LOT-B" is oversold');
+    expect(warnings[0].message).toContain("only 10 were open");
+    // The 4 extra shares come out of the other real lot, not a zero-basis one.
+    expect(closedLots.map((lot) => lot.id)).toEqual(["LOT-B", "LOT-A"]);
+    expect(closedLots[1].costBasis).toBe(400);
+  });
+
+  it("flags two lots sharing one id, since a sale can't tell them apart", () => {
+    const { warnings } = buildLotLedger([
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, lotId: "LOT-A" }),
+      tx({ type: "buy", date: "2024-06-10", quantity: 10, price: 150, lotId: "LOT-A" }),
+    ]);
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("already in use");
+  });
+
+  it("does not report an oversell when the named lot covers the trade exactly", () => {
+    const { warnings } = buildLotLedger([
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, lotId: "LOT-A" }),
+      tx({ type: "sell", date: "2025-03-10", quantity: 10, price: 200, lotId: "LOT-A" }),
+    ]);
+
+    expect(warnings).toHaveLength(0);
+  });
+
   it("splits shares without changing cost basis", () => {
     const { openLots } = buildLotLedger([
       tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),

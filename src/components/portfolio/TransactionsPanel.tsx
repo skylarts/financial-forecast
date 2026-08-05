@@ -3,7 +3,9 @@
 import { useMemo, useState } from "react";
 import {
   opensLotOn,
+  closesLotOn,
   normalizeSymbol,
+  parseLotIds,
   TRANSACTION_TYPE_GROUPS,
   TRANSACTION_TYPE_LABELS,
   type Portfolio,
@@ -21,7 +23,7 @@ const INPUT =
 const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
-type TxColumn = "date" | "account" | "type" | "symbol" | "quantity" | "price" | "amount";
+type TxColumn = "date" | "account" | "type" | "symbol" | "quantity" | "price" | "amount" | "lot";
 
 function TxSortHeader({
   label,
@@ -132,6 +134,12 @@ function TransactionForm({
     form.type !== "fee";
   const canSubmit = form.date !== "" && form.accountId !== "" && (!needsSymbol || form.symbol.trim() !== "");
   const opensLot = opensLotOn(form.type) !== null;
+  const closesLot = closesLotOn(form.type) !== null;
+  const lotHint = closesLot
+    ? "Which lots this trade closes. Left blank it fills in oldest-first; clear it any time to re-derive. Separate several lots with commas."
+    : opensLot
+      ? "This lot's name. Left blank one is generated from the symbol and date."
+      : "Only buys and sells carry a lot.";
 
   return (
     <div className="mb-4 rounded-md border border-border bg-panel-2 p-3">
@@ -218,16 +226,18 @@ function TransactionForm({
             className={`${INPUT} w-20 text-right`}
           />
         </label>
-        <label className="text-[11.5px] text-dim-2">
-          <span className="mb-0.5 block">Lot ID</span>
-          <input
-            value={form.lotId}
-            onChange={(e) => set({ lotId: e.target.value })}
-            placeholder="optional"
-            title="On a sell, names the exact lot being closed instead of using oldest-first."
-            className={`${INPUT} w-28`}
-          />
-        </label>
+        {(opensLot || closesLot) && (
+          <label className="text-[11.5px] text-dim-2">
+            <span className="mb-0.5 block">Lot ID</span>
+            <input
+              value={form.lotId}
+              onChange={(e) => set({ lotId: e.target.value })}
+              placeholder="auto"
+              title={lotHint}
+              className={`${INPUT} w-44`}
+            />
+          </label>
+        )}
         {opensLot && (
           <label className="text-[11.5px] text-dim-2">
             <span className="mb-0.5 block">Acquired</span>
@@ -261,6 +271,28 @@ function TransactionForm({
   );
 }
 
+/**
+ * The lot cell. A sale that drained several lots names all of them, which is
+ * far too wide for a column, so only the first is shown with a count of the
+ * rest -- the full list is in the tooltip. Clicking a lot searches for it,
+ * which pulls the purchase and every sale that drew on it into one view.
+ */
+function LotCell({ tx, onSearch }: { tx: Transaction; onSearch: (query: string) => void }) {
+  const ids = parseLotIds(tx.lotId);
+  if (ids.length === 0) return <span className="text-dim-2">—</span>;
+  return (
+    <button
+      type="button"
+      onClick={() => onSearch(ids[0])}
+      title={ids.length === 1 ? `Show everything in lot ${ids[0]}` : `Closes ${ids.join(", ")}`}
+      className="text-left hover:text-foreground hover:underline"
+    >
+      {ids[0]}
+      {ids.length > 1 && <span className="text-dim-2"> +{ids.length - 1}</span>}
+    </button>
+  );
+}
+
 /** Blank strings mean "use the computed default" for shares/price/fees, but an
  *  explicit zero (a $0 fee, a dividend's 0 shares) must survive as zero, not
  *  vanish into the same default. */
@@ -276,7 +308,7 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [accountFilter, setAccountFilter] = useState<string>("all");
-  const [symbolFilter, setSymbolFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -295,13 +327,14 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
       quantity: (tx) => tx.quantity,
       price: (tx) => tx.price,
       amount: (tx) => tx.amount ?? tx.quantity * tx.price,
+      lot: (tx) => tx.lotId ?? "",
     }),
     [accountNames],
   );
   const { sort, toggle, apply } = useSort<Transaction, TxColumn>(accessors, "date");
 
   const filtered = useMemo(() => {
-    const query = symbolFilter.trim().toUpperCase();
+    const query = search.trim().toUpperCase();
     // A group selection matches every type in that group, so "Short" pulls both
     // the opening sale and the cover without needing two passes.
     const groupTypes =
@@ -311,16 +344,25 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
 
     return portfolio.transactions
       .filter((tx) => accountFilter === "all" || tx.accountId === accountFilter)
-      .filter((tx) => !query || (tx.symbol ?? "").includes(query))
+      // One box covers both symbol and lot id. Generated ids lead with the
+      // symbol, so a plain "VTI" still finds every VTI row and a full id
+      // narrows to the purchase and the sales that drew on it -- which is the
+      // whole point of being able to search a lot at all.
+      .filter(
+        (tx) =>
+          !query ||
+          (tx.symbol ?? "").includes(query) ||
+          (tx.lotId ?? "").toUpperCase().includes(query),
+      )
       .filter((tx) =>
         typeFilter === "all" ? true : groupTypes ? groupTypes.includes(tx.type) : tx.type === typeFilter,
       )
       .filter((tx) => (!fromDate || tx.date >= fromDate) && (!toDate || tx.date <= toDate));
-  }, [portfolio.transactions, accountFilter, symbolFilter, typeFilter, fromDate, toDate]);
+  }, [portfolio.transactions, accountFilter, search, typeFilter, fromDate, toDate]);
 
   const rows = useMemo(() => apply(filtered), [apply, filtered]);
   const filtersActive =
-    accountFilter !== "all" || symbolFilter !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
+    accountFilter !== "all" || search !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
 
   const defaultAccountId = accountFilter === "all" ? portfolio.accounts[0]?.id : accountFilter;
 
@@ -345,10 +387,11 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             ))}
           </select>
           <input
-            value={symbolFilter}
-            onChange={(e) => setSymbolFilter(e.target.value)}
-            placeholder="Filter by symbol"
-            className={`${INPUT} w-40`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Symbol or lot ID"
+            title="Matches a ticker or any part of a lot ID."
+            className={`${INPUT} w-48`}
           />
           <select
             value={typeFilter}
@@ -384,7 +427,7 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             <Btn
               onClick={() => {
                 setAccountFilter("all");
-                setSymbolFilter("");
+                setSearch("");
                 setTypeFilter("all");
                 setFromDate("");
                 setToDate("");
@@ -450,7 +493,7 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
                 <TxSortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
                 <TxSortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
                 <TxSortHeader label="Amount" column="amount" align="right" sort={sort} onToggle={toggle} />
-                <th className={`${HEAD} text-left`}>Lot</th>
+                <TxSortHeader label="Lot" column="lot" align="left" sort={sort} onToggle={toggle} />
                 <th className={`${HEAD} text-right`}></th>
               </tr>
             </thead>
@@ -503,7 +546,9 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
                     <td className={`${CELL} text-right text-dim`}>
                       {tx.amount === null ? money(tx.quantity * tx.price) : money(tx.amount)}
                     </td>
-                    <td className={`${CELL} text-left text-dim-2`}>{tx.lotId ?? "—"}</td>
+                    <td className={`${CELL} text-left text-dim-2`}>
+                      <LotCell tx={tx} onSearch={setSearch} />
+                    </td>
                     <td className={`${CELL} text-right`}>
                       <div className="flex items-center justify-end gap-2.5">
                         <button
