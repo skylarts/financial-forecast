@@ -4,11 +4,14 @@ import { useMemo, useState } from "react";
 import {
   ASSET_CLASS_LABELS,
   assetClassSchema,
+  formatOptionSymbol,
   normalizeSymbol,
   type AssetClass,
   type PortfolioAccount,
+  type TransactionType,
 } from "@/domain/portfolio";
 import { analyzePortfolio, type Holding } from "@/engine/portfolio/metrics";
+import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
 import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
@@ -23,6 +26,7 @@ import { AccountsPanel } from "./AccountsPanel";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { ReconcilePanel } from "./ReconcilePanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
+import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 
 const TABS = [
   { value: "holdings", label: "Holdings" },
@@ -102,6 +106,7 @@ export function PortfolioApp() {
   const portfolio = usePortfolioStore((s) => s.portfolio);
   const hasHydrated = usePortfolioStore((s) => s.hasHydrated);
   const importTransactions = usePortfolioStore((s) => s.importTransactions);
+  const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
   const addAccount = usePortfolioStore((s) => s.addAccount);
 
@@ -188,6 +193,42 @@ export function PortfolioApp() {
     );
     setImporting(false);
     setFlash(`Imported ${rows.length} transaction${rows.length === 1 ? "" : "s"}.`);
+  };
+
+  /**
+   * Records the event that closed an expired contract.
+   *
+   * Only the option leg is written. Exercise and assignment also move shares,
+   * and inventing that trade would mean guessing a share count and a date the
+   * statement already knows -- so the ledger's own warning names the trade to
+   * add, and the flash says so up front rather than letting it look finished.
+   */
+  const handleRecordExpiry = (contract: ExpiredContract, type: TransactionType) => {
+    addTransaction({
+      accountId: contract.accountId,
+      date: contract.expiry,
+      type,
+      symbol: contract.symbol,
+      quantity: contract.quantity,
+      price: 0,
+      amount: null,
+      fees: 0,
+      lotId: null,
+      acquiredDate: null,
+      note: "",
+      importBatchId: null,
+      sourceHash: null,
+    });
+
+    setFlash(
+      type === "option_expire"
+        ? `Recorded ${formatOptionSymbol(contract.symbol)} as expired worthless.`
+        : `Recorded ${formatOptionSymbol(contract.symbol)} as ${
+            type === "option_assign" ? "assigned" : "exercised"
+          }. Add the matching ${contract.underlying} trade at the ${
+            contract.strike
+          } strike so the premium lands in the share basis.`,
+    );
   };
 
   const handlePush = (account: PortfolioAccount, value: number, costBasis: number) => {
@@ -298,6 +339,11 @@ export function PortfolioApp() {
           hint="Money-weighted return across every trade and dividend in scope."
         />
       </div>
+
+      <ExpiredContractsNotice
+        contracts={analysis.expiredContracts}
+        onRecord={handleRecordExpiry}
+      />
 
       <PriceFeedNotice
         unknown={unknownSymbols}

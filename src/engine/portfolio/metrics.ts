@@ -13,6 +13,7 @@ import {
   type Transaction,
 } from "@/domain/portfolio";
 import { buildLotLedger, type ClosedLot, type LedgerWarning, type OpenLot } from "./lots";
+import { findExpiredContracts, type ExpiredContract } from "./expiredContracts";
 
 export interface PriceQuote {
   price: number;
@@ -184,6 +185,8 @@ export interface PortfolioAnalysis {
   summary: PortfolioSummary;
   closedLots: ClosedLot[];
   warnings: LedgerWarning[];
+  /** Contracts still open past their expiry, awaiting the event that closed them. */
+  expiredContracts: ExpiredContract[];
   byAssetClass: AllocationSlice[];
   byAccount: AllocationSlice[];
   bySymbol: AllocationSlice[];
@@ -347,6 +350,7 @@ export function analyzePortfolio(
     summary,
     closedLots: [...closedLots].sort((a, b) => (a.disposedDate < b.disposedDate ? 1 : -1)),
     warnings,
+    expiredContracts: findExpiredContracts(holdings, prices, asOf),
     byAssetClass: slice(group((h) => h.assetClass)),
     byAccount: slice(group((h) => accountNames.get(h.accountId) ?? "Unknown account")),
     bySymbol: slice(group((h) => h.symbol)),
