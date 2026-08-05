@@ -1,4 +1,4 @@
-import { fetchHistory } from "@/lib/portfolio/priceFeed";
+import { fetchHistories } from "@/lib/portfolio/priceFeed";
 
 const ALLOWED_RANGES = new Set(["1mo", "3mo", "6mo", "ytd", "1y", "2y", "5y", "10y", "max"]);
 const DEFAULT_RANGE = "5y";
@@ -11,10 +11,16 @@ const DEFAULT_RANGE = "5y";
  */
 
 /**
- * Enough symbols for a real portfolio plus its benchmarks, few enough that one
- * request can't be turned into an unbounded fan-out at the upstream feed.
+ * Ceiling on symbols per request, so one call can't be turned into an
+ * unbounded sweep of the upstream feed.
+ *
+ * Anything over it is reported back as `skipped` rather than dropped in
+ * silence. Silent truncation is what made this endpoint lie: the list arrived
+ * alphabetically sorted, so a ledger with enough option contracts pushed every
+ * late-alphabet ticker -- SPY, VTI, VOO -- past the cut, and the page rendered
+ * as though the feed simply had nothing for them.
  */
-const MAX_SYMBOLS = 60;
+const MAX_SYMBOLS = 120;
 
 /**
  * Daily closes for many symbols at once.
@@ -22,34 +28,39 @@ const MAX_SYMBOLS = 60;
  * A performance series needs history for every symbol ever held in the window,
  * not just the ones still open, which on a real ledger is dozens of requests.
  * Firing them from the browser one at a time is what rate-limits the feed into
- * returning nothing; the fetch layer already batches with a bounded fan-out and
- * caches for twelve hours, so routing them through here is both faster and
- * gentler than the client doing it itself.
+ * returning nothing. `fetchHistories` holds the fan-out to a few requests at a
+ * time and caches for twelve hours, so routing them through here is both faster
+ * and gentler than the client doing it itself.
  */
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const requested = params.get("range") ?? DEFAULT_RANGE;
-  const range = ALLOWED_RANGES.has(requested) ? requested : DEFAULT_RANGE;
+  const requestedRange = params.get("range") ?? DEFAULT_RANGE;
+  const range = ALLOWED_RANGES.has(requestedRange) ? requestedRange : DEFAULT_RANGE;
 
-  const symbols = [
+  const requested = [
     ...new Set(
       (params.get("symbols") ?? "")
         .split(",")
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean),
     ),
-  ].slice(0, MAX_SYMBOLS);
+  ];
 
-  if (symbols.length === 0) return Response.json({ histories: {} });
+  // Order is the caller's priority order, not alphabetical: whatever it listed
+  // first is what survives the cap.
+  const symbols = requested.slice(0, MAX_SYMBOLS);
+  const skipped = requested.slice(MAX_SYMBOLS);
 
-  const results = await Promise.all(symbols.map((symbol) => fetchHistory(symbol, range)));
+  if (symbols.length === 0) return Response.json({ histories: {}, skipped });
+
+  const results = await fetchHistories(symbols, range);
 
   const histories: Record<string, { date: string; close: number }[]> = {};
-  for (const result of results) {
+  for (const [symbol, result] of results) {
     // A symbol the feed has nothing for is omitted rather than sent as an empty
     // array, so the caller can tell "no history" apart from "no data yet".
-    if (result.points.length > 0) histories[result.symbol] = result.points;
+    if (result.points.length > 0) histories[symbol] = result.points;
   }
 
-  return Response.json({ histories });
+  return Response.json({ histories, skipped });
 }

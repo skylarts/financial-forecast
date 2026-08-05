@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { normalizeSymbol, type Portfolio } from "@/domain/portfolio";
+import { isOptionSymbol, normalizeSymbol, type Portfolio } from "@/domain/portfolio";
 import {
   proposeDividends,
   type DividendEvent,
@@ -52,10 +52,22 @@ export function DividendSyncDialog({
     [portfolio.transactions, scopeAccountId],
   );
 
+  /**
+   * Symbols worth asking about.
+   *
+   * Every stock the ledger ever touched belongs here -- a dividend can be owed
+   * on a position that has since been sold. Option contracts do not: they pay
+   * nothing, and a ledger with a few years of them behind it would spend most
+   * of this request asking the feed about expired tickers it will never answer
+   * for, crowding out the holdings that do pay.
+   */
   const symbols = useMemo(() => {
     const set = new Set<string>();
     for (const tx of scopedTransactions) {
-      if (tx.symbol) set.add(normalizeSymbol(tx.symbol));
+      if (!tx.symbol) continue;
+      const symbol = normalizeSymbol(tx.symbol);
+      if (isOptionSymbol(symbol)) continue;
+      set.add(symbol);
     }
     return [...set].sort();
   }, [scopedTransactions]);

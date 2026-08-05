@@ -137,6 +137,54 @@ function tradingDays(
   return [...days].sort();
 }
 
+/**
+ * The symbols a window actually needs prices for.
+ *
+ * Asking for every symbol the ledger ever touched is what broke this: a few
+ * years of option contracts is easily a hundred dead tickers, all of them
+ * needing a request the feed will never answer, and all of them competing for
+ * room in a capped list that was sorted alphabetically. A position closed years
+ * before the window has no bearing on it, and neither does a contract that
+ * expired long ago.
+ *
+ * Needed means either still held going into the window, or traded during it.
+ */
+export function symbolsForWindow(
+  transactions: readonly Transaction[],
+  from: ISODate,
+  to: ISODate,
+  accountIds?: readonly Id[],
+): string[] {
+  const scoped = accountIds
+    ? transactions.filter((tx) => accountIds.includes(tx.accountId))
+    : transactions;
+  const ordered = [...scoped].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  const needed = new Set<string>();
+  const openingPosition = new Map<string, number>();
+
+  for (const tx of ordered) {
+    if (tx.date > to) break;
+    if (tx.symbol === null) continue;
+
+    if (tx.date < from) {
+      // Still building the position the window opens on.
+      applyToShares(openingPosition, tx);
+    } else {
+      // Traded inside the window, so it matters whichever way it moved.
+      needed.add(normalizeSymbol(tx.symbol));
+    }
+  }
+
+  // Whatever was still on the books when the window opened has to be valued
+  // through it, even if it was never traded again.
+  for (const [symbol, shares] of openingPosition) {
+    if (Math.abs(shares) > 1e-9) needed.add(symbol);
+  }
+
+  return [...needed].sort();
+}
+
 export interface SeriesOptions {
   from: ISODate;
   to: ISODate;

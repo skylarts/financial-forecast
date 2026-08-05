@@ -5,6 +5,7 @@ import {
   buildPerformanceSeries,
   indexPrices,
   indexedReturn,
+  symbolsForWindow,
   totalReturn,
   type PricePoint,
 } from "./performance";
@@ -276,6 +277,86 @@ describe("annualizedReturn", () => {
 
     // A 10% month is not a 214% year, and saying so would invent a forecast.
     expect(annualizedReturn(points)).toBeCloseTo(0.1, 6);
+  });
+});
+
+describe("symbolsForWindow", () => {
+  it("keeps a position still held going into the window", () => {
+    const symbols = symbolsForWindow(
+      [tx({ type: "buy", date: "2020-01-02", quantity: 10, price: 100 })],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    expect(symbols).toEqual(["VTI"]);
+  });
+
+  it("drops a position closed before the window opens", () => {
+    const symbols = symbolsForWindow(
+      [
+        tx({ type: "buy", date: "2020-01-02", quantity: 10, price: 100, symbol: "GONE" }),
+        tx({ type: "sell", date: "2021-01-02", quantity: 10, price: 120, symbol: "GONE" }),
+        tx({ type: "buy", date: "2020-01-02", quantity: 5, price: 100 }),
+      ],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    // Sold out three years before the window -- it has no bearing on it, and
+    // asking the feed about it is a request that can only crowd out a live one.
+    expect(symbols).toEqual(["VTI"]);
+  });
+
+  it("keeps something traded inside the window even if it ends flat", () => {
+    const symbols = symbolsForWindow(
+      [
+        tx({ type: "buy", date: "2024-03-01", quantity: 10, price: 100, symbol: "SWING" }),
+        tx({ type: "sell", date: "2024-04-01", quantity: 10, price: 120, symbol: "SWING" }),
+      ],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    expect(symbols).toEqual(["SWING"]);
+  });
+
+  it("ignores anything first bought after the window closes", () => {
+    const symbols = symbolsForWindow(
+      [tx({ type: "buy", date: "2025-06-01", quantity: 10, price: 100, symbol: "LATER" })],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    expect(symbols).toEqual([]);
+  });
+
+  it("narrows to the accounts asked for", () => {
+    const symbols = symbolsForWindow(
+      [
+        tx({ type: "buy", date: "2023-01-02", quantity: 10, price: 100 }),
+        tx({ type: "buy", date: "2023-01-02", quantity: 10, price: 100, symbol: "OTHER", accountId: "acct-2" }),
+      ],
+      "2024-01-01",
+      "2024-12-31",
+      ["acct-1"],
+    );
+
+    expect(symbols).toEqual(["VTI"]);
+  });
+
+  it("leaves out an option contract that expired before the window", () => {
+    const symbols = symbolsForWindow(
+      [
+        tx({ type: "buy", date: "2022-01-03", quantity: 1, price: 4, symbol: "AAPL220121C00150000" }),
+        tx({ type: "option_expire", date: "2022-01-21", quantity: 1, symbol: "AAPL220121C00150000" }),
+        tx({ type: "buy", date: "2022-01-03", quantity: 10, price: 100 }),
+      ],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    // The contract is gone and the feed will never answer for it again.
+    expect(symbols).toEqual(["VTI"]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { fetchDividends } from "@/lib/portfolio/priceFeed";
+import { fetchDividendsFor } from "@/lib/portfolio/priceFeed";
 
 const ALLOWED_RANGES = new Set(["1y", "2y", "5y", "10y", "max"]);
 
@@ -9,33 +9,34 @@ const ALLOWED_RANGES = new Set(["1y", "2y", "5y", "10y", "max"]);
  */
 const DEFAULT_RANGE = "10y";
 
-const MAX_SYMBOLS = 60;
+const MAX_SYMBOLS = 120;
 
 /** Declared dividends per symbol, as ex-date and dollars per share. */
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
-  const requested = params.get("range") ?? DEFAULT_RANGE;
-  const range = ALLOWED_RANGES.has(requested) ? requested : DEFAULT_RANGE;
+  const requestedRange = params.get("range") ?? DEFAULT_RANGE;
+  const range = ALLOWED_RANGES.has(requestedRange) ? requestedRange : DEFAULT_RANGE;
 
-  const symbols = [
+  const requested = [
     ...new Set(
       (params.get("symbols") ?? "")
         .split(",")
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean),
     ),
-  ].slice(0, MAX_SYMBOLS);
+  ];
 
-  if (symbols.length === 0) return Response.json({ dividends: {} });
+  const symbols = requested.slice(0, MAX_SYMBOLS);
+  const skipped = requested.slice(MAX_SYMBOLS);
 
-  const results = await Promise.all(
-    symbols.map(async (symbol) => [symbol, await fetchDividends(symbol, range)] as const),
-  );
+  if (symbols.length === 0) return Response.json({ dividends: {}, skipped });
+
+  const results = await fetchDividendsFor(symbols, range);
 
   const dividends: Record<string, { date: string; amount: number }[]> = {};
   for (const [symbol, events] of results) {
     if (events.length > 0) dividends[symbol] = events;
   }
 
-  return Response.json({ dividends });
+  return Response.json({ dividends, skipped });
 }
