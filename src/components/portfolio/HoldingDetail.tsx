@@ -164,7 +164,7 @@ export function HoldingDetail({
                 return (
                   <tr key={`${lot.id}-${lot.openTxId}`} className="border-b border-border-soft">
                     <td className={`${CELL} text-left text-dim`}>{shortDate(lot.acquiredDate)}</td>
-                    <td className={`${CELL} text-left text-dim-2`}>{lot.id.slice(0, 10)}</td>
+                    <td className={`${CELL} text-left text-dim-2`}>{lot.id}</td>
                     <td className={`${CELL} text-right text-dim`}>{shares(lot.quantity)}</td>
                     <td className={`${CELL} text-right text-dim`}>{money(lot.costBasis)}</td>
                     <td className={`${CELL} text-right text-dim`}>
@@ -192,6 +192,7 @@ export function HoldingDetail({
                 <tr className="border-b border-border">
                   <th className={`${HEAD} text-left`}>Acquired</th>
                   <th className={`${HEAD} text-left`}>Sold</th>
+                  <th className={`${HEAD} text-left`}>Lot</th>
                   <th className={`${HEAD} text-right`}>Shares</th>
                   <th className={`${HEAD} text-right`}>Cost basis</th>
                   <th className={`${HEAD} text-right`}>Proceeds</th>
@@ -204,6 +205,15 @@ export function HoldingDetail({
                   <tr key={`${lot.closeTxId}-${i}`} className="border-b border-border-soft">
                     <td className={`${CELL} text-left text-dim`}>{shortDate(lot.acquiredDate)}</td>
                     <td className={`${CELL} text-left text-dim`}>{shortDate(lot.disposedDate)}</td>
+                    <td className={`${CELL} text-left text-dim-2`}>
+                      {lot.unmatched ? (
+                        <span className="text-negative" title="No purchase in the ledger backs these shares, so they were counted at zero cost basis.">
+                          unmatched
+                        </span>
+                      ) : (
+                        lot.id
+                      )}
+                    </td>
                     <td className={`${CELL} text-right text-dim`}>{shares(lot.quantity)}</td>
                     <td className={`${CELL} text-right text-dim`}>{money(lot.costBasis)}</td>
                     <td className={`${CELL} text-right text-dim`}>{money(lot.proceeds)}</td>

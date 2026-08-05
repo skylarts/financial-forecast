@@ -129,9 +129,11 @@ export const transactionSchema = z.object({
   amount: z.number().nullable().default(null),
   fees: z.number().nonnegative().default(0),
   /**
-   * The statement's own lot identifier. When a sell carries one, the lot
-   * engine closes exactly that lot instead of falling back to FIFO -- this is
-   * what keeps realized gains matching what the brokerage actually reported.
+   * Which tax lot this row belongs to. A purchase carries the one lot it
+   * opens; a sale carries the one or more lots it closes, comma-separated.
+   * Anything arriving without one is assigned an id automatically -- generated
+   * for a purchase, drawn oldest-first for a sale -- so every disposal traces
+   * back to a specific acquisition. The user can overwrite either.
    */
   lotId: z.string().nullable().default(null),
   /**
