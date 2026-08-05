@@ -28,6 +28,7 @@ import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import { AllocationPanel, type AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
+import { PerformancePanel } from "./PerformancePanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 
@@ -35,6 +36,7 @@ const TABS = [
   { value: "holdings", label: "Holdings" },
   { value: "bySymbol", label: "By stock" },
   { value: "allocation", label: "Allocation" },
+  { value: "performance", label: "Performance" },
   { value: "realized", label: "Realized" },
   { value: "transactions", label: "Transactions" },
   { value: "accounts", label: "Accounts" },
@@ -640,6 +642,10 @@ export function PortfolioApp() {
               </div>
             </div>
           </AllocationPanel>
+        )}
+
+        {tab === "performance" && (
+          <PerformancePanel portfolio={portfolio} scopeAccountId={scopeAccountId} />
         )}
 
         {tab === "realized" && (
