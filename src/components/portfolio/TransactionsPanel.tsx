@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   opensLotOn,
   closesLotOn,
@@ -8,6 +8,7 @@ import {
   isOptionLifecycleType,
   normalizeSymbol,
   parseLotIds,
+  signedCashFlow,
   TRANSACTION_TYPE_GROUPS,
   TRANSACTION_TYPE_LABELS,
   type Portfolio,
@@ -16,10 +17,21 @@ import {
   type TransactionType,
 } from "@/domain/portfolio";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
-import { money, price, shares, shortDate } from "@/lib/portfolio/format";
-import { Btn } from "@/components/ui/controls";
+import { money, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
+import { Btn, Segmented } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
+import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
+
+const TX_GROUPINGS = [
+  { value: "none", label: "Flat" },
+  { value: "symbol", label: "By stock" },
+  { value: "account", label: "By account" },
+  { value: "type", label: "By type" },
+  { value: "month", label: "By month" },
+] as const;
+
+type TxGrouping = (typeof TX_GROUPINGS)[number]["value"];
 
 const INPUT =
   "rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none focus:border-accent";
@@ -320,6 +332,7 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
   const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [grouping, setGrouping] = useState<TxGrouping>("none");
 
   const accountNames = useMemo(
     () => new Map(portfolio.accounts.map((a) => [a.id, a.name])),
@@ -371,6 +384,27 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
   const rows = useMemo(() => apply(filtered), [apply, filtered]);
   const filtersActive =
     accountFilter !== "all" || search !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
+
+  const groups = useMemo(() => {
+    if (grouping === "none") return [{ key: "", label: "", rows }];
+    const labelFor = (tx: Transaction) =>
+      grouping === "symbol"
+        ? tx.symbol ?? "Cash & fees"
+        : grouping === "account"
+          ? accountNames.get(tx.accountId) ?? "Unknown account"
+          : grouping === "type"
+            ? TRANSACTION_TYPE_LABELS[tx.type]
+            : tx.date.slice(0, 7);
+
+    // Ranked by how much cash each group moved, in either direction: a group
+    // that took $40k out is as worth surfacing as one that put $40k in.
+    return buildGroups(rows, labelFor, (groupRows) =>
+      groupRows.reduce((sum, tx) => sum + Math.abs(signedCashFlow(tx)), 0),
+    );
+  }, [rows, grouping, accountNames]);
+
+  const collapse = useCollapsedGroups(grouping);
+  const groupKeys = useMemo(() => groups.map((g) => g.key), [groups]);
 
   const defaultAccountId = accountFilter === "all" ? portfolio.accounts[0]?.id : accountFilter;
 
@@ -431,6 +465,14 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             To
             <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={INPUT} />
           </label>
+          <Segmented
+            options={TX_GROUPINGS}
+            value={grouping}
+            onChange={setGrouping}
+            size="sm"
+            ariaLabel="Group transactions"
+          />
+          {grouping !== "none" && <GroupToggles groupKeys={groupKeys} collapse={collapse} />}
           {filtersActive && (
             <Btn
               onClick={() => {
@@ -506,88 +548,120 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((tx: Transaction) =>
-                editingId === tx.id ? (
-                  <tr key={tx.id}>
-                    <td colSpan={9} className="p-0">
-                      <TransactionForm
-                        accounts={portfolio.accounts}
-                        initial={formFromTransaction(tx)}
-                        submitLabel="Save"
-                        onCancel={() => setEditingId(null)}
-                        onSubmit={(form) => {
-                          updateTransaction(tx.id, {
-                            accountId: form.accountId,
-                            date: form.date,
-                            type: form.type,
-                            symbol: form.symbol.trim() ? normalizeSymbol(form.symbol) : null,
-                            quantity: num(form.quantity),
-                            price: num(form.price),
-                            amount: form.amount.trim() === "" ? null : num(form.amount),
-                            fees: num(form.fees),
-                            lotId: form.lotId.trim() || null,
-                            acquiredDate: form.acquiredDate || null,
-                          });
-                          setEditingId(null);
-                        }}
+              {groups.map((group) => {
+                const netCash = group.rows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
+                const collapsed = grouping !== "none" && collapse.isCollapsed(group.key);
+                return (
+                  <Fragment key={group.key || "all"}>
+                    {grouping !== "none" && (
+                      <GroupHeaderRow
+                        label={group.label}
+                        count={group.rows.length}
+                        noun="row"
+                        collapsed={collapsed}
+                        onToggle={() => collapse.toggle(group.key)}
+                        // Date, Account, Type, Symbol, Shares, Price -- none of
+                        // which totals across rows of different types.
+                        labelSpan={6}
+                        cells={[
+                          <span
+                            key="net"
+                            className={toneFor(netCash)}
+                            title="Net cash this group moved: money in less money out."
+                          >
+                            {money(netCash)}
+                          </span>,
+                          null,
+                          null,
+                        ]}
                       />
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={tx.id} className="border-b border-border-soft hover:bg-panel-2">
-                    <td className={`${CELL} text-left text-dim`}>{shortDate(tx.date)}</td>
-                    <td className={`${CELL} text-left text-dim`}>
-                      {accountNames.get(tx.accountId) ?? "—"}
-                    </td>
-                    <td className={`${CELL} text-left text-foreground`}>
-                      {TRANSACTION_TYPE_LABELS[tx.type]}
-                    </td>
-                    <td
-                      className={`${CELL} text-left font-semibold text-foreground`}
-                      // A contract symbol is unreadable at a glance, so the
-                      // statement wording is one hover away.
-                      title={tx.symbol ? formatOptionSymbol(tx.symbol) : undefined}
-                    >
-                      {tx.symbol ?? "—"}
-                    </td>
-                    <td className={`${CELL} text-right text-dim`}>
-                      {tx.quantity > 0 ? shares(tx.quantity) : "—"}
-                    </td>
-                    <td className={`${CELL} text-right text-dim`}>
-                      {tx.price > 0 ? price(tx.price) : "—"}
-                    </td>
-                    <td className={`${CELL} text-right text-dim`}>
-                      {tx.amount === null ? money(tx.quantity * tx.price) : money(tx.amount)}
-                    </td>
-                    <td className={`${CELL} text-left text-dim-2`}>
-                      <LotCell tx={tx} onSearch={setSearch} />
-                    </td>
-                    <td className={`${CELL} text-right`}>
-                      <div className="flex items-center justify-end gap-2.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAdding(false);
-                            setEditingId(tx.id);
-                          }}
-                          title="Edit this transaction"
-                          className="text-dim-2 hover:text-foreground"
-                        >
-                          ✎
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => removeTransaction(tx.id)}
-                          title="Delete this transaction"
-                          className="text-dim-2 hover:text-negative"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ),
-              )}
+                    )}
+                    {!collapsed &&
+                      group.rows.map((tx: Transaction) =>
+                        editingId === tx.id ? (
+                        <tr key={tx.id}>
+                          <td colSpan={9} className="p-0">
+                            <TransactionForm
+                              accounts={portfolio.accounts}
+                              initial={formFromTransaction(tx)}
+                              submitLabel="Save"
+                              onCancel={() => setEditingId(null)}
+                              onSubmit={(form) => {
+                                updateTransaction(tx.id, {
+                                  accountId: form.accountId,
+                                  date: form.date,
+                                  type: form.type,
+                                  symbol: form.symbol.trim() ? normalizeSymbol(form.symbol) : null,
+                                  quantity: num(form.quantity),
+                                  price: num(form.price),
+                                  amount: form.amount.trim() === "" ? null : num(form.amount),
+                                  fees: num(form.fees),
+                                  lotId: form.lotId.trim() || null,
+                                  acquiredDate: form.acquiredDate || null,
+                                });
+                                setEditingId(null);
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={tx.id} className="border-b border-border-soft hover:bg-panel-2">
+                          <td className={`${CELL} text-left text-dim`}>{shortDate(tx.date)}</td>
+                          <td className={`${CELL} text-left text-dim`}>
+                            {accountNames.get(tx.accountId) ?? "—"}
+                          </td>
+                          <td className={`${CELL} text-left text-foreground`}>
+                            {TRANSACTION_TYPE_LABELS[tx.type]}
+                          </td>
+                          <td
+                            className={`${CELL} text-left font-semibold text-foreground`}
+                            // A contract symbol is unreadable at a glance, so the
+                            // statement wording is one hover away.
+                            title={tx.symbol ? formatOptionSymbol(tx.symbol) : undefined}
+                          >
+                            {tx.symbol ?? "—"}
+                          </td>
+                          <td className={`${CELL} text-right text-dim`}>
+                            {tx.quantity > 0 ? shares(tx.quantity) : "—"}
+                          </td>
+                          <td className={`${CELL} text-right text-dim`}>
+                            {tx.price > 0 ? price(tx.price) : "—"}
+                          </td>
+                          <td className={`${CELL} text-right text-dim`}>
+                            {tx.amount === null ? money(tx.quantity * tx.price) : money(tx.amount)}
+                          </td>
+                          <td className={`${CELL} text-left text-dim-2`}>
+                            <LotCell tx={tx} onSearch={setSearch} />
+                          </td>
+                          <td className={`${CELL} text-right`}>
+                            <div className="flex items-center justify-end gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAdding(false);
+                                  setEditingId(tx.id);
+                                }}
+                                title="Edit this transaction"
+                                className="text-dim-2 hover:text-foreground"
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeTransaction(tx.id)}
+                                title="Delete this transaction"
+                                className="text-dim-2 hover:text-negative"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ),
+                      )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

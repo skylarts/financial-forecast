@@ -16,7 +16,7 @@ import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore
 import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
 import { useSecurityProfiles } from "@/store/useSecurityProfiles";
-import { lotTermLabel, money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
+import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import type { ImportRow } from "@/lib/portfolio/importer";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
@@ -25,7 +25,7 @@ import { HoldingDetail } from "./HoldingDetail";
 import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
 import { TransactionsPanel } from "./TransactionsPanel";
-import { ReconcilePanel } from "./ReconcilePanel";
+import { RealizedPanel } from "./RealizedPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 
@@ -34,7 +34,6 @@ const TABS = [
   { value: "allocation", label: "Allocation" },
   { value: "realized", label: "Realized" },
   { value: "transactions", label: "Transactions" },
-  { value: "reconcile", label: "Reconcile" },
   { value: "accounts", label: "Accounts" },
 ] as const;
 
@@ -505,10 +504,6 @@ export function PortfolioApp() {
           </div>
         )}
 
-        {tab === "reconcile" && (
-          <ReconcilePanel accounts={portfolio.accounts} holdings={analysis.holdings} />
-        )}
-
         {tab === "allocation" && (
           <div className="space-y-6 p-5">
             <div>
@@ -642,67 +637,11 @@ export function PortfolioApp() {
         )}
 
         {tab === "realized" && (
-          <div className="p-5">
-            <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat label="Realized YTD" value={money(summary.realizedGainYtd)} tone={toneFor(summary.realizedGainYtd)} />
-              <Stat label="Short-term" value={money(summary.realizedShortTerm)} tone={toneFor(summary.realizedShortTerm)} />
-              <Stat label="Long-term" value={money(summary.realizedLongTerm)} tone={toneFor(summary.realizedLongTerm)} />
-              <Stat label="Dividends & interest" value={money(summary.income)} />
-            </div>
-            {analysis.closedLots.length === 0 ? (
-              <p className="py-8 text-center text-[13px] text-dim">
-                No closed positions yet. Sells will show up here with their tax lots matched.
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="border-b border-border">
-                      {["Symbol", "Account", "Acquired", "Sold", "Shares", "Cost basis", "Proceeds", "Gain", "Term"].map(
-                        (h, i) => (
-                          <th
-                            key={h}
-                            className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2 ${
-                              i >= 4 ? "text-right" : "text-left"
-                            }`}
-                          >
-                            {h}
-                          </th>
-                        ),
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analysis.closedLots.map((lot, i) => (
-                      <tr key={`${lot.closeTxId}-${i}`} className="border-b border-border-soft">
-                        <td className="px-3 py-2 text-[12.5px] font-semibold text-foreground">{lot.symbol}</td>
-                        <td className="px-3 py-2 text-[12.5px] text-dim">
-                          {accountNames.get(lot.accountId) ?? "—"}
-                        </td>
-                        <td className="px-3 py-2 text-[12.5px] text-dim">{shortDate(lot.acquiredDate)}</td>
-                        <td className="px-3 py-2 text-[12.5px] text-dim">{shortDate(lot.disposedDate)}</td>
-                        <td className="px-3 py-2 text-right text-[12.5px] tabular-nums text-dim">
-                          {lot.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}
-                        </td>
-                        <td className="px-3 py-2 text-right text-[12.5px] tabular-nums text-dim">
-                          {money(lot.costBasis)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-[12.5px] tabular-nums text-dim">
-                          {money(lot.proceeds)}
-                        </td>
-                        <td className={`px-3 py-2 text-right text-[12.5px] tabular-nums ${toneFor(lot.gain)}`}>
-                          {money(lot.gain)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-[12.5px] text-dim">
-                          {lotTermLabel(lot)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <RealizedPanel
+            closedLots={analysis.closedLots}
+            summary={summary}
+            accountNames={accountNames}
+          />
         )}
 
         {tab === "transactions" && <TransactionsPanel portfolio={portfolio} />}
