@@ -40,10 +40,24 @@ export function useSecurityProfiles(symbols: readonly string[]): {
   /** Symbols already asked about this session, so an upsert can't retrigger a fetch. */
   const requested = useRef(new Set<string>());
 
-  const manual = useMemo(() => {
+  /**
+   * Symbols that don't need asking about: set by hand, or already answered by
+   * the feed on a previous visit. Without this, every reload re-asks the feed
+   * about every holding in the portfolio -- the same batch of lookups, with the
+   * same answer, every single time. For a large portfolio that's a real amount
+   * of traffic landing on the same host the live quotes come from, competing
+   * for the same rate limit and making actual price refreshes fail more.
+   */
+  const settled = useMemo(() => {
     const set = new Set<string>();
     for (const security of portfolio.securities) {
       if (security.assetClassSource === "manual") set.add(normalizeSymbol(security.symbol));
+      // An "auto" record with a real class is a feed answer already on file.
+      // "other" is left out: that's what an unresolved symbol defaults to, so
+      // it's worth asking again rather than treating a miss as permanent.
+      else if (security.assetClassSource === "auto" && security.assetClass !== "other") {
+        set.add(normalizeSymbol(security.symbol));
+      }
     }
     return set;
   }, [portfolio.securities]);
@@ -53,10 +67,10 @@ export function useSecurityProfiles(symbols: readonly string[]): {
   const key = useMemo(
     () =>
       [...new Set(symbols.map(normalizeSymbol).filter(Boolean))]
-        .filter((symbol) => !manual.has(symbol))
+        .filter((symbol) => !settled.has(symbol))
         .sort()
         .join(","),
-    [symbols, manual],
+    [symbols, settled],
   );
 
   useEffect(() => {

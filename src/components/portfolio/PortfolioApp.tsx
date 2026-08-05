@@ -472,8 +472,14 @@ export function PortfolioApp() {
               <div className="flex flex-wrap gap-2">
                 {[...new Set(analysis.holdings.map((h) => h.symbol))].map((symbol) => {
                   const security = securityFor(symbol);
+                  // The feed's answer, if this session asked it. A holding
+                  // classified on an earlier visit won't have one -- the hook
+                  // skips re-asking about a symbol it already has a settled
+                  // answer for -- so the badge below falls back to what's on
+                  // the security record rather than requiring a fresh fetch.
                   const profile = securityProfiles[symbol];
                   const isManual = security?.assetClassSource === "manual";
+                  const isAuto = security?.assetClassSource === "auto";
                   return (
                     <label
                       key={symbol}
@@ -503,29 +509,50 @@ export function PortfolioApp() {
                           </option>
                         ))}
                       </select>
-                      {isManual && profile ? (
+                      {isManual ? (
                         <button
                           type="button"
                           onClick={() =>
-                            upsertSecurity({
-                              symbol,
-                              name: security?.name || profile.name,
-                              assetClass: profile.assetClass,
-                              assetClassSource: "auto",
-                              manualPrice: security?.manualPrice ?? null,
-                              manualPriceDate: security?.manualPriceDate ?? null,
-                            })
+                            profile
+                              ? upsertSecurity({
+                                  symbol,
+                                  name: security?.name || profile.name,
+                                  assetClass: profile.assetClass,
+                                  assetClassSource: "auto",
+                                  manualPrice: security?.manualPrice ?? null,
+                                  manualPriceDate: security?.manualPriceDate ?? null,
+                                })
+                              : // No answer from this session to revert to --
+                                // "other" is what an unclassified symbol reads
+                                // as, so this hands it back to the feed to
+                                // re-derive on the next check.
+                                upsertSecurity({
+                                  symbol,
+                                  name: security?.name ?? "",
+                                  assetClass: "other",
+                                  assetClassSource: "auto",
+                                  manualPrice: security?.manualPrice ?? null,
+                                  manualPriceDate: security?.manualPriceDate ?? null,
+                                })
                           }
-                          title={`Go back to the feed's answer: ${
-                            ASSET_CLASS_LABELS[profile.assetClass]
-                          }, ${profile.basis}.`}
+                          title={
+                            profile
+                              ? `Go back to the feed's answer: ${
+                                  ASSET_CLASS_LABELS[profile.assetClass]
+                                }, ${profile.basis}.`
+                              : "Go back to the feed's answer -- it'll be re-checked."
+                          }
                           className="text-[11px] text-dim-2 hover:text-foreground"
                         >
                           ↺
                         </button>
-                      ) : profile ? (
+                      ) : isAuto ? (
                         <span
-                          title={`Read from the feed: ${profile.basis}.`}
+                          title={
+                            profile
+                              ? `Read from the feed: ${profile.basis}.`
+                              : "Read from the feed."
+                          }
                           className="text-[10.5px] uppercase tracking-wide text-dim-2"
                         >
                           auto
