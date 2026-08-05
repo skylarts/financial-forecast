@@ -5,6 +5,7 @@ import { ASSET_CLASS_LABELS } from "@/domain/portfolio";
 import type { Holding } from "@/engine/portfolio/metrics";
 import { money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
+import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
 
 export type HoldingGrouping = "none" | "account" | "assetClass" | "side";
 
@@ -57,16 +58,33 @@ function SortHeader({
   );
 }
 
-/** Subtotal strip shown above each group when grouping is on. */
-function GroupRow({ label, value, span }: { label: string; value: number; span: number }) {
-  return (
-    <tr className="border-b border-border bg-panel-2">
-      <td colSpan={span} className="px-3 py-1.5 text-[11.5px] font-semibold text-dim">
-        {label}
-        <span className="ml-2 font-normal tabular-nums text-dim-2">{money(value)}</span>
-      </td>
-    </tr>
-  );
+interface GroupTotals {
+  marketValue: number;
+  costBasis: number;
+  weight: number;
+  unrealizedGain: number;
+  /** Null when the group has no basis to measure against, same as a single row. */
+  returnPct: number | null;
+}
+
+/**
+ * What a group's subtotal row reports.
+ *
+ * Return is the group's own gain over its own basis, not an average of the
+ * member percentages -- averaging would let a tiny position's 300% swamp the
+ * figure for a group whose money is overwhelmingly somewhere else.
+ */
+function totalsFor(rows: readonly Holding[]): GroupTotals {
+  const marketValue = rows.reduce((sum, h) => sum + h.marketValue, 0);
+  const costBasis = rows.reduce((sum, h) => sum + h.costBasis, 0);
+  const unrealizedGain = rows.reduce((sum, h) => sum + h.unrealizedGain, 0);
+  return {
+    marketValue,
+    costBasis,
+    weight: rows.reduce((sum, h) => sum + h.weight, 0),
+    unrealizedGain,
+    returnPct: costBasis > 0 ? unrealizedGain / costBasis : null,
+  };
 }
 
 export function HoldingsTable({
@@ -102,7 +120,7 @@ export function HoldingsTable({
   const sorted = useMemo(() => apply(holdings), [apply, holdings]);
 
   const groups = useMemo(() => {
-    if (grouping === "none") return [{ label: "", rows: sorted }];
+    if (grouping === "none") return [{ key: "", label: "", rows: sorted }];
     const labelFor = (h: Holding) =>
       grouping === "account"
         ? accountNames.get(h.accountId) ?? "Unknown account"
@@ -112,21 +130,12 @@ export function HoldingsTable({
             ? "Short positions"
             : "Long positions";
 
-    const map = new Map<string, Holding[]>();
-    for (const holding of sorted) {
-      const label = labelFor(holding);
-      const bucket = map.get(label);
-      if (bucket) bucket.push(holding);
-      else map.set(label, [holding]);
-    }
-    // Groups are ordered by size so the money leads, matching the row sort.
-    return [...map.entries()]
-      .map(([label, rows]) => ({ label, rows }))
-      .sort(
-        (a, b) =>
-          b.rows.reduce((s, h) => s + h.marketValue, 0) - a.rows.reduce((s, h) => s + h.marketValue, 0),
-      );
+    // Ordered by size so the money leads, matching the row sort.
+    return buildGroups(sorted, labelFor, (rows) => rows.reduce((s, h) => s + h.marketValue, 0));
   }, [sorted, grouping, accountNames]);
+
+  const collapse = useCollapsedGroups(grouping);
+  const groupKeys = useMemo(() => groups.map((g) => g.key), [groups]);
 
   if (holdings.length === 0) {
     return (
@@ -136,10 +145,17 @@ export function HoldingsTable({
     );
   }
 
-  const columnCount = showAccount ? 10 : 9;
+  // Everything left of Value: the label spans them because none of shares, avg
+  // cost, or price means anything summed across different securities.
+  const labelSpan = showAccount ? 5 : 4;
 
   return (
     <div className="overflow-x-auto">
+      {grouping !== "none" && (
+        <div className="mb-1.5 flex justify-end">
+          <GroupToggles groupKeys={groupKeys} collapse={collapse} />
+        </div>
+      )}
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b border-border">
@@ -158,16 +174,37 @@ export function HoldingsTable({
           </tr>
         </thead>
         <tbody>
-          {groups.map((group) => (
-            <Fragment key={group.label || "all"}>
+          {groups.map((group) => {
+            const totals = totalsFor(group.rows);
+            const collapsed = grouping !== "none" && collapse.isCollapsed(group.key);
+            return (
+            <Fragment key={group.key || "all"}>
               {grouping !== "none" && (
-                <GroupRow
+                <GroupHeaderRow
                   label={group.label}
-                  value={group.rows.reduce((sum, h) => sum + h.marketValue, 0)}
-                  span={columnCount}
+                  count={group.rows.length}
+                  collapsed={collapsed}
+                  onToggle={() => collapse.toggle(group.key)}
+                  labelSpan={labelSpan}
+                  cells={[
+                    <span key="value" className="text-foreground">
+                      {money(totals.marketValue)}
+                    </span>,
+                    <span key="weight" className="text-dim">
+                      {(totals.weight * 100).toFixed(1)}%
+                    </span>,
+                    <span key="unrealized" className={toneFor(totals.unrealizedGain)}>
+                      {money(totals.unrealizedGain)}
+                    </span>,
+                    <span key="return" className={toneFor(totals.unrealizedGain)}>
+                      {percent(totals.returnPct)}
+                    </span>,
+                    null,
+                  ]}
                 />
               )}
-              {group.rows.map((holding) => (
+              {!collapsed &&
+                group.rows.map((holding) => (
                 <tr
                   key={holding.key}
                   onClick={() => onSelect(holding)}
@@ -229,9 +266,10 @@ export function HoldingsTable({
                     {percent(holding.irr)}
                   </td>
                 </tr>
-              ))}
+                ))}
             </Fragment>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
