@@ -27,11 +27,13 @@ import { AccountsPanel } from "./AccountsPanel";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import { AllocationPanel, type AllocationDimension } from "./AllocationPanel";
+import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 
 const TABS = [
   { value: "holdings", label: "Holdings" },
+  { value: "bySymbol", label: "By stock" },
   { value: "allocation", label: "Allocation" },
   { value: "realized", label: "Realized" },
   { value: "transactions", label: "Transactions" },
@@ -501,6 +503,17 @@ export function PortfolioApp() {
               onSelect={setSelected}
             />
           </div>
+        )}
+
+        {tab === "bySymbol" && (
+          <BySymbolPanel
+            holdings={analysis.holdings}
+            closedLots={analysis.closedLots}
+            onSelectSymbol={(symbol) => {
+              setSearch(symbol);
+              setTab("holdings");
+            }}
+          />
         )}
 
         {tab === "allocation" && (
