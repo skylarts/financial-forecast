@@ -226,7 +226,7 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
 }
 
 /**
- * Fetches many quotes with a bounded fan-out.
+ * How many upstream requests may be in flight at once.
  *
  * The feed throttles bursts, so firing every symbol at once is what turns a
  * large portfolio into a page of missing prices -- the requests rate-limit each
@@ -234,16 +234,47 @@ export async function fetchQuote(symbol: string): Promise<Quote | null> {
  */
 const BATCH_SIZE = 8;
 
-export async function fetchQuotes(symbols: readonly string[]): Promise<Map<string, QuoteResult>> {
-  const results = new Map<string, QuoteResult>();
+/**
+ * Runs `work` over every symbol with a bounded fan-out.
+ *
+ * Every multi-symbol fetch in the app goes through here. Quotes were batched
+ * and histories were not, which meant the same ticker could be priced on one
+ * screen and blank on another purely because a different screen asked for it
+ * alongside thirty others.
+ */
+async function mapSymbols<T>(
+  symbols: readonly string[],
+  work: (symbol: string) => Promise<T>,
+): Promise<Map<string, T>> {
+  const results = new Map<string, T>();
 
   for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
     const batch = symbols.slice(i, i + BATCH_SIZE);
-    const settled = await Promise.all(batch.map(fetchQuoteResult));
+    const settled = await Promise.all(batch.map(work));
     batch.forEach((symbol, index) => results.set(symbol.toUpperCase(), settled[index]));
   }
 
   return results;
+}
+
+export async function fetchQuotes(symbols: readonly string[]): Promise<Map<string, QuoteResult>> {
+  return mapSymbols(symbols, fetchQuoteResult);
+}
+
+/** Daily closes for many symbols, with the same bounded fan-out as quotes. */
+export async function fetchHistories(
+  symbols: readonly string[],
+  range = "10y",
+): Promise<Map<string, SymbolHistory>> {
+  return mapSymbols(symbols, (symbol) => fetchHistory(symbol, range));
+}
+
+/** Dividend events for many symbols, with the same bounded fan-out as quotes. */
+export async function fetchDividendsFor(
+  symbols: readonly string[],
+  range = "10y",
+): Promise<Map<string, DividendEvent[]>> {
+  return mapSymbols(symbols, (symbol) => fetchDividends(symbol, range));
 }
 
 export interface DividendEvent {

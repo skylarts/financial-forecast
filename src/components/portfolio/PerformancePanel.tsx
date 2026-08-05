@@ -10,12 +10,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { normalizeSymbol, type Portfolio } from "@/domain/portfolio";
+import type { Portfolio } from "@/domain/portfolio";
 import {
   annualizedReturn,
   buildPerformanceSeries,
   indexPrices,
   indexedReturn,
+  symbolsForWindow,
   totalReturn,
   type PricePoint,
 } from "@/engine/portfolio/performance";
@@ -157,6 +158,8 @@ export function PerformancePanel({
   const [loaded, setLoaded] = useState<{
     key: string;
     histories: Map<string, PricePoint[]>;
+    /** Symbols the server refused to fetch because the request was over its cap. */
+    skipped: string[];
     failed: boolean;
   } | null>(null);
 
@@ -184,15 +187,27 @@ export function PerformancePanel({
     return { from: isoDaysAgo(MONTHS_BACK[period] ?? 12), to: end };
   }, [period, customFrom, customTo, earliest]);
 
-  /** Every symbol the ledger ever touched, plus the benchmarks. */
+  /**
+   * What to ask the feed for, in priority order.
+   *
+   * Benchmarks lead because they were chosen deliberately and must survive any
+   * cap -- and because the list used to be sorted alphabetically, which meant a
+   * ledger with enough option contracts silently pushed SPY and VTI past the
+   * server's limit and rendered them as though the feed had no data for them.
+   * Holdings follow, narrowed to the ones this window actually needs.
+   */
   const neededSymbols = useMemo(() => {
-    const held = new Set<string>();
-    for (const tx of scopedTransactions) {
-      if (tx.symbol) held.add(normalizeSymbol(tx.symbol));
-    }
-    for (const benchmark of benchmarks) held.add(benchmark);
-    return [...held].sort();
-  }, [scopedTransactions, benchmarks]);
+    const ordered = [
+      ...benchmarks,
+      ...symbolsForWindow(
+        scopedTransactions,
+        from,
+        to,
+        scopeAccountId === "all" ? undefined : [scopeAccountId],
+      ),
+    ];
+    return [...new Set(ordered)];
+  }, [scopedTransactions, benchmarks, from, to, scopeAccountId]);
 
   const fetchRange = fetchRangeFor(period);
   const requestKey = `${fetchRange}::${neededSymbols.join(",")}`;
@@ -204,16 +219,19 @@ export function PerformancePanel({
     let cancelled = false;
     fetch(`/api/prices/history/batch?symbols=${encodeURIComponent(symbolList)}&range=${range}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((body: { histories?: Record<string, PricePoint[]> }) => {
+      .then((body: { histories?: Record<string, PricePoint[]>; skipped?: string[] }) => {
         if (cancelled) return;
         setLoaded({
           key: requestKey,
           histories: new Map(Object.entries(body.histories ?? {})),
+          skipped: body.skipped ?? [],
           failed: false,
         });
       })
       .catch(() => {
-        if (!cancelled) setLoaded({ key: requestKey, histories: new Map(), failed: true });
+        if (!cancelled) {
+          setLoaded({ key: requestKey, histories: new Map(), skipped: [], failed: true });
+        }
       });
 
     return () => {
@@ -227,6 +245,7 @@ export function PerformancePanel({
   const settled = loaded?.key === requestKey;
   const loading = neededSymbols.length > 0 && !settled;
   const failed = settled && loaded.failed;
+  const skipped = settled ? loaded.skipped : [];
   const histories = useMemo(
     () => (settled ? loaded.histories : EMPTY_HISTORIES),
     [settled, loaded],
@@ -558,6 +577,13 @@ export function PerformancePanel({
               ))}
             </span>
           </div>
+
+          {skipped.length > 0 && (
+            <p className="mt-2 text-[11.5px] text-negative">
+              {skipped.length} holding{skipped.length === 1 ? "" : "s"} left out of this request —
+              too many symbols at once. The figures below cover everything else.
+            </p>
+          )}
 
           {series.approximated.length > 0 && (
             <p className="mt-2 text-[11.5px] text-dim-2">
