@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ASSET_CLASS_LABELS,
   assetClassSchema,
@@ -10,7 +10,7 @@ import {
   type PortfolioAccount,
   type TransactionType,
 } from "@/domain/portfolio";
-import { analyzePortfolio, type Holding } from "@/engine/portfolio/metrics";
+import { analyzePortfolio, type Holding, type PriceMap } from "@/engine/portfolio/metrics";
 import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -128,13 +128,82 @@ export function PortfolioApp() {
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
   const {
-    prices,
+    prices: liveQuotes,
     loading: pricesLoading,
     unknown: unknownSymbols,
     unavailable: unavailableSymbols,
-    stale: staleSymbols,
+    stale: liveStaleSymbols,
     refresh,
   } = usePrices(symbols);
+
+  const securityBySymbol = useMemo(
+    () => new Map(portfolio.securities.map((s) => [normalizeSymbol(s.symbol), s])),
+    [portfolio.securities],
+  );
+
+  /**
+   * Records every genuinely live quote onto its security, so a later request
+   * that fails at a bad moment -- rate-limited, feed hiccup, whatever -- has a
+   * real recent price to fall back on instead of leaving the row unpriced.
+   * Session-cache fallbacks (already flagged `liveStaleSymbols`) don't
+   * overwrite this: they're not a fresh answer from the feed.
+   */
+  useEffect(() => {
+    for (const symbol of symbols) {
+      if (liveStaleSymbols.includes(symbol)) continue;
+      const quote = liveQuotes[symbol];
+      if (!quote) continue;
+      const security = securityBySymbol.get(symbol);
+      if (security?.lastKnownPrice === quote.price && security.lastKnownPriceDate === quote.date) continue;
+      upsertSecurity({
+        symbol,
+        name: security?.name ?? quote.name ?? "",
+        assetClass: security?.assetClass ?? "other",
+        assetClassSource: security?.assetClassSource ?? "auto",
+        manualPrice: security?.manualPrice ?? null,
+        manualPriceDate: security?.manualPriceDate ?? null,
+        lastKnownPrice: quote.price,
+        lastKnownPriceDate: quote.date,
+      });
+    }
+    // Runs off the feed response, not the store snapshot -- re-keying on
+    // securityBySymbol would refire this on the very writes it makes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbols, liveQuotes, liveStaleSymbols]);
+
+  /**
+   * Symbols the feed answered nothing for this session, but that have a
+   * price on file from a previous successful fetch. Falls back the same way
+   * the session cache does -- a day-old real number beats a blank "no
+   * quote" cell -- except this survives a page reload or a cold server,
+   * since it's read from the saved portfolio rather than in-memory cache.
+   */
+  const { prices, staleSymbols } = useMemo(() => {
+    const merged: PriceMap = { ...liveQuotes };
+    const recovered: string[] = [];
+    for (const symbol of [...unknownSymbols, ...unavailableSymbols]) {
+      const security = securityBySymbol.get(symbol);
+      if (security?.manualPrice != null || security?.lastKnownPrice == null) continue;
+      merged[symbol] = {
+        price: security.lastKnownPrice,
+        date: security.lastKnownPriceDate ?? "",
+        name: security.name,
+      };
+      recovered.push(symbol);
+    }
+    return { prices: merged, staleSymbols: [...liveStaleSymbols, ...recovered] };
+  }, [liveQuotes, liveStaleSymbols, unknownSymbols, unavailableSymbols, securityBySymbol]);
+
+  // Recovered from a saved price, so they're no longer missing -- only a
+  // genuinely unpriced symbol should still read as "no quote" in the banner.
+  const displayUnknown = useMemo(
+    () => unknownSymbols.filter((s) => !staleSymbols.includes(s)),
+    [unknownSymbols, staleSymbols],
+  );
+  const displayUnavailable = useMemo(
+    () => unavailableSymbols.filter((s) => !staleSymbols.includes(s)),
+    [unavailableSymbols, staleSymbols],
+  );
 
   const { profiles: securityProfiles, loading: classifying } = useSecurityProfiles(symbols);
 
@@ -349,8 +418,8 @@ export function PortfolioApp() {
       />
 
       <PriceFeedNotice
-        unknown={unknownSymbols}
-        unavailable={unavailableSymbols}
+        unknown={displayUnknown}
+        unavailable={displayUnavailable}
         stale={staleSymbols}
         onRetry={refresh}
         retrying={pricesLoading}
@@ -499,6 +568,8 @@ export function PortfolioApp() {
                             assetClassSource: "manual",
                             manualPrice: security?.manualPrice ?? null,
                             manualPriceDate: security?.manualPriceDate ?? null,
+                            lastKnownPrice: security?.lastKnownPrice ?? null,
+                            lastKnownPriceDate: security?.lastKnownPriceDate ?? null,
                           })
                         }
                         className="rounded border border-border bg-panel px-1.5 py-0.5 text-[11.5px] text-foreground"
@@ -521,6 +592,8 @@ export function PortfolioApp() {
                                   assetClassSource: "auto",
                                   manualPrice: security?.manualPrice ?? null,
                                   manualPriceDate: security?.manualPriceDate ?? null,
+                                  lastKnownPrice: security?.lastKnownPrice ?? null,
+                                  lastKnownPriceDate: security?.lastKnownPriceDate ?? null,
                                 })
                               : // No answer from this session to revert to --
                                 // "other" is what an unclassified symbol reads
@@ -533,6 +606,8 @@ export function PortfolioApp() {
                                   assetClassSource: "auto",
                                   manualPrice: security?.manualPrice ?? null,
                                   manualPriceDate: security?.manualPriceDate ?? null,
+                                  lastKnownPrice: security?.lastKnownPrice ?? null,
+                                  lastKnownPriceDate: security?.lastKnownPriceDate ?? null,
                                 })
                           }
                           title={

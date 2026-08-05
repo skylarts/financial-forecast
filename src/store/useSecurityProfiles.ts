@@ -113,6 +113,8 @@ export function useSecurityProfiles(symbols: readonly string[]): {
             assetClassSource: "auto",
             manualPrice: existing?.manualPrice ?? null,
             manualPriceDate: existing?.manualPriceDate ?? null,
+            lastKnownPrice: existing?.lastKnownPrice ?? null,
+            lastKnownPriceDate: existing?.lastKnownPriceDate ?? null,
           });
         }
       })
