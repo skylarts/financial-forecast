@@ -1,6 +1,8 @@
 import type { ISODate, Id } from "@/domain";
 import {
   closesLotOn,
+  contractMultiplier,
+  formatOptionSymbol,
   normalizeSymbol,
   opensLotOn,
   signedCashFlow,
@@ -227,10 +229,14 @@ export function analyzePortfolio(
     const quantity = lots.reduce((sum, lot) => sum + lot.quantity, 0);
     const costBasis = lots.reduce((sum, lot) => sum + lot.costBasis, 0);
 
+    // An option contract controls 100 shares, so its quoted per-share premium
+    // buys 100x what the number reads as. Ordinary shares multiply by 1.
+    const multiplier = contractMultiplier(symbol);
+
     // A short is a liability: its market value is what covering would cost, so
     // it carries into every total as a negative, and it gains when the price
     // falls below the proceeds it opened at.
-    const exposure = quote ? quantity * quote.price : costBasis;
+    const exposure = quote ? quantity * quote.price * multiplier : costBasis;
     const marketValue = side === "short" ? -exposure : exposure;
     const unrealizedGain = !quote ? 0 : side === "short" ? costBasis - exposure : exposure - costBasis;
 
@@ -265,12 +271,14 @@ export function analyzePortfolio(
       key,
       accountId,
       symbol,
-      name: security?.name || prices[symbol]?.name || symbol,
+      name: security?.name || prices[symbol]?.name || formatOptionSymbol(symbol),
       assetClass: security?.assetClass ?? "other",
       side,
       quantity,
       costBasis,
-      avgCostPerShare: quantity > 0 ? costBasis / quantity : 0,
+      // Divided by the multiplier so it stays comparable to `price`: both are
+      // then per-share premiums, which is the comparison the column exists for.
+      avgCostPerShare: quantity > 0 ? costBasis / (quantity * multiplier) : 0,
       price: quote?.price ?? null,
       priceDate: quote?.date || null,
       marketValue,

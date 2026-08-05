@@ -22,6 +22,7 @@ import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { ReconcilePanel } from "./ReconcilePanel";
+import { PriceFeedNotice } from "./PriceFeedNotice";
 
 const TABS = [
   { value: "holdings", label: "Holdings" },
@@ -120,7 +121,14 @@ export function PortfolioApp() {
   const [grouping, setGrouping] = useState<HoldingGrouping>("none");
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
-  const { prices, loading: pricesLoading, refresh } = usePrices(symbols);
+  const {
+    prices,
+    loading: pricesLoading,
+    unknown: unknownSymbols,
+    unavailable: unavailableSymbols,
+    stale: staleSymbols,
+    refresh,
+  } = usePrices(symbols);
 
   const analysis = useMemo(
     () =>
@@ -290,6 +298,14 @@ export function PortfolioApp() {
           hint="Money-weighted return across every trade and dividend in scope."
         />
       </div>
+
+      <PriceFeedNotice
+        unknown={unknownSymbols}
+        unavailable={unavailableSymbols}
+        stale={staleSymbols}
+        onRetry={refresh}
+        retrying={pricesLoading}
+      />
 
       <div className="border-b border-border px-6">
         <Segmented options={TABS} value={tab} onChange={setTab} size="sm" ariaLabel="Portfolio view" />

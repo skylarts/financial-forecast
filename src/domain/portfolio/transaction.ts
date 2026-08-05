@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { idSchema, isoDateSchema } from "../common";
+import { contractMultiplier } from "./optionSymbol";
 
 /**
  * Every transaction type the ledger replays. The set is deliberately small:
@@ -153,13 +154,27 @@ export const transactionSchema = z.object({
 export type Transaction = z.infer<typeof transactionSchema>;
 
 /**
+ * Gross dollars a transaction moved, before fees.
+ *
+ * An explicit `amount` is always in dollars already and is trusted as-is.
+ * Deriving it has to go through the contract multiplier: an option quoted at
+ * $2.40 moves $240 per contract, and multiplying shares by premium alone would
+ * book every option trade at a hundredth of its real size.
+ */
+function grossAmount(tx: Transaction): number {
+  if (tx.amount !== null) return tx.amount;
+  const multiplier = tx.symbol === null ? 1 : contractMultiplier(tx.symbol);
+  return tx.quantity * tx.price * multiplier;
+}
+
+/**
  * Cash actually moved by a transaction, signed from the account's point of
  * view: negative means cash left the account. Statements are inconsistent about
  * whether `amount` includes fees, so an explicit amount is trusted as-is and
  * only a derived one has fees applied.
  */
 export function signedCashFlow(tx: Transaction): number {
-  const gross = tx.amount ?? tx.quantity * tx.price;
+  const gross = grossAmount(tx);
   const derived = tx.amount === null;
   switch (tx.type) {
     case "buy":
@@ -189,7 +204,7 @@ export function signedCashFlow(tx: Transaction): number {
  * against you, so they add to a long's cost and subtract from a short's take.
  */
 export function lotOpenValue(tx: Transaction): number {
-  const gross = tx.amount ?? tx.quantity * tx.price;
+  const gross = grossAmount(tx);
   if (tx.amount !== null) return gross;
   return opensLotOn(tx.type) === "short" ? gross - tx.fees : gross + tx.fees;
 }
@@ -199,7 +214,7 @@ export function lotOpenValue(tx: Transaction): number {
  * covering a short. Same fee asymmetry, in the same direction.
  */
 export function lotCloseValue(tx: Transaction): number {
-  const gross = tx.amount ?? tx.quantity * tx.price;
+  const gross = grossAmount(tx);
   if (tx.amount !== null) return gross;
   return closesLotOn(tx.type) === "short" ? gross + tx.fees : gross - tx.fees;
 }

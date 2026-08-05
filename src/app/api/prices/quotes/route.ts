@@ -1,4 +1,4 @@
-import { fetchQuote } from "@/lib/portfolio/priceFeed";
+import { fetchQuotes } from "@/lib/portfolio/priceFeed";
 
 /** Guards against one request fanning out into hundreds of upstream fetches. */
 const MAX_SYMBOLS = 60;
@@ -14,11 +14,31 @@ export async function GET(request: Request) {
     ),
   ].slice(0, MAX_SYMBOLS);
 
-  const results = await Promise.all(symbols.map(fetchQuote));
-  const quotes: Record<string, { price: number; date: string; name: string }> = {};
-  for (const quote of results) {
-    if (quote) quotes[quote.symbol] = { price: quote.price, date: quote.date, name: quote.name };
+  const results = await fetchQuotes(symbols);
+
+  const quotes: Record<string, { price: number; date: string; name: string; stale?: boolean }> = {};
+  /** Symbols the feed genuinely doesn't know -- a ticker to fix or price by hand. */
+  const unknown: string[] = [];
+  /** Symbols whose fetch failed. Transient: worth another try, not a bad ticker. */
+  const unavailable: string[] = [];
+
+  for (const symbol of symbols) {
+    const result = results.get(symbol);
+    if (result?.quote) {
+      const { price, date, name, stale } = result.quote;
+      quotes[result.quote.symbol] = stale ? { price, date, name, stale } : { price, date, name };
+    } else if (result?.failure === "unknown_symbol") {
+      unknown.push(symbol);
+    } else {
+      unavailable.push(symbol);
+    }
   }
 
-  return Response.json({ quotes, missing: symbols.filter((s) => !quotes[s]) });
+  return Response.json({
+    quotes,
+    unknown,
+    unavailable,
+    /** Everything unpriced, for callers that don't care why. */
+    missing: [...unknown, ...unavailable],
+  });
 }

@@ -294,3 +294,75 @@ describe("xirr", () => {
     ).toBeNull();
   });
 });
+
+describe("option contracts", () => {
+  const CONTRACT = "AAPL260918C00250000";
+
+  it("values a contract at 100 shares per unit", () => {
+    // Two contracts bought at a $40.00 premium: $8,000 of cost, and at a $60.77
+    // premium they are worth $12,154 -- not $121.54.
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2026-07-01", symbol: CONTRACT, quantity: 2, price: 40 }),
+      ]),
+      { [CONTRACT]: { price: 60.77, date: "2026-08-04" } },
+      { asOf: "2026-08-04" },
+    );
+
+    const holding = result.holdings[0];
+    expect(holding.costBasis).toBe(8000);
+    expect(holding.marketValue).toBeCloseTo(12154, 6);
+    expect(holding.unrealizedGain).toBeCloseTo(4154, 6);
+  });
+
+  it("keeps average cost comparable to the quoted premium", () => {
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2026-07-01", symbol: CONTRACT, quantity: 2, price: 40 }),
+      ]),
+      { [CONTRACT]: { price: 60.77, date: "2026-08-04" } },
+      { asOf: "2026-08-04" },
+    );
+
+    // Per-share premium, matching how `price` reads -- not $4,000 per contract.
+    expect(result.holdings[0].avgCostPerShare).toBeCloseTo(40, 6);
+  });
+
+  it("names an unpriced contract readably instead of showing raw OCC", () => {
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2026-07-01", symbol: CONTRACT, quantity: 1, price: 40 }),
+      ]),
+      {},
+      { asOf: "2026-08-04" },
+    );
+
+    expect(result.holdings[0].name).toBe("AAPL Sep 18 2026 250 Call");
+  });
+
+  it("leaves ordinary shares on a multiplier of one", () => {
+    const result = analyzePortfolio(
+      portfolio([tx({ type: "buy", date: "2026-07-01", quantity: 10, price: 100 })]),
+      { VTI: { price: 150, date: "2026-08-04" } },
+      { asOf: "2026-08-04" },
+    );
+
+    expect(result.holdings[0].marketValue).toBe(1500);
+    expect(result.holdings[0].avgCostPerShare).toBe(100);
+  });
+
+  it("books a contract's cash flow in dollars when the statement omits an amount", () => {
+    // A sale with no explicit amount has to derive $12,154, not $121.54, or the
+    // cash balance drifts by a factor of a hundred on every option trade.
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2026-07-01", symbol: CONTRACT, quantity: 2, price: 40 }),
+        tx({ type: "sell", date: "2026-08-01", symbol: CONTRACT, quantity: 2, price: 60.77 }),
+      ]),
+      {},
+      { asOf: "2026-08-04" },
+    );
+
+    expect(result.summary.realizedGain).toBeCloseTo(4154, 6);
+  });
+});
