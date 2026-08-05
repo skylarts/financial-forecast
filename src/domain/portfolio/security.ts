@@ -49,6 +49,14 @@ export const securitySchema = z.object({
    */
   manualPrice: z.number().nonnegative().nullable().default(null),
   manualPriceDate: isoDateSchema.nullable().default(null),
+  /**
+   * The last price the feed actually returned, kept as a fallback for when a
+   * later request fails. Updated automatically on every successful quote --
+   * distinct from `manualPrice`, which the user sets on purpose and the feed
+   * is never allowed to overwrite.
+   */
+  lastKnownPrice: z.number().nonnegative().nullable().default(null),
+  lastKnownPriceDate: isoDateSchema.nullable().default(null),
 });
 export type Security = z.infer<typeof securitySchema>;
 

@@ -14,6 +14,7 @@ import {
 import type { DraftTransaction } from "@/lib/portfolio/importer";
 import { withAssignedLotIds } from "@/lib/portfolio/lotAssignment";
 import { withCanonicalSymbols } from "@/lib/portfolio/canonicalSymbols";
+import { buildLotLedger } from "@/engine/portfolio/lots";
 
 const STORAGE_KEY = "portfolio-tracker";
 
@@ -193,11 +194,16 @@ export const usePortfolioStore = create<PortfolioState>()(
   ),
 );
 
-/** Every symbol the ledger touches, for prefetching quotes. */
+/**
+ * Symbols the ledger currently holds a position in, for prefetching quotes.
+ *
+ * Scoped to open lots rather than every symbol a transaction ever named: a
+ * fully sold stock or an expired option has nothing left to price, so asking
+ * the feed about it only burns rate limit and -- for an option the feed will
+ * never answer again -- surfaces a permanent, meaningless "no quote" warning
+ * for a position that's already closed.
+ */
 export function symbolsInPortfolio(portfolio: Portfolio): string[] {
-  const symbols = new Set<string>();
-  for (const tx of portfolio.transactions) {
-    if (tx.symbol) symbols.add(normalizeSymbol(tx.symbol));
-  }
-  return [...symbols];
+  const { openLots } = buildLotLedger(portfolio.transactions);
+  return [...new Set(openLots.map((lot) => lot.symbol))];
 }

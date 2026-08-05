@@ -130,6 +130,8 @@ describe("analyzePortfolio", () => {
             assetClassSource: "manual",
             manualPrice: 200,
             manualPriceDate: "2026-08-01",
+            lastKnownPrice: null,
+            lastKnownPriceDate: null,
           },
         ],
       }),
@@ -176,8 +178,8 @@ describe("analyzePortfolio", () => {
         ],
         {
           securities: [
-            { symbol: "VTI", name: "", assetClass: "us_equity", assetClassSource: "manual", manualPrice: null, manualPriceDate: null },
-            { symbol: "BND", name: "", assetClass: "bond", assetClassSource: "manual", manualPrice: null, manualPriceDate: null },
+            { symbol: "VTI", name: "", assetClass: "us_equity", assetClassSource: "manual", manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
+            { symbol: "BND", name: "", assetClass: "bond", assetClassSource: "manual", manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
           ],
         },
       ),

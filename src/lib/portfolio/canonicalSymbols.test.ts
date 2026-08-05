@@ -50,6 +50,8 @@ describe("withCanonicalSymbols", () => {
             assetClassSource: "manual",
             manualPrice: null,
             manualPriceDate: null,
+            lastKnownPrice: null,
+            lastKnownPriceDate: null,
           },
           {
             symbol: "KLAR 05/08/2026 15 C",
@@ -58,6 +60,8 @@ describe("withCanonicalSymbols", () => {
             assetClassSource: "manual",
             manualPrice: null,
             manualPriceDate: null,
+            lastKnownPrice: null,
+            lastKnownPriceDate: null,
           },
         ],
       }),
