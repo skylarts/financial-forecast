@@ -587,8 +587,8 @@ export function PerformancePanel({
 
           {series.approximated.length > 0 && (
             <p className="mt-2 text-[11.5px] text-dim-2">
-              No price history for {series.approximated.join(", ")} — held at their last traded
-              price, so their stretch of the line is flat rather than wrong.
+              Still holding {series.approximated.join(", ")} with no price history behind them —
+              they are valued at the last price paid, so the closing figure is an estimate.
             </p>
           )}
 

@@ -203,6 +203,30 @@ describe("buildPerformanceSeries", () => {
     expect(approximated).toEqual(["DELISTED"]);
   });
 
+  it("stays quiet about an unpriced contract the ledger already closed", () => {
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 100], ["2024-01-04", 100]])],
+    ]);
+
+    const symbol = "KLAR260508C00015000";
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 1, price: 2, symbol }),
+        tx({ type: "option_expire", date: "2024-01-04", quantity: 1, symbol }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-04" },
+    );
+
+    // The feed had nothing for the contract, so it leaned on the fallback all
+    // the same -- but expiry retired it at zero, which is a fact and not a
+    // guess, so there is nothing left to warn about.
+    expect(points[0].value).toBe(1000 + 200);
+    expect(points[2].value).toBe(1000);
+    expect(approximated).toEqual([]);
+  });
+
   it("values a short as a liability", () => {
     const histories = new Map([
       ["VTI", history([["2024-01-02", 100], ["2024-01-03", 90]])],
