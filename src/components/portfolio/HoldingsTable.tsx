@@ -204,14 +204,30 @@ export function HoldingsTable({
                 />
               )}
               {!collapsed &&
-                group.rows.map((holding) => (
+                group.rows.map((holding) => {
+                  // Cash has no lots, no trades, and no chart -- opening a
+                  // detail panel on it would show a page of blanks.
+                  const isCash = holding.kind === "cash";
+                  return (
                 <tr
                   key={holding.key}
-                  onClick={() => onSelect(holding)}
-                  className="cursor-pointer border-b border-border-soft transition-colors hover:bg-panel-2"
+                  onClick={isCash ? undefined : () => onSelect(holding)}
+                  className={`border-b border-border-soft transition-colors hover:bg-panel-2 ${
+                    isCash ? "" : "cursor-pointer"
+                  }`}
                 >
                   <td className={`${CELL} text-left`}>
-                    <span className="font-semibold text-foreground">{holding.symbol}</span>
+                    <span className="font-semibold text-foreground">
+                      {isCash ? "Cash" : holding.symbol}
+                    </span>
+                    {isCash && (
+                      <span
+                        title="Uninvested cash. Counted in your allocation, but it has no basis and no return."
+                        className="ml-1.5 rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2"
+                      >
+                        Uninvested
+                      </span>
+                    )}
                     {holding.side === "short" && (
                       <span
                         title="Short position — shares owed, valued as a liability"
@@ -220,7 +236,7 @@ export function HoldingsTable({
                         Short
                       </span>
                     )}
-                    {holding.name !== holding.symbol && (
+                    {!isCash && holding.name !== holding.symbol && (
                       <span className="ml-2 text-[11.5px] text-dim-2">{holding.name}</span>
                     )}
                   </td>
@@ -230,16 +246,22 @@ export function HoldingsTable({
                     </td>
                   )}
                   <td className={`${CELL} text-right text-dim`}>
-                    {holding.side === "short" ? `(${shares(holding.quantity)})` : shares(holding.quantity)}
+                    {isCash
+                      ? "—"
+                      : holding.side === "short"
+                        ? `(${shares(holding.quantity)})`
+                        : shares(holding.quantity)}
                   </td>
                   <td
                     className={`${CELL} text-right text-dim`}
                     title={holding.side === "short" ? "Average proceeds per share shorted" : undefined}
                   >
-                    {price(holding.avgCostPerShare)}
+                    {isCash ? "—" : price(holding.avgCostPerShare)}
                   </td>
                   <td className={`${CELL} text-right`}>
-                    {holding.price === null ? (
+                    {isCash ? (
+                      <span className="text-dim">—</span>
+                    ) : holding.price === null ? (
                       <span className="text-dim-2" title="No quote available — valued at cost basis.">
                         no quote
                       </span>
@@ -257,16 +279,17 @@ export function HoldingsTable({
                   </td>
                   <td className={`${CELL} text-right text-dim`}>{(holding.weight * 100).toFixed(1)}%</td>
                   <td className={`${CELL} text-right ${toneFor(holding.unrealizedGain)}`}>
-                    {money(holding.unrealizedGain)}
+                    {isCash ? <span className="text-dim">—</span> : money(holding.unrealizedGain)}
                   </td>
                   <td className={`${CELL} text-right ${toneFor(holding.unrealizedGain)}`}>
-                    {percent(holding.unrealizedGainPct)}
+                    {isCash ? <span className="text-dim">—</span> : percent(holding.unrealizedGainPct)}
                   </td>
                   <td className={`${CELL} text-right ${toneFor(holding.irr ?? 0)}`}>
-                    {percent(holding.irr)}
+                    {isCash ? <span className="text-dim">—</span> : percent(holding.irr)}
                   </td>
                 </tr>
-                ))}
+                  );
+                })}
             </Fragment>
             );
           })}

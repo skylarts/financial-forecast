@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Portfolio, Transaction, TransactionType } from "@/domain/portfolio";
-import { analyzePortfolio, xirr } from "./metrics";
+import { analyzePortfolio, buildAllocation, xirr } from "./metrics";
 
 let seq = 0;
 function tx(partial: Partial<Transaction> & { type: TransactionType; date: string }): Transaction {
@@ -163,10 +163,60 @@ describe("analyzePortfolio", () => {
       asOf: "2026-08-04",
     });
 
-    expect(scoped.holdings).toHaveLength(1);
+    // The position plus that account's cash; the other account contributes
+    // neither.
+    expect(scoped.holdings).toHaveLength(2);
+    expect(scoped.holdings.filter((h) => h.kind === "position")).toHaveLength(1);
     expect(scoped.summary.marketValue).toBe(1000);
     expect(scoped.summary.cash).toBe(500);
     expect(scoped.summary.totalValue).toBe(1500);
+  });
+
+  it("carries uninvested cash as its own holding, weighted with everything else", () => {
+    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
+    base.accounts[0].cashBalance = 250;
+
+    const result = analyzePortfolio(base, { VTI: { price: 75, date: "2026-08-03" } }, {
+      asOf: "2026-08-04",
+    });
+
+    const cash = result.holdings.find((h) => h.kind === "cash");
+    expect(cash).toMatchObject({ symbol: "$CASH", assetClass: "cash", marketValue: 250 });
+
+    // $750 of stock and $250 of cash: a quarter of the portfolio is uninvested,
+    // and the weights have to say so or the allocation view is fiction.
+    expect(cash?.weight).toBeCloseTo(0.25, 6);
+    expect(result.holdings.find((h) => h.kind === "position")?.weight).toBeCloseTo(0.75, 6);
+    expect(result.holdings.reduce((sum, h) => sum + h.weight, 0)).toBeCloseTo(1, 6);
+  });
+
+  it("keeps cash out of every return figure it would dilute", () => {
+    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
+    base.accounts[0].cashBalance = 9000;
+
+    const result = analyzePortfolio(base, { VTI: { price: 150, date: "2026-08-03" } }, {
+      asOf: "2026-08-04",
+    });
+
+    // A $1,000 position now worth $1,500 returned 50%, whether or not there is
+    // idle cash sitting beside it. Letting the balance into the basis would
+    // report that same position as having returned 5%.
+    expect(result.summary.costBasis).toBe(1000);
+    expect(result.summary.unrealizedGain).toBe(500);
+    expect(result.summary.unrealizedGainPct).toBeCloseTo(0.5, 6);
+    expect(result.summary.marketValue).toBe(1500);
+    expect(result.summary.totalValue).toBe(10500);
+  });
+
+  it("skips accounts holding no cash rather than listing empty rows", () => {
+    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
+    base.accounts[0].cashBalance = 0;
+
+    const result = analyzePortfolio(base, { VTI: { price: 100, date: "2026-08-03" } }, {
+      asOf: "2026-08-04",
+    });
+
+    expect(result.holdings.filter((h) => h.kind === "cash")).toHaveLength(0);
   });
 
   it("groups allocation by asset class", () => {
@@ -190,6 +240,25 @@ describe("analyzePortfolio", () => {
     expect(result.byAssetClass[0]).toMatchObject({ label: "us_equity", value: 3000 });
     expect(result.byAssetClass[1]).toMatchObject({ label: "bond", value: 1000 });
     expect(result.byAssetClass[0].weight).toBeCloseTo(0.75, 6);
+  });
+
+  it("renormalizes an allocation when cash is excluded", () => {
+    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
+    base.accounts[0].cashBalance = 1000;
+
+    const { holdings } = analyzePortfolio(base, { VTI: { price: 100, date: "2026-08-03" } }, {
+      asOf: "2026-08-04",
+    });
+
+    const withCash = buildAllocation(holdings, (h) => h.assetClass);
+    expect(withCash.find((s) => s.label === "cash")?.weight).toBeCloseTo(0.5, 6);
+
+    // Cash gone, the remaining half is the whole of what's invested -- reporting
+    // it as 50% of nothing in particular would answer neither question.
+    const withoutCash = buildAllocation(holdings, (h) => h.assetClass, { includeCash: false });
+    expect(withoutCash).toHaveLength(1);
+    expect(withoutCash[0].weight).toBeCloseTo(1, 6);
+    expect(withoutCash[0].value).toBe(1000);
   });
 });
 
