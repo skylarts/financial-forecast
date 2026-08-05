@@ -24,10 +24,16 @@ export interface PerformancePoint {
 export interface PerformanceSeries {
   points: PerformancePoint[];
   /**
-   * Symbols carried at a flat fallback price because the feed had no history
-   * for them -- delisted tickers and expired option contracts, mostly. They
-   * hold their value steady rather than dropping to zero, and the UI names them
-   * so a flat stretch is never mistaken for a real one.
+   * Symbols *still held* at the window's close that the feed had no history
+   * for, so their closing value is a guess carried forward from the last price
+   * paid. The UI names them because that guess sits in the final number.
+   *
+   * A position the ledger already closed is deliberately not listed here even
+   * when it leaned on the same fallback. Its cost and its proceeds are both
+   * recorded facts, so the return it contributed is exact -- an expired option
+   * is worth zero and the ledger says so. Only the shape of the line in
+   * between is approximate, and naming every dead contract for that would bury
+   * the cases where the *answer* is uncertain under years of noise.
    */
   approximated: string[];
 }
@@ -228,14 +234,14 @@ export function buildPerformanceSeries(
     fallbackPrice.set(normalizeSymbol(tx.symbol), tx.price);
   }
 
-  const approximated = new Set<string>();
+  const usedFallback = new Set<string>();
   const priceOn = (symbol: string, date: ISODate): number | null => {
     const points = histories.get(symbol);
     const close = points ? lastOnOrBefore(points, date) : null;
     if (close !== null) return close;
     const fallback = fallbackPrice.get(symbol);
     if (fallback === undefined) return null;
-    approximated.add(symbol);
+    usedFallback.add(symbol);
     return fallback;
   };
 
@@ -287,7 +293,13 @@ export function buildPerformanceSeries(
     previousValue = value;
   }
 
-  return { points, approximated: [...approximated].sort() };
+  // Only a fallback still propping up an open position leaves the answer
+  // uncertain; one that merely coloured in a since-closed position does not.
+  const approximated = [...usedFallback]
+    .filter((symbol) => Math.abs(held.get(symbol) ?? 0) > 1e-9)
+    .sort();
+
+  return { points, approximated };
 }
 
 /** Growth over the whole window, or null when there was nothing to measure. */
