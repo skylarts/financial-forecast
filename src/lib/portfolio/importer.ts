@@ -251,6 +251,12 @@ const TYPE_PATTERNS: [RegExp, TransactionType][] = [
   // these strings also contains the word "buy" or "sold".
   [/(sell|sold|sale)\s*(-|_)?\s*short|short\s*(sell|sale)/i, "short_sell"],
   [/(buy|bought)\s*(-|_)?\s*to\s*cover|cover\s*short|short\s*cover/i, "buy_to_cover"],
+  // Option lifecycle wording, ahead of plain buy/sell: a statement line reading
+  // "Assigned - Sold to close" contains "sold" and would otherwise import as an
+  // ordinary sale, double-counting the premium the assignment already absorbed.
+  [/expir/i, "option_expire"],
+  [/assign/i, "option_assign"],
+  [/exercis/i, "option_exercise"],
   [/buy|bought|purchase|you\s*bought/i, "buy"],
   [/sell|sold|redemption|redeem|you\s*sold/i, "sell"],
   [/fee|commission|charge/i, "fee"],

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   opensLotOn,
   closesLotOn,
+  isOptionLifecycleType,
   normalizeSymbol,
   parseLotIds,
   TRANSACTION_TYPE_GROUPS,
@@ -190,11 +191,13 @@ function TransactionForm({
           />
         </label>
         <label className="text-[11.5px] text-dim-2">
-          <span className="mb-0.5 block">{form.type === "split" ? "Ratio" : "Shares"}</span>
+          <span className="mb-0.5 block">
+            {form.type === "split" ? "Ratio" : isOptionLifecycleType(form.type) ? "Contracts" : "Shares"}
+          </span>
           <input
             value={form.quantity}
             onChange={(e) => set({ quantity: e.target.value })}
-            placeholder={form.type === "split" ? "2" : "10"}
+            placeholder={form.type === "split" ? "2" : isOptionLifecycleType(form.type) ? "1" : "10"}
             className={`${INPUT} w-24 text-right`}
           />
         </label>
@@ -203,8 +206,11 @@ function TransactionForm({
           <input
             value={form.price}
             onChange={(e) => set({ price: e.target.value })}
-            placeholder="220.50"
-            className={`${INPUT} w-24 text-right`}
+            // Retiring a contract carries no price of its own: an expiry is
+            // worth nothing, and an exercise settles through its stock leg.
+            disabled={isOptionLifecycleType(form.type)}
+            placeholder={isOptionLifecycleType(form.type) ? "—" : "220.50"}
+            className={`${INPUT} w-24 text-right disabled:opacity-40`}
           />
         </label>
         <label className="text-[11.5px] text-dim-2">

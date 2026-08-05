@@ -1,6 +1,8 @@
 import type { ISODate, Id } from "@/domain";
 import {
   closesLotOn,
+  deliversShares,
+  isOptionLifecycleType,
   lotCloseValue,
   lotOpenValue,
   normalizeSymbol,
@@ -10,6 +12,7 @@ import {
   type Transaction,
   type TransactionType,
 } from "@/domain/portfolio";
+import { resolveOptionPremiums } from "./optionPremiums";
 
 /** Share counts below this are treated as fully depleted, not as a sliver of a
  *  lot left behind by floating-point division. */
@@ -52,6 +55,11 @@ export interface ClosedLot {
    */
   taxable: boolean;
   /**
+   * Why an untaxed disposal realized nothing, so the UI can say which it was
+   * rather than calling every one of them a transfer. Absent when `taxable`.
+   */
+  untaxedReason?: "transfer" | "premium_absorbed";
+  /**
    * True when no open lot backed these shares and they were booked at zero
    * basis. Callers that trace a disposal back to its acquisition have to skip
    * these -- the "lot" they name never existed.
@@ -85,7 +93,10 @@ function typeRank(type: TransactionType): number {
   if (opensLotOn(type)) return 0;
   if (type === "split") return 1;
   if (closesLotOn(type)) return 2;
-  return 3;
+  // Retiring a contract comes after the ordinary closings so that a contract
+  // sold and expired on the same date still draws down in that order.
+  if (isOptionLifecycleType(type)) return 3;
+  return 4;
 }
 
 function sortForReplay(transactions: readonly Transaction[]): Transaction[] {
@@ -114,6 +125,86 @@ function positionKey(accountId: Id, symbol: string, side: PositionSide): string 
 }
 
 /**
+ * Retires the contracts an expiry, exercise, or assignment closes out.
+ *
+ * The side is read from the book rather than from the transaction type: the
+ * same event befalls a contract you bought and one you wrote, and asking the
+ * user which it was would only invite the wrong answer.
+ *
+ * An expiry realizes the premium in full -- a long writes it off, a short keeps
+ * it. Exercise and assignment realize nothing here, because the premium has
+ * already been folded into the basis or proceeds of the shares that changed
+ * hands; booking a gain on the contract as well would count it twice.
+ */
+function retireContracts(
+  tx: Transaction,
+  symbol: string,
+  open: Map<string, OpenLot[]>,
+  closedLots: ClosedLot[],
+  warnings: LedgerWarning[],
+): void {
+  const longKey = positionKey(tx.accountId, symbol, "long");
+  const shortKey = positionKey(tx.accountId, symbol, "short");
+  const hasLong = (open.get(longKey) ?? []).some((lot) => lot.quantity > EPSILON);
+  const side: PositionSide = hasLong ? "long" : "short";
+  const key = hasLong ? longKey : shortKey;
+  const lots = open.get(key) ?? [];
+
+  // A premium already absorbed into a stock leg must not be realized again, so
+  // these disposals are recorded untaxed -- the same treatment a transfer gets.
+  const realizes = !deliversShares(tx.type);
+  const label = tx.type === "option_assign" ? "assigned" : tx.type === "option_exercise" ? "exercised" : "expired";
+
+  let remaining = tx.quantity;
+  for (const lot of lots) {
+    if (remaining <= EPSILON) break;
+    if (lot.quantity <= EPSILON) continue;
+    const taken = Math.min(lot.quantity, remaining);
+    const openValue = (lot.costBasis / lot.quantity) * taken;
+
+    closedLots.push({
+      id: lot.id,
+      accountId: tx.accountId,
+      symbol,
+      side,
+      acquiredDate: lot.acquiredDate,
+      disposedDate: tx.date,
+      quantity: taken,
+      costBasis: openValue,
+      // Nothing is received for a contract that expires, and an exercised or
+      // assigned one is settled through its stock leg instead.
+      proceeds: 0,
+      gain: realizes ? (side === "short" ? openValue : -openValue) : 0,
+      term: holdingTerm(lot.acquiredDate, tx.date),
+      taxable: realizes,
+      untaxedReason: realizes ? undefined : "premium_absorbed",
+      unmatched: false,
+      openTxId: lot.openTxId,
+      closeTxId: tx.id,
+    });
+
+    lot.quantity -= taken;
+    lot.costBasis -= openValue;
+    remaining -= taken;
+  }
+
+  if (remaining > EPSILON) {
+    const amount = remaining.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    warnings.push({
+      txId: tx.id,
+      date: tx.date,
+      symbol,
+      message: `${amount} more contracts ${label} than the ledger holds open — the extra were ignored. Add the missing trade that opened them.`,
+    });
+  }
+
+  open.set(
+    key,
+    lots.filter((lot) => lot.quantity > EPSILON),
+  );
+}
+
+/**
  * Replays a transaction ledger into open and closed tax lots.
  *
  * Long and short lots are kept in separate queues, so a sell only ever draws
@@ -135,11 +226,19 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
   /** Every lot id handed out so far, to catch two lots answering to one name. */
   const issued = new Set<string>();
 
+  // Exercised and assigned contracts fold their premium into the shares they
+  // deliver, so the stock legs need their adjustments resolved before replay.
+  const { pairings, unpaired } = resolveOptionPremiums(transactions);
+  for (const problem of unpaired) {
+    warnings.push(problem);
+  }
+
   for (const tx of sortForReplay(transactions)) {
     if (tx.symbol === null) continue;
     const symbol = normalizeSymbol(tx.symbol);
     const openSide = opensLotOn(tx.type);
     const closeSide = closesLotOn(tx.type);
+    const premium = pairings.get(tx.id);
 
     if (openSide) {
       if (tx.quantity <= 0) continue;
@@ -165,7 +264,10 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
         side: openSide,
         acquiredDate: tx.acquiredDate ?? tx.date,
         quantity: tx.quantity,
-        costBasis: lotOpenValue(tx),
+        // Shares delivered by an exercise or assignment carry the contract's
+        // premium into their cost, so the basis is the strike plus what the
+        // option itself cost (or minus what it brought in).
+        costBasis: lotOpenValue(tx) + (premium?.adjustment ?? 0),
         openTxId: tx.id,
       });
       continue;
@@ -192,6 +294,12 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
       continue;
     }
 
+    if (isOptionLifecycleType(tx.type)) {
+      if (tx.quantity <= 0) continue;
+      retireContracts(tx, symbol, open, closedLots, warnings);
+      continue;
+    }
+
     if (!closeSide) continue;
     if (tx.quantity <= 0) continue;
 
@@ -200,7 +308,10 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
     if (!open.has(key)) open.set(key, lots);
 
     let remaining = tx.quantity;
-    const closeValue = tx.type === "transfer_out" ? 0 : lotCloseValue(tx);
+    // Shares called away by an assignment, or delivered into an exercised put,
+    // fetch the strike plus the premium that came with the contract.
+    const closeValue =
+      tx.type === "transfer_out" ? 0 : lotCloseValue(tx) + (premium?.adjustment ?? 0);
     const perShareClose = closeValue / tx.quantity;
 
     // Specific identification when the trade named lots, oldest-first
@@ -281,6 +392,7 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
         gain: closeSide === "short" ? openValue - close : close - openValue,
         term: holdingTerm(lot.acquiredDate, tx.date),
         taxable: tx.type !== "transfer_out",
+        untaxedReason: tx.type === "transfer_out" ? "transfer" : undefined,
         unmatched: false,
         openTxId: lot.openTxId,
         closeTxId: tx.id,
@@ -306,6 +418,7 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
         gain: closeSide === "short" ? -close : close,
         term: "short",
         taxable: tx.type !== "transfer_out",
+        untaxedReason: tx.type === "transfer_out" ? "transfer" : undefined,
         unmatched: true,
         openTxId: tx.id,
         closeTxId: tx.id,

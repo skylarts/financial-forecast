@@ -12,7 +12,7 @@ import { analyzePortfolio, type Holding } from "@/engine/portfolio/metrics";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
 import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
-import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
+import { lotTermLabel, money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import type { ImportRow } from "@/lib/portfolio/importer";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
@@ -502,7 +502,7 @@ export function PortfolioApp() {
                           {money(lot.gain)}
                         </td>
                         <td className="px-3 py-2 text-right text-[12.5px] text-dim">
-                          {lot.taxable ? (lot.term === "long" ? "Long" : "Short") : "Transfer"}
+                          {lotTermLabel(lot)}
                         </td>
                       </tr>
                     ))}
