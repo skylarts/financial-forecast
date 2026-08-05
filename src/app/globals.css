@@ -61,6 +61,13 @@
   --series-7: #9085e9;
   --series-8: #e66767;
   --series-other: #5c767e;
+  /* Trade markers on a price chart. Deliberately louder than --positive and
+     --negative, which are text colours: a marker has to win against the price
+     line behind it, and the muted pair lost. The green is pushed yellow-ward
+     specifically to clear the teal chart line -- the two greens sat close
+     enough that a buy read as part of the line it was plotted on. */
+  --buy: #7ee62e;
+  --sell: #f2545b;
 }
 
 /* ☀️ Joy mode -- a sunny, warm second color scheme that makes finance feel
@@ -102,6 +109,12 @@
   --series-7: #4a3aa7;
   --series-8: #e34948;
   --series-other: #c0a68e;
+  /* Darker than the dark theme's pair, to hold up against cream. Both sit
+     close to the coral chart line for a red-blind reader, so the markers carry
+     their meaning in their shape -- an up triangle against a down one -- and
+     never in colour alone. */
+  --buy: #2e8b12;
+  --sell: #a8102b;
   /* Sunny background wash + a warm glow used by cards and buttons below. */
   --joy-gradient: linear-gradient(160deg, #fff8f0 0%, #fff1e2 42%, #fef6e4 100%);
   --joy-accent-gradient: linear-gradient(135deg, #ffb14e 0%, #ff7a59 100%);

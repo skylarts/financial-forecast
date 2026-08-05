@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Transaction } from "@/domain/portfolio";
 import { TRANSACTION_TYPE_LABELS } from "@/domain/portfolio";
 import type { ClosedLot } from "@/engine/portfolio/lots";
@@ -9,14 +9,26 @@ import { lotTermLabel, money, percent, price, shares, shortDate, toneFor } from 
 import { Segmented } from "@/components/ui/controls";
 import { PriceChart, type PricePoint } from "./PriceChart";
 
+/**
+ * Chart ranges, short end first.
+ *
+ * 10Y is gone: at daily resolution it draws the same picture as Max for all but
+ * the oldest holdings, and it crowded out the short windows that answer what
+ * this position has done lately.
+ */
 const RANGES = [
+  { value: "1mo", label: "1M" },
+  { value: "3mo", label: "3M" },
+  { value: "ytd", label: "YTD" },
   { value: "1y", label: "1Y" },
   { value: "5y", label: "5Y" },
-  { value: "10y", label: "10Y" },
   { value: "max", label: "Max" },
 ] as const;
 
-type Range = (typeof RANGES)[number]["value"];
+type Range = (typeof RANGES)[number]["value"] | "custom";
+
+/** Fetch window backing a custom range. Clipped client-side to the exact dates. */
+const CUSTOM_FETCH_RANGE = "max";
 
 const HEAD = "px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-1.5 text-[12px] tabular-nums";
@@ -43,10 +55,17 @@ export function HoldingDetail({
   closedLots: ClosedLot[];
   onClose: () => void;
 }) {
-  const [range, setRange] = useState<Range>("5y");
+  const [range, setRange] = useState<Range>("1y");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [loaded, setLoaded] = useState<{ key: string; points: PricePoint[] } | null>(null);
 
-  const requestKey = `${holding.symbol}:${range}`;
+  // A custom window is served by clipping the full history rather than by
+  // asking the feed for arbitrary dates: the feed only speaks in named ranges,
+  // and the full series is cached anyway, so this costs one fetch and then none.
+  const fetchRange = range === "custom" ? CUSTOM_FETCH_RANGE : range;
+  const requestKey = `${holding.symbol}:${fetchRange}`;
+
   useEffect(() => {
     let cancelled = false;
     const [symbol, requestedRange] = requestKey.split(":");
@@ -66,7 +85,14 @@ export function HoldingDetail({
   // Derived rather than a separate flag, so switching range can't leave the
   // previous symbol's series on screen looking like the new one's.
   const loading = loaded?.key !== requestKey;
-  const points = loaded?.key === requestKey ? loaded.points : [];
+
+  const points = useMemo(() => {
+    const fetched = loaded?.key === requestKey ? loaded.points : [];
+    if (range !== "custom" || (!fromDate && !toDate)) return fetched;
+    return fetched.filter(
+      (point) => (!fromDate || point.date >= fromDate) && (!toDate || point.date <= toDate),
+    );
+  }, [loaded, requestKey, range, fromDate, toDate]);
 
   const trades = transactions.filter(
     (tx) => tx.quantity > 0 && tx.type !== "split" && tx.type !== "dividend",
@@ -118,14 +144,56 @@ export function HoldingDetail({
         </div>
 
         <div className="px-5">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-[13px] font-semibold text-foreground">
-              Price history
-              <span className="ml-2 text-[11.5px] font-normal text-dim-2">
-                buys ● · sells ▲
-              </span>
-            </h3>
-            <Segmented options={RANGES} value={range} onChange={setRange} size="sm" ariaLabel="Chart range" />
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-[13px] font-semibold text-foreground">Price history</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <Segmented
+                options={RANGES}
+                value={range === "custom" ? ("" as Range) : range}
+                onChange={setRange}
+                size="sm"
+                ariaLabel="Chart range"
+              />
+              <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+                From
+                <input
+                  type="date"
+                  value={fromDate}
+                  max={toDate || undefined}
+                  onChange={(e) => {
+                    setFromDate(e.target.value);
+                    setRange("custom");
+                  }}
+                  className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
+                />
+              </label>
+              <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+                To
+                <input
+                  type="date"
+                  value={toDate}
+                  min={fromDate || undefined}
+                  onChange={(e) => {
+                    setToDate(e.target.value);
+                    setRange("custom");
+                  }}
+                  className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
+                />
+              </label>
+              {range === "custom" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFromDate("");
+                    setToDate("");
+                    setRange("1y");
+                  }}
+                  className="text-[11.5px] text-dim-2 underline hover:text-foreground"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
           </div>
           {loading ? (
             <div className="flex h-64 items-center justify-center text-[13px] text-dim">
