@@ -45,6 +45,22 @@
   --chart-grid: #172d34;
   --chart-axis: #8399a0;
   --chart-line: #3fb8a4;
+  /* Categorical series, for charts that encode identity rather than value --
+     the allocation ring and anything else slicing one total many ways. Fixed
+     order, never cycled: a slot always means the same hue, so a filter that
+     drops a slice can't repaint the ones that remain. Stepped for this dark
+     surface and validated as a set (lightness band, chroma floor, adjacent
+     colorblind separation, contrast); a 9th category folds into "Other"
+     rather than inventing a hue. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --series-other: #5c767e;
 }
 
 /* ☀️ Joy mode -- a sunny, warm second color scheme that makes finance feel
@@ -73,6 +89,19 @@
   --chart-grid: #f4e5d3;
   --chart-axis: #a68a72;
   --chart-line: #ff7a59;
+  /* The same eight hues stepped for a light surface, not an automatic flip of
+     the dark set. Three of them land under 3:1 against cream, so every chart
+     using these ships visible labels and a numeric readout beside the shapes
+     rather than leaning on colour alone to identify a slice. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --series-other: #c0a68e;
   /* Sunny background wash + a warm glow used by cards and buttons below. */
   --joy-gradient: linear-gradient(160deg, #fff8f0 0%, #fff1e2 42%, #fef6e4 100%);
   --joy-accent-gradient: linear-gradient(135deg, #ffb14e 0%, #ff7a59 100%);

@@ -25,9 +25,19 @@ export interface PriceQuote {
 
 export type PriceMap = Record<string, PriceQuote>;
 
+/** The symbol a cash row carries. Leads with `$` so it can never collide with
+ *  a real ticker, and so the quote feed is never asked to price it. */
+export const CASH_SYMBOL = "$CASH";
+
 export interface Holding {
   key: string;
   accountId: Id;
+  /**
+   * What this row is. Uninvested cash sits alongside positions so allocation
+   * reflects what you actually own, but it has no basis, no quote, and no
+   * return -- every figure that assumes a security has to skip it.
+   */
+  kind: "position" | "cash";
   symbol: string;
   name: string;
   assetClass: AssetClass;
@@ -54,6 +64,8 @@ export interface Holding {
 }
 
 export interface PortfolioSummary {
+  /** Positions only. Cash is reported separately so the return figures below,
+   *  which are all position figures, keep a denominator that matches them. */
   marketValue: number;
   cash: number;
   totalValue: number;
@@ -73,6 +85,34 @@ export interface AllocationSlice {
   label: string;
   value: number;
   weight: number;
+}
+
+/**
+ * Rolls holdings up into allocation slices along whatever dimension `pick`
+ * names, ordered largest first.
+ *
+ * Dropping cash renormalizes against what's left rather than leaving a gap:
+ * with cash excluded the question has changed to "of the money I have
+ * invested, how much is in this", and slices that summed to 90% would be
+ * answering neither question.
+ */
+export function buildAllocation(
+  holdings: readonly Holding[],
+  pick: (holding: Holding) => string,
+  options: { includeCash?: boolean } = {},
+): AllocationSlice[] {
+  const rows = options.includeCash === false ? holdings.filter((h) => h.kind !== "cash") : holdings;
+  const total = rows.reduce((sum, h) => sum + h.marketValue, 0);
+
+  const grouped = new Map<string, number>();
+  for (const holding of rows) {
+    const label = pick(holding);
+    grouped.set(label, (grouped.get(label) ?? 0) + holding.marketValue);
+  }
+
+  return [...grouped.entries()]
+    .map(([label, value]) => ({ label, value, weight: total > 0 ? value / total : 0 }))
+    .sort((a, b) => b.value - a.value);
 }
 
 const DAYS_PER_YEAR = 365;
@@ -273,6 +313,7 @@ export function analyzePortfolio(
     holdings.push({
       key,
       accountId,
+      kind: "position",
       symbol,
       name: security?.name || prices[symbol]?.name || formatOptionSymbol(symbol),
       assetClass: security?.assetClass ?? "other",
@@ -297,17 +338,60 @@ export function analyzePortfolio(
   }
 
   const marketValue = holdings.reduce((sum, h) => sum + h.marketValue, 0);
-  for (const holding of holdings) {
-    holding.weight = marketValue > 0 ? holding.marketValue / marketValue : 0;
-  }
-  holdings.sort((a, b) => b.marketValue - a.marketValue);
 
-  const cash = portfolio.accounts
-    .filter((a) => inScope(a.id))
-    .reduce((sum, a) => sum + a.cashBalance, 0);
+  // Summary figures are computed before the cash rows join, so every one of
+  // them keeps meaning what it meant: a return measured against the money
+  // actually at risk, not diluted by a balance that was never invested.
   const costBasis = holdings.reduce((sum, h) => sum + h.costBasis, 0);
   const unrealizedGain = holdings.reduce((sum, h) => sum + h.unrealizedGain, 0);
   const income = holdings.reduce((sum, h) => sum + h.income, 0);
+
+  const cashAccounts = portfolio.accounts.filter((a) => inScope(a.id));
+  const cash = cashAccounts.reduce((sum, a) => sum + a.cashBalance, 0);
+
+  /**
+   * Uninvested cash, as a holding per account.
+   *
+   * It carries no basis and no gain -- cash doesn't appreciate, and giving it a
+   * basis equal to its balance would quietly pad the denominator under every
+   * return figure. Only value and weight are real here, which is exactly what
+   * an allocation view is asking for.
+   */
+  for (const account of cashAccounts) {
+    if (account.cashBalance === 0) continue;
+    holdings.push({
+      key: `${account.id}::${CASH_SYMBOL}`,
+      accountId: account.id,
+      kind: "cash",
+      symbol: CASH_SYMBOL,
+      name: "Cash",
+      assetClass: "cash",
+      side: "long",
+      quantity: 0,
+      costBasis: 0,
+      avgCostPerShare: 0,
+      price: null,
+      priceDate: null,
+      marketValue: account.cashBalance,
+      unrealizedGain: 0,
+      unrealizedGainPct: null,
+      weight: 0,
+      realizedGain: 0,
+      income: 0,
+      totalGain: 0,
+      irr: null,
+      lots: [],
+    });
+  }
+
+  // Weighted against everything owned, cash included, so the allocation adds up
+  // to the whole portfolio rather than to the invested slice of it.
+  const totalValue = marketValue + cash;
+  for (const holding of holdings) {
+    holding.weight = totalValue > 0 ? holding.marketValue / totalValue : 0;
+  }
+  holdings.sort((a, b) => b.marketValue - a.marketValue);
+
   const taxableClosed = closedLots.filter((lot) => lot.taxable);
   const realizedGain = taxableClosed.reduce((sum, lot) => sum + lot.gain, 0);
   const currentYear = asOf.slice(0, 4);
@@ -334,25 +418,19 @@ export function analyzePortfolio(
     irr: xirr(returnFlows(transactions, marketValue + cash, asOf)),
   };
 
-  const slice = (groups: Map<string, number>): AllocationSlice[] =>
-    [...groups.entries()]
-      .map(([label, value]) => ({ label, value, weight: marketValue > 0 ? value / marketValue : 0 }))
-      .sort((a, b) => b.value - a.value);
-
-  const group = (pick: (h: Holding) => string) => {
-    const map = new Map<string, number>();
-    for (const h of holdings) map.set(pick(h), (map.get(pick(h)) ?? 0) + h.marketValue);
-    return map;
-  };
-
   return {
     holdings,
     summary,
     closedLots: [...closedLots].sort((a, b) => (a.disposedDate < b.disposedDate ? 1 : -1)),
     warnings,
-    expiredContracts: findExpiredContracts(holdings, prices, asOf),
-    byAssetClass: slice(group((h) => h.assetClass)),
-    byAccount: slice(group((h) => accountNames.get(h.accountId) ?? "Unknown account")),
-    bySymbol: slice(group((h) => h.symbol)),
+    // Only positions can have expired -- a cash row has no contract behind it.
+    expiredContracts: findExpiredContracts(
+      holdings.filter((h) => h.kind === "position"),
+      prices,
+      asOf,
+    ),
+    byAssetClass: buildAllocation(holdings, (h) => h.assetClass),
+    byAccount: buildAllocation(holdings, (h) => accountNames.get(h.accountId) ?? "Unknown account"),
+    bySymbol: buildAllocation(holdings, (h) => h.symbol),
   };
 }

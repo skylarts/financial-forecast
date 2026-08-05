@@ -26,6 +26,7 @@ import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
+import { AllocationPanel, type AllocationDimension } from "./AllocationPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 
@@ -61,43 +62,6 @@ function Stat({ label, value, tone, hint }: { label: string; value: string; tone
       <div className={`mt-1 text-[19px] font-semibold tabular-nums ${tone || "text-foreground"}`}>
         {value}
       </div>
-    </div>
-  );
-}
-
-function AllocationBars({
-  title,
-  slices,
-}: {
-  title: string;
-  slices: { label: string; value: number; weight: number }[];
-}) {
-  return (
-    <div>
-      <h3 className="mb-2 text-[13px] font-semibold text-foreground">{title}</h3>
-      {slices.length === 0 ? (
-        <p className="text-[12.5px] text-dim">Nothing to show yet.</p>
-      ) : (
-        <div className="space-y-1.5">
-          {slices.map((slice) => (
-            <div key={slice.label} className="flex items-center gap-3">
-              <div className="w-40 shrink-0 truncate text-[12px] text-dim">{slice.label}</div>
-              <div className="h-3 flex-1 overflow-hidden rounded-sm bg-panel-2">
-                <div
-                  className="h-full rounded-sm bg-accent"
-                  style={{ width: `${Math.max(slice.weight * 100, 0.5)}%` }}
-                />
-              </div>
-              <div className="w-16 shrink-0 text-right text-[12px] tabular-nums text-dim">
-                {(slice.weight * 100).toFixed(1)}%
-              </div>
-              <div className="w-24 shrink-0 text-right text-[12px] tabular-nums text-foreground">
-                {money(slice.value)}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -300,6 +264,41 @@ export function PortfolioApp() {
             contract.strike
           } strike so the premium lands in the share basis.`,
     );
+  };
+
+  /**
+   * Takes a slice of the allocation ring through to the rows behind it.
+   *
+   * Each dimension lands on the filter that actually narrows to it, rather than
+   * dropping the label into the search box and hoping it matches: an account
+   * name isn't a ticker, and a class isn't either.
+   */
+  const handleDrillDown = (dimension: AllocationDimension, label: string) => {
+    setTab("holdings");
+    switch (dimension) {
+      case "assetClass": {
+        const match = assetClassSchema.options.find((cls) => ASSET_CLASS_LABELS[cls] === label);
+        if (match) setAssetClassFilter(match);
+        break;
+      }
+      case "account": {
+        const match = portfolio.accounts.find((a) => a.name === label);
+        if (match) setScopeAccountId(match.id);
+        break;
+      }
+      case "accountType": {
+        // No single-type scope exists, so this groups by account instead --
+        // the rows land together, which is what the click was asking for.
+        setGrouping("account");
+        break;
+      }
+      case "symbol":
+        setSearch(label);
+        break;
+      case "side":
+        setSideFilter(label === "Short" ? "short" : "long");
+        break;
+    }
   };
 
   const handlePush = (account: PortfolioAccount, value: number, costBasis: number) => {
@@ -505,25 +504,12 @@ export function PortfolioApp() {
         )}
 
         {tab === "allocation" && (
-          <div className="space-y-6 p-5">
-            <div>
-              <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-[13px] font-semibold text-foreground">By asset class</h3>
-                <span className="text-[11.5px] text-dim-2">
-                  Set a symbol&apos;s class below to group it.
-                </span>
-              </div>
-              <AllocationBars
-                title=""
-                slices={analysis.byAssetClass.map((s) => ({
-                  ...s,
-                  label: ASSET_CLASS_LABELS[s.label as AssetClass] ?? s.label,
-                }))}
-              />
-            </div>
-            <AllocationBars title="By account" slices={analysis.byAccount} />
-            <AllocationBars title="By holding" slices={analysis.bySymbol} />
-
+          <AllocationPanel
+            holdings={analysis.holdings}
+            accounts={portfolio.accounts}
+            accountNames={accountNames}
+            onDrillDown={handleDrillDown}
+          >
             <div>
               <div className="mb-2 flex items-baseline justify-between">
                 <h3 className="text-[13px] font-semibold text-foreground">Classify holdings</h3>
@@ -534,7 +520,14 @@ export function PortfolioApp() {
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {[...new Set(analysis.holdings.map((h) => h.symbol))].map((symbol) => {
+                {/* Positions only -- cash is already a class, and offering to
+                    reclassify it as an equity is an invitation to a wrong
+                    allocation with no way to tell afterwards. */}
+                {[
+                  ...new Set(
+                    analysis.holdings.filter((h) => h.kind === "position").map((h) => h.symbol),
+                  ),
+                ].map((symbol) => {
                   const security = securityFor(symbol);
                   // The feed's answer, if this session asked it. A holding
                   // classified on an earlier visit won't have one -- the hook
@@ -633,7 +626,7 @@ export function PortfolioApp() {
                 })}
               </div>
             </div>
-          </div>
+          </AllocationPanel>
         )}
 
         {tab === "realized" && (
