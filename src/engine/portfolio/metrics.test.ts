@@ -127,6 +127,7 @@ describe("analyzePortfolio", () => {
             symbol: "VTI",
             name: "Total Market",
             assetClass: "us_equity",
+            assetClassSource: "manual",
             manualPrice: 200,
             manualPriceDate: "2026-08-01",
           },
@@ -175,8 +176,8 @@ describe("analyzePortfolio", () => {
         ],
         {
           securities: [
-            { symbol: "VTI", name: "", assetClass: "us_equity", manualPrice: null, manualPriceDate: null },
-            { symbol: "BND", name: "", assetClass: "bond", manualPrice: null, manualPriceDate: null },
+            { symbol: "VTI", name: "", assetClass: "us_equity", assetClassSource: "manual", manualPrice: null, manualPriceDate: null },
+            { symbol: "BND", name: "", assetClass: "bond", assetClassSource: "manual", manualPrice: null, manualPriceDate: null },
           ],
         },
       ),

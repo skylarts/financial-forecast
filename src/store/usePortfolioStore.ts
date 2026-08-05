@@ -13,8 +13,18 @@ import {
 } from "@/domain/portfolio";
 import type { DraftTransaction } from "@/lib/portfolio/importer";
 import { withAssignedLotIds } from "@/lib/portfolio/lotAssignment";
+import { withCanonicalSymbols } from "@/lib/portfolio/canonicalSymbols";
 
 const STORAGE_KEY = "portfolio-tracker";
+
+/**
+ * Everything a ledger passes through on its way into the store, whatever door
+ * it came in by. Symbols are canonicalised before lots are assigned, so a
+ * generated lot id names the contract the way the rest of the app will.
+ */
+function tidy(portfolio: Portfolio): Portfolio {
+  return withAssignedLotIds(withCanonicalSymbols(portfolio));
+}
 
 const emptyPortfolio: Portfolio = {
   id: "local-portfolio",
@@ -59,7 +69,7 @@ export const usePortfolioStore = create<PortfolioState>()(
        *  add form, an import, or an edit that cleared the field. */
       const mutate = (update: (portfolio: Portfolio) => Portfolio) =>
         set((state) => ({
-          portfolio: withAssignedLotIds(update(state.portfolio)),
+          portfolio: tidy(update(state.portfolio)),
           lastSavedAt: Date.now(),
         }));
 
@@ -151,14 +161,14 @@ export const usePortfolioStore = create<PortfolioState>()(
           })),
 
         loadPortfolio: (portfolio) =>
-          set({ portfolio: withAssignedLotIds(portfolio), lastSavedAt: Date.now() }),
+          set({ portfolio: tidy(portfolio), lastSavedAt: Date.now() }),
 
         importJson: (raw) => {
           const result = portfolioSchema.safeParse(raw);
           if (!result.success) {
             return { ok: false, error: "That file isn't a portfolio backup this app can read." };
           }
-          set({ portfolio: withAssignedLotIds(result.data), lastSavedAt: Date.now() });
+          set({ portfolio: tidy(result.data), lastSavedAt: Date.now() });
           return { ok: true };
         },
       };
@@ -168,14 +178,15 @@ export const usePortfolioStore = create<PortfolioState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({ portfolio: state.portfolio, lastSavedAt: state.lastSavedAt }),
       /**
-       * Backfills lot ids onto a ledger saved before they were assigned, which
-       * is every ledger imported from a brokerage export. Done here rather than
-       * as a one-shot migration so a portfolio arriving from anywhere -- an old
-       * browser, a restored backup -- comes back fully identified.
+       * Backfills lot ids and canonical symbols onto a ledger saved before
+       * either existed -- which is every ledger imported from a brokerage
+       * export. Done here rather than as a one-shot migration so a portfolio
+       * arriving from anywhere -- an old browser, a restored backup -- comes
+       * back fully identified and spelled the way the quote feed spells it.
        */
       merge: (persisted, current) => {
         const merged = { ...current, ...(persisted as Partial<PortfolioState>) };
-        return { ...merged, portfolio: withAssignedLotIds(merged.portfolio) };
+        return { ...merged, portfolio: tidy(merged.portfolio) };
       },
       onRehydrateStorage: () => (state) => state?.setHasHydrated(true),
     },
