@@ -356,6 +356,14 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
   );
   const { sort, toggle, apply } = useSort<Transaction, TxColumn>(accessors, "date");
 
+  const tickers = useMemo(
+    () =>
+      Array.from(
+        new Set(portfolio.transactions.map((tx) => tx.symbol).filter((s): s is string => Boolean(s))),
+      ).sort(),
+    [portfolio.transactions],
+  );
+
   const filtered = useMemo(() => {
     const query = search.trim().toUpperCase();
     // A group selection matches every type in that group, so "Short" pulls both
@@ -364,6 +372,10 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
       typeFilter.startsWith("group:")
         ? TRANSACTION_TYPE_GROUPS.find((g) => g.label === typeFilter.slice(6))?.types ?? []
         : null;
+    // A query that's an exact ticker (picked from the datalist, or just typed
+    // in full) narrows to that one symbol -- otherwise short tickers like "U"
+    // would wildcard-match every lot id and symbol that merely contains a U.
+    const exactTicker = tickers.includes(query) ? query : null;
 
     return portfolio.transactions
       .filter((tx) => accountFilter === "all" || tx.accountId === accountFilter)
@@ -371,17 +383,16 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
       // symbol, so a plain "VTI" still finds every VTI row and a full id
       // narrows to the purchase and the sales that drew on it -- which is the
       // whole point of being able to search a lot at all.
-      .filter(
-        (tx) =>
-          !query ||
-          (tx.symbol ?? "").includes(query) ||
-          (tx.lotId ?? "").toUpperCase().includes(query),
-      )
+      .filter((tx) => {
+        if (!query) return true;
+        if (exactTicker) return (tx.symbol ?? "") === exactTicker;
+        return (tx.symbol ?? "").includes(query) || (tx.lotId ?? "").toUpperCase().includes(query);
+      })
       .filter((tx) =>
         typeFilter === "all" ? true : groupTypes ? groupTypes.includes(tx.type) : tx.type === typeFilter,
       )
       .filter((tx) => (!fromDate || tx.date >= fromDate) && (!toDate || tx.date <= toDate));
-  }, [portfolio.transactions, accountFilter, search, typeFilter, fromDate, toDate]);
+  }, [portfolio.transactions, accountFilter, search, typeFilter, fromDate, toDate, tickers]);
 
   const rows = useMemo(() => apply(filtered), [apply, filtered]);
   const filtersActive =
@@ -434,9 +445,15 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Symbol or lot ID"
-            title="Matches a ticker or any part of a lot ID."
+            title="Pick an exact ticker to see only that symbol, or type part of a ticker or lot ID to wildcard-match."
+            list="tx-ticker-list"
             className={`${INPUT} w-48`}
           />
+          <datalist id="tx-ticker-list">
+            {tickers.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
