@@ -9,6 +9,8 @@ import {
   normalizeSymbol,
   parseLotIds,
   signedCashFlow,
+  signedQuantity,
+  signedTransactionAmount,
   TRANSACTION_TYPE_GROUPS,
   TRANSACTION_TYPE_LABELS,
   type Portfolio,
@@ -345,9 +347,9 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
       account: (tx) => accountNames.get(tx.accountId) ?? "",
       type: (tx) => TRANSACTION_TYPE_LABELS[tx.type],
       symbol: (tx) => tx.symbol ?? "",
-      quantity: (tx) => tx.quantity,
+      quantity: (tx) => signedQuantity(tx),
       price: (tx) => tx.price,
-      amount: (tx) => tx.amount ?? tx.quantity * tx.price,
+      amount: (tx) => signedTransactionAmount(tx),
       lot: (tx) => tx.lotId ?? "",
     }),
     [accountNames],
@@ -551,6 +553,7 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             <tbody>
               {groups.map((group) => {
                 const netCash = group.rows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
+                const netQuantity = group.rows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
                 const collapsed = grouping !== "none" && collapse.isCollapsed(group.key);
                 return (
                   <Fragment key={group.key || "all"}>
@@ -561,10 +564,17 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
                         noun="row"
                         collapsed={collapsed}
                         onToggle={() => collapse.toggle(group.key)}
-                        // Date, Account, Type, Symbol, Shares, Price -- none of
-                        // which totals across rows of different types.
-                        labelSpan={6}
+                        // Date, Account, Type, Symbol -- none of which totals
+                        // across rows of different types.
+                        labelSpan={4}
                         cells={[
+                          <span
+                            key="qty"
+                            title="Net shares this group moved: buys less sells. Reconciles against the position's share count."
+                          >
+                            {shares(netQuantity)}
+                          </span>,
+                          null,
                           <span
                             key="net"
                             className={toneFor(netCash)}
@@ -623,14 +633,12 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
                             {tx.symbol ?? "—"}
                           </td>
                           <td className={`${CELL} text-right text-dim`}>
-                            {tx.quantity > 0 ? shares(tx.quantity) : "—"}
+                            {tx.quantity > 0 ? shares(signedQuantity(tx)) : "—"}
                           </td>
                           <td className={`${CELL} text-right text-dim`}>
                             {tx.price > 0 ? price(tx.price) : "—"}
                           </td>
-                          <td className={`${CELL} text-right text-dim`}>
-                            {tx.amount === null ? money(tx.quantity * tx.price) : money(tx.amount)}
-                          </td>
+                          <td className={`${CELL} text-right text-dim`}>{money(signedTransactionAmount(tx))}</td>
                           <td className={`${CELL} text-left text-dim-2`}>
                             <LotCell tx={tx} onSearch={setSearch} />
                           </td>
@@ -666,9 +674,21 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             </tbody>
             <tfoot>
               <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
-                <td className={`${CELL} text-left text-foreground`} colSpan={6}>
+                <td className={`${CELL} text-left text-foreground`} colSpan={4}>
                   Total
                 </td>
+                {(() => {
+                  const netQuantity = rows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
+                  return (
+                    <td
+                      className={`${CELL} text-right text-foreground`}
+                      title="Net shares all rows moved: buys less sells. Reconciles against the position's share count."
+                    >
+                      {shares(netQuantity)}
+                    </td>
+                  );
+                })()}
+                <td className={CELL}></td>
                 {(() => {
                   const netCash = rows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
                   return (

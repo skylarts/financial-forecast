@@ -212,6 +212,28 @@ function grossAmount(tx: Transaction): number {
 }
 
 /**
+ * True for the transaction types a share-count reconciliation should treat as
+ * a disposal -- ordinary sales and opening a short both give up shares (or, for
+ * a short, take on the obligation to return them). Used to sign quantity and
+ * amount for display, so summing a position's rows nets to its actual share
+ * count instead of every row adding regardless of direction.
+ */
+export function isSellType(type: TransactionType): boolean {
+  return type === "sell" || type === "short_sell";
+}
+
+/** Quantity signed for display: negative for a sell, positive otherwise. */
+export function signedQuantity(tx: Transaction): number {
+  return isSellType(tx.type) ? -tx.quantity : tx.quantity;
+}
+
+/** Same display amount the transactions table shows, signed like {@link signedQuantity}. */
+export function signedTransactionAmount(tx: Transaction): number {
+  const gross = tx.amount === null ? tx.quantity * tx.price : tx.amount;
+  return isSellType(tx.type) ? -gross : gross;
+}
+
+/**
  * Cash actually moved by a transaction, signed from the account's point of
  * view: negative means cash left the account. Statements are inconsistent about
  * whether `amount` includes fees, so an explicit amount is trusted as-is and
