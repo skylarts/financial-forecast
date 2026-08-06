@@ -290,9 +290,10 @@ export function BySymbolPanel({
         <p className="py-8 text-center text-[13px] text-dim">No names match those filters.</p>
       ) : (
         <div className="overflow-x-auto">
+          <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-border">
+              <tr className="sticky top-0 z-10 border-b border-border bg-panel">
                 <SortHeader label="Stock" column="symbol" align="left" sort={sort} onToggle={toggle} />
                 <SortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
                 <SortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
@@ -403,7 +404,31 @@ export function BySymbolPanel({
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+                <td className={`${CELL} text-left text-foreground`}>Total</td>
+                <td className={CELL}></td>
+                <td className={CELL}></td>
+                <td className={`${CELL} text-right text-foreground`}>
+                  {money(rows.reduce((s, r) => s + (r.isOpen ? r.marketValue : 0), 0))}
+                </td>
+                <td className={`${CELL} text-right text-dim`}>
+                  {(rows.reduce((s, r) => s + (r.isOpen ? r.weight : 0), 0) * 100).toFixed(1)}%
+                </td>
+                <td className={`${CELL} text-right ${toneFor(rows.reduce((s, r) => s + r.unrealizedGain, 0))}`}>
+                  {money(rows.reduce((s, r) => s + r.unrealizedGain, 0))}
+                </td>
+                <td className={`${CELL} text-right ${toneFor(rows.reduce((s, r) => s + r.realizedGain, 0))}`}>
+                  {money(rows.reduce((s, r) => s + r.realizedGain, 0))}
+                </td>
+                <td className={`${CELL} text-right text-dim`}>{money(rows.reduce((s, r) => s + r.income, 0))}</td>
+                <td className={CELL}></td>
+                <td className={`${CELL} text-right ${toneFor(totalGain)}`}>{money(totalGain)}</td>
+                <td className={CELL}></td>
+              </tr>
+            </tfoot>
           </table>
+          </div>
         </div>
       )}
     </div>

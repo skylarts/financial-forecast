@@ -533,9 +533,10 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
         </p>
       ) : (
         <div className="overflow-x-auto">
+          <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-border">
+              <tr className="sticky top-0 z-10 border-b border-border bg-panel">
                 <TxSortHeader label="Date" column="date" align="left" sort={sort} onToggle={toggle} />
                 <TxSortHeader label="Account" column="account" align="left" sort={sort} onToggle={toggle} />
                 <TxSortHeader label="Type" column="type" align="left" sort={sort} onToggle={toggle} />
@@ -663,7 +664,25 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+                <td className={`${CELL} text-left text-foreground`} colSpan={6}>
+                  Total
+                </td>
+                {(() => {
+                  const netCash = rows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
+                  return (
+                    <td className={`${CELL} text-right ${toneFor(netCash)}`} title="Net cash all rows moved.">
+                      {money(netCash)}
+                    </td>
+                  );
+                })()}
+                <td className={CELL}></td>
+                <td className={CELL}></td>
+              </tr>
+            </tfoot>
           </table>
+          </div>
         </div>
       )}
     </div>
