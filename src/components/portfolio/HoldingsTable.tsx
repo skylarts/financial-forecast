@@ -148,6 +148,9 @@ export function HoldingsTable({
   // Everything left of Value: the label spans them because none of shares, avg
   // cost, or price means anything summed across different securities.
   const labelSpan = showAccount ? 5 : 4;
+  // Totals over every visible row regardless of group collapse -- collapsing a
+  // group hides its rows, not its money.
+  const grandTotals = totalsFor(sorted);
 
   return (
     <div className="overflow-x-auto">
@@ -156,9 +159,10 @@ export function HoldingsTable({
           <GroupToggles groupKeys={groupKeys} collapse={collapse} />
         </div>
       )}
+      <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
       <table className="w-full border-collapse">
         <thead>
-          <tr className="border-b border-border">
+          <tr className="sticky top-0 z-10 border-b border-border bg-panel">
             <SortHeader label="Holding" column="symbol" align="left" sort={sort} onToggle={toggle} />
             {showAccount && (
               <SortHeader label="Account" column="account" align="left" sort={sort} onToggle={toggle} />
@@ -294,7 +298,24 @@ export function HoldingsTable({
             );
           })}
         </tbody>
+        <tfoot>
+          <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+            <td className={`${CELL} text-left text-foreground`} colSpan={labelSpan}>
+              Total
+            </td>
+            <td className={`${CELL} text-right text-foreground`}>{money(grandTotals.marketValue)}</td>
+            <td className={`${CELL} text-right text-dim`}>{(grandTotals.weight * 100).toFixed(1)}%</td>
+            <td className={`${CELL} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
+              {money(grandTotals.unrealizedGain)}
+            </td>
+            <td className={`${CELL} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
+              {percent(grandTotals.returnPct)}
+            </td>
+            <td className={CELL}></td>
+          </tr>
+        </tfoot>
       </table>
+      </div>
     </div>
   );
 }

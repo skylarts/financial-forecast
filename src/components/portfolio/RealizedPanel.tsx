@@ -222,9 +222,10 @@ export function RealizedPanel({
             </p>
           ) : (
             <div className="overflow-x-auto">
+              <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="border-b border-border">
+                  <tr className="sticky top-0 z-10 border-b border-border bg-panel">
                     <SortHeader label="Symbol" column="symbol" align="left" sort={sort} onToggle={toggle} />
                     <SortHeader label="Account" column="account" align="left" sort={sort} onToggle={toggle} />
                     <SortHeader label="Acquired" column="acquired" align="left" sort={sort} onToggle={toggle} />
@@ -290,7 +291,28 @@ export function RealizedPanel({
                     );
                   })}
                 </tbody>
+                <tfoot>
+                  <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+                    <td className={`${CELL} text-left text-foreground`} colSpan={labelSpan}>
+                      Total
+                    </td>
+                    <td className={`${CELL} text-right text-foreground`}>
+                      {money(sorted.reduce((s, lot) => s + lot.costBasis, 0))}
+                    </td>
+                    <td className={`${CELL} text-right text-foreground`}>
+                      {money(sorted.reduce((s, lot) => s + lot.proceeds, 0))}
+                    </td>
+                    {(() => {
+                      const totalGain = sorted.reduce((s, lot) => s + lot.gain, 0);
+                      return (
+                        <td className={`${CELL} text-right ${toneFor(totalGain)}`}>{money(totalGain)}</td>
+                      );
+                    })()}
+                    <td className={CELL}></td>
+                  </tr>
+                </tfoot>
               </table>
+              </div>
             </div>
           )}
         </>
