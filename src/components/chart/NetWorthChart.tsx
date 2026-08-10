@@ -433,6 +433,51 @@ export function NetWorthChart({
     return map;
   }, [allMarkers, dataYears]);
 
+  // Adjacent years whose columns land closer together on screen than an icon
+  // is wide (e.g. a decades-long "Full" range squeezes a year into a few
+  // pixels) get merged into one shared stack instead of drawing two columns
+  // of icons on top of each other. Chained by GAP so a long run of dense
+  // years doesn't all collapse into a single stack just because the ends are
+  // far apart -- only neighbours close enough to actually collide merge.
+  const markerClusters = useMemo(() => {
+    if (!layout) return [] as { x: number; list: ChartMarker[] }[];
+    const columns = [...markersByYear.entries()]
+      .map(([year, list]) => {
+        const rawX = layout.xByYear.get(year);
+        if (rawX === undefined) return null;
+        // Keep icons inside the plot area: markers on the first visible
+        // year would otherwise center over the y-axis and sit on top of
+        // its dollar labels.
+        const x = Math.max(rawX, layout.left + ICON_SIZE / 2 + 10);
+        return { x, list };
+      })
+      .filter((c): c is { x: number; list: ChartMarker[] } => c !== null)
+      .sort((a, b) => a.x - b.x);
+
+    const clusters: { xs: number[]; list: ChartMarker[] }[] = [];
+    for (const col of columns) {
+      const last = clusters[clusters.length - 1];
+      if (last && col.x - last.xs[last.xs.length - 1] < ICON_SIZE + ICON_GAP) {
+        last.xs.push(col.x);
+        last.list.push(...col.list);
+      } else {
+        clusters.push({ xs: [col.x], list: [...col.list] });
+      }
+    }
+    return clusters.map((c) => ({ x: c.xs.reduce((s, v) => s + v, 0) / c.xs.length, list: c.list }));
+  }, [markersByYear, layout]);
+
+  // Per-marker screen position (which cluster, and its slot within that
+  // cluster's stack) -- the hover tooltip needs this to place itself, since
+  // it looks a marker up by key rather than walking markerClusters itself.
+  const markerPositionByKey = useMemo(() => {
+    const map = new Map<string, { x: number; index: number }>();
+    for (const cluster of markerClusters) {
+      cluster.list.forEach((m, i) => map.set(m.key, { x: cluster.x, index: i }));
+    }
+    return map;
+  }, [markerClusters]);
+
   const chartTopMargin = 4;
 
   const applyDrag = useCallback(
@@ -717,17 +762,10 @@ export function NetWorthChart({
 
         {viewMode === "net_worth" && layout && (
           <div className="pointer-events-none absolute inset-0">
-            {[...markersByYear.entries()].map(([year, rawList]) => {
-              const rawX = layout.xByYear.get(year);
-              if (rawX === undefined) return null;
-              // Keep icons inside the plot area: markers on the first visible
-              // year would otherwise center over the y-axis and sit on top of
-              // its dollar labels.
-              const x = Math.max(rawX, layout.left + ICON_SIZE / 2 + 10);
-              const list = rawList;
+            {markerClusters.map(({ x, list }, ci) => {
               const stackBottom = layout.top + TOP_PAD + list.length * (ICON_SIZE + ICON_GAP) - ICON_GAP;
               return (
-                <div key={year}>
+                <div key={list[0]?.key ?? ci}>
                   <div
                     className="absolute"
                     style={{
@@ -778,11 +816,10 @@ export function NetWorthChart({
               (() => {
                 const m = allMarkers.find((mm) => mm.key === hoverKey);
                 if (!m) return null;
-                const x = layout.xByYear.get(m.year);
-                if (x === undefined) return null;
-                const list = markersByYear.get(m.year) ?? [];
-                const idx = list.findIndex((mm) => mm.key === m.key);
-                const top = layout.top + TOP_PAD + Math.max(0, idx) * (ICON_SIZE + ICON_GAP);
+                const pos = markerPositionByKey.get(m.key);
+                if (!pos) return null;
+                const x = pos.x;
+                const top = layout.top + TOP_PAD + pos.index * (ICON_SIZE + ICON_GAP);
                 return (
                   <div
                     className="absolute z-20 w-64 -translate-x-1/2 rounded-md border border-border bg-panel p-3 text-xs shadow-lg"
