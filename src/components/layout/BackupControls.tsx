@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePlanStore } from "@/store/usePlanStore";
 import { buildLlmExport } from "@/lib/llmExport";
+import { BACKUP_SCHEMA_REFERENCE } from "@/lib/backupSchemaReference";
 
 // Chromium browsers (Chrome, Edge, Comet, ...) expose this for a native
 // "Save As" dialog; Safari/Firefox don't, so we fall back to a plain download.
@@ -77,6 +78,13 @@ export function BackupControls() {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     downloadTextFile(markdown, `forecast-llm-export-${stamp}.md`, "text/markdown");
     setMessage("LLM export downloaded.");
+    setMenuOpen(false);
+  };
+
+  const handleSchemaExport = () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(BACKUP_SCHEMA_REFERENCE, `forecast-backup-schema-${stamp}.md`, "text/markdown");
+    setMessage("Backup schema reference downloaded.");
     setMenuOpen(false);
   };
 
@@ -156,6 +164,14 @@ export function BackupControls() {
             className="block w-full px-3 py-1.5 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
           >
             📄 Export for LLM
+          </button>
+          <button
+            type="button"
+            onClick={handleSchemaExport}
+            title="Download a reference of the backup file's exact JSON format -- every field, enum, and constraint -- so an AI chatbot can write or edit a valid backup file, even for an event type your plan has no example of"
+            className="block w-full px-3 py-1.5 text-left text-sm text-dim hover:bg-background/40 hover:text-foreground"
+          >
+            📋 Backup Schema (for LLMs)
           </button>
         </div>
       )}
