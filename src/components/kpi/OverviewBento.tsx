@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import type { Account, ProjectionResult, PeriodSnapshot } from "@/domain";
+import type { Account, ISODate, ProjectionResult, PeriodSnapshot } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ACCOUNT_CLASS_LABELS, buildAccountColors, displayAccounts, groupAccountsByClass } from "@/lib/accountColors";
 import { useUiStore } from "@/store/useUiStore";
@@ -73,6 +73,7 @@ export function OverviewBento({
   accounts: allAccounts,
   dollarMode,
   isFullRange,
+  planStartDate,
   compareKpis = null,
   compareName = null,
   chart,
@@ -83,6 +84,8 @@ export function OverviewBento({
   accounts: Account[];
   dollarMode: DollarMode;
   isFullRange: boolean;
+  /** Resolved plan start: scenario.settings.startDate ?? todayISO(). */
+  planStartDate: ISODate;
   compareKpis?: ProjectionResult["kpis"] | null;
   compareName?: string | null;
   chart: React.ReactNode;
@@ -106,6 +109,19 @@ export function OverviewBento({
   // lived here at first and was cut -- it's income minus expenses restated as
   // a percentage, so it said nothing the surplus tile didn't already say.
   const surplus = firstYear ? deflateFlow(firstYear.cashFlow.operatingCashFlow, firstYear, dollarMode) : 0;
+
+  // The engine simulates whole calendar months only (see eachMonthStart in
+  // forecastScenario.ts), starting from the FIRST of whatever month the plan
+  // start falls in -- so if the plan starts mid-August, the current year's
+  // total already includes all of August, not a partial slice of it. The
+  // "/mo" caption has to divide by the same month count the dollar figure
+  // above was actually summed over, or the two won't agree: 12 whenever
+  // firstYear is a normal full year, but only the months from the plan's
+  // start month through December when it's the plan's first (partial) year.
+  const surplusMonths =
+    firstYear && firstYear.year === Number(planStartDate.slice(0, 4))
+      ? 13 - Number(planStartDate.slice(5, 7))
+      : 12;
 
   // Growth across every asset (a mortgage's rollforward "growth" is accruing
   // interest, which isn't what this tile is about). Paired with deposits into
@@ -245,7 +261,7 @@ export function OverviewBento({
           {formatMoney(surplus)}
         </div>
         <div className="mt-1.5 text-[11.5px] text-dim-2">
-          {formatMoney(surplus / 12)} / mo after expenses
+          {formatMoney(surplus / surplusMonths)} / mo after expenses
         </div>
       </Tile>
 
