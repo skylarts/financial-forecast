@@ -8,8 +8,8 @@ import { useUiStore } from "@/store/useUiStore";
 
 /**
  * The Overview dashboard: an asymmetric grid where tile size encodes
- * importance. Net worth is the headline, so it gets the full-width top band
- * with the retirement facts inline beneath it; the chart and the account
+ * importance. Net worth is the headline, so it gets a tile four columns wide
+ * with the two retirement facts inline beneath it; the chart and the account
  * snapshot share the lower band.
  *
  * Explicit grid-template-areas rather than per-tile column spans — with spans,
@@ -25,6 +25,12 @@ import { useUiStore } from "@/store/useUiStore";
 function balanceToday(account: Account, today: string): number {
   if (account.startDate && account.startDate > today) return 0;
   return (account.category === "liability" ? -1 : 1) * account.startingBalance;
+}
+
+/** Deflate a flow (income, tax, surplus) to today's dollars when in real mode.
+ *  Flows use flowInflationDeflator (mid-year), not the year-end balance one. */
+function deflateFlow(value: number, year: PeriodSnapshot, mode: DollarMode): number {
+  return mode === "real" ? value / year.flowInflationDeflator : value;
 }
 
 function Tile({
@@ -84,6 +90,7 @@ export function OverviewBento({
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const real = dollarMode === "real";
 
+  const firstYear = years[0];
   const lastYear = years[years.length - 1];
 
   const eoy = real ? kpis.netWorthEndOfYear1Real : kpis.netWorthEndOfYear1;
@@ -92,6 +99,39 @@ export function OverviewBento({
 
   const cmpEoy = compareKpis ? (real ? compareKpis.netWorthEndOfYear1Real : compareKpis.netWorthEndOfYear1) : null;
   const cmpRetirementAge = compareKpis?.retirementAge ?? null;
+
+  // First-year figures for the two stat tiles. Deliberately two *different*
+  // stories: what you put in (surplus, a cash-flow figure) versus what the
+  // money earned on its own (growth, a balance-sheet figure). Savings rate
+  // lived here at first and was cut -- it's income minus expenses restated as
+  // a percentage, so it said nothing the surplus tile didn't already say.
+  const surplus = firstYear ? deflateFlow(firstYear.cashFlow.operatingCashFlow, firstYear, dollarMode) : 0;
+
+  // Growth across every asset (a mortgage's rollforward "growth" is accruing
+  // interest, which isn't what this tile is about). Paired with deposits into
+  // those same accounts so the caption reads as "growth vs. what you put in."
+  //
+  // Cash-class accounts are excluded from *both* sides: the spending hub's
+  // rollforward "deposits" field also captures income landing there and cash
+  // arriving from the deficit cascade, not just savings -- with the hub
+  // included, a paycheck counted once on arrival and again when swept to a
+  // brokerage account, inflating "contributed" well past actual savings.
+  const { investmentGrowth, investmentDeposits } = useMemo(() => {
+    if (!firstYear) return { investmentGrowth: 0, investmentDeposits: 0 };
+    const byId = new Map(allAccounts.map((a) => [a.id, a]));
+    let growth = 0;
+    let deposits = 0;
+    for (const r of firstYear.rollforwards) {
+      const acct = byId.get(r.accountId);
+      if (!acct || acct.isExcluded || acct.category !== "asset" || acct.class === "cash") continue;
+      growth += r.growth;
+      deposits += r.deposits;
+    }
+    return {
+      investmentGrowth: deflateFlow(growth, firstYear, dollarMode),
+      investmentDeposits: deflateFlow(deposits, firstYear, dollarMode),
+    };
+  }, [firstYear, allAccounts, dollarMode]);
 
   const accounts = useMemo(() => displayAccounts(allAccounts), [allAccounts]);
   const accountColors = useMemo(() => buildAccountColors(accounts, isJoy), [accounts, isJoy]);
@@ -192,6 +232,31 @@ export function OverviewBento({
             <dd className="mt-1 font-mono text-base font-semibold tabular-nums">{formatMoney(atEnd)}</dd>
           </div>
         </dl>
+      </Tile>
+
+      {/* ---- Two first-year stats: what you contributed vs. what it earned ---- */}
+      <Tile area="k1" className="p-4">
+        <Label>Operating surplus · {firstYear?.year ?? ""}</Label>
+        <div
+          className={`mt-1.5 font-mono text-2xl font-bold tracking-tight tabular-nums ${
+            surplus >= 0 ? "text-positive" : "text-negative"
+          }`}
+        >
+          {formatMoney(surplus)}
+        </div>
+        <div className="mt-1.5 text-[11.5px] text-dim-2">
+          {formatMoney(surplus / 12)} / mo after expenses
+        </div>
+      </Tile>
+
+      <Tile area="k2" className="p-4">
+        <Label>Investment growth · {firstYear?.year ?? ""}</Label>
+        <div className="mt-1.5 font-mono text-2xl font-bold tracking-tight tabular-nums text-positive">
+          {formatMoney(investmentGrowth)}
+        </div>
+        <div className="mt-1.5 text-[11.5px] text-dim-2">
+          vs {formatMoney(investmentDeposits)} contributed
+        </div>
       </Tile>
 
       {/* ---- Chart. NetWorthChart brings its own panel chrome, so it is
