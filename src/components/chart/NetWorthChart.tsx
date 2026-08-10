@@ -526,6 +526,12 @@ export function NetWorthChart({
   // Recharts' <Legend> auto-collects items in the order its <Line> children
   // mount, which doesn't reliably track our sort order -- render our own
   // legend for "By Account" straight from the sorted `accounts` array instead.
+  //
+  // Rendered as a sibling BELOW the chart rather than inside Recharts' own
+  // <Legend>: an in-chart legend is laid out within the chart's height, so
+  // this multi-row account key ate a third of the plot area the moment you
+  // switched to "By Account". Outside, the plot keeps its full height and the
+  // tile grows to fit the key instead.
   const renderAccountLegend = () => {
     const groups = groupAccountsByClass(accounts);
     return (
@@ -632,7 +638,10 @@ export function NetWorthChart({
         )}
       </div>
 
-      <div ref={containerRef} className="relative" style={isFullscreen ? { height: "calc(100vh - 160px)" } : undefined}>
+      {/* Fullscreen: the plot takes whatever height is left after the header
+          and the account key, rather than a fixed viewport calc that the key
+          would then push past the bottom of the screen. */}
+      <div ref={containerRef} className={`relative ${isFullscreen ? "min-h-0 flex-1" : ""}`}>
         <ResponsiveContainer width="100%" height={isFullscreen ? "100%" : 320}>
           <LineChart data={data} margin={{ top: chartTopMargin, right: isJoy ? 24 : 8, left: 8, bottom: 4 }}>
             <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
@@ -658,11 +667,12 @@ export function NetWorthChart({
                 return [formatMoney(Number(value)), label];
               }}
             />
-            <Legend
-              content={viewMode === "by_account" ? renderAccountLegend : undefined}
-              formatter={(value: string) => (value === "compareValue" ? (compareName ?? "Compare") : scenarioName)}
-              wrapperStyle={{ fontSize: 12 }}
-            />
+            {viewMode === "net_worth" && (
+              <Legend
+                formatter={(value: string) => (value === "compareValue" ? (compareName ?? "Compare") : scenarioName)}
+                wrapperStyle={{ fontSize: 12 }}
+              />
+            )}
             {viewMode === "net_worth" ? (
               <>
                 <Line
@@ -820,6 +830,8 @@ export function NetWorthChart({
           </div>
         )}
       </div>
+
+      {viewMode === "by_account" && renderAccountLegend()}
 
       <IncomeDrawer
         key={`income-${incomeDrawer.open}-${incomeDrawer.item?.id ?? "new"}`}
