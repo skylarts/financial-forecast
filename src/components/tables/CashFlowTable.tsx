@@ -11,6 +11,7 @@ import type {
   WithdrawalLineItem,
 } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
+import { ACCOUNT_CLASS_LABELS, sortAccountsForDisplay } from "@/lib/accountColors";
 import { InfoTooltip } from "@/components/ui/formFields";
 import { useUiStore } from "@/store/useUiStore";
 
@@ -302,6 +303,36 @@ export function CashFlowTable({
       .sort((a, b) => magnitude(b.id) - magnitude(a.id));
   }, [wdGrossMaps, surplusMaps, contribMaps, otherActivityMapsByAccount, contribItems, accountNameById, periods]);
 
+  // Account Activity is grouped by account class (Cash, Taxable, Tax-Free,
+  // ...) so the section reads as a few subtotals you can expand rather than a
+  // long flat list of accounts. Class order matches the rest of the app
+  // (sortAccountsForDisplay); accounts keep their by-magnitude order inside a
+  // class. The synthetic "__other__" bucket has no class, so it trails in its
+  // own group.
+  const activityGroups = useMemo(() => {
+    const classOf = new Map(accounts.map((a) => [a.id, a.class]));
+    const classRank = new Map<string, number>();
+    sortAccountsForDisplay(accounts).forEach((a) => {
+      if (!classRank.has(a.class)) classRank.set(a.class, classRank.size);
+    });
+    const groups = new Map<string, { key: string; label: string; rank: number; accounts: typeof activityAccounts }>();
+    for (const a of activityAccounts) {
+      const cls = classOf.get(a.id);
+      const key = cls ?? "__other__";
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          label: cls ? ACCOUNT_CLASS_LABELS[cls] : "Other",
+          // Unclassed activity sorts after every real class.
+          rank: cls ? (classRank.get(cls) ?? 0) : Number.MAX_SAFE_INTEGER,
+          accounts: [],
+        });
+      }
+      groups.get(key)!.accounts.push(a);
+    }
+    return [...groups.values()].sort((a, b) => a.rank - b.rank);
+  }, [activityAccounts, accounts]);
+
   const totalNet = (yi: number) => activityAccounts.reduce((s, a) => s + netOf(a.id, a.fromPaycheck, yi), 0);
 
   const hasCashInterest = periods.some((y) => Math.abs(y.cashFlow.cashInterest) > 0.5);
@@ -546,69 +577,96 @@ export function CashFlowTable({
               { signed: true }
             )}
             {isOpen("accountActivity") &&
-              (activityAccounts.length
-                ? activityAccounts.map((a) => {
-                    const hasTax = periods.some((_p, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
-                    const hasDeposit = periods.some((_p, yi) => depositOf(a.id, yi) > 0.5);
-                    const hasWithdrawal = periods.some((_p, yi) => withdrawnOf(a.id, yi) > 0.5);
-                    const hasOther = periods.some((_p, yi) => Math.abs(otherOf(a.id, yi)) > 0.5);
-                    const acctKey = `aa:${a.id}`;
+              (activityGroups.length
+                ? activityGroups.map((g) => {
+                    const groupKey = `aac:${g.key}`;
                     return (
-                      <Fragment key={a.id}>
-                        <tr className="cursor-pointer border-t border-border hover:bg-accent/15" onClick={() => toggle(acctKey)}>
-                          <td className="py-2.5 pl-6 font-medium">
-                            <ToggleLabel label={a.label} expanded={isOpen(acctKey)} onToggle={() => toggle(acctKey)} />
+                      <Fragment key={g.key}>
+                        <tr
+                          className="cursor-pointer border-t border-border hover:bg-accent/15"
+                          onClick={() => toggle(groupKey)}
+                        >
+                          <td className="py-2.5 pl-6 font-semibold">
+                            <ToggleLabel label={g.label} expanded={isOpen(groupKey)} onToggle={() => toggle(groupKey)} />
                           </td>
-                          {cells((yi) => netOf(a.id, a.fromPaycheck, yi), { signed: true })}
+                          {cells(
+                            (yi) => g.accounts.reduce((s, a) => s + netOf(a.id, a.fromPaycheck, yi), 0),
+                            { signed: true }
+                          )}
                         </tr>
-                        {isOpen(acctKey) && (
-                          <>
-                            {hasDeposit && (
-                              <tr className="text-dim hover:bg-accent/15">
-                                <td className="py-2.5 pl-12">
-                                  Deposited / saved
-                                  {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
-                                </td>
-                                {cells((yi) => depositOf(a.id, yi))}
-                              </tr>
-                            )}
-                            {hasWithdrawal && (
-                              <>
+                        {isOpen(groupKey) &&
+                          g.accounts.map((a) => {
+                            const hasTax = periods.some((_p, yi) => (wdTaxMaps[yi].get(a.id) ?? 0) > 0.5);
+                            const hasDeposit = periods.some((_p, yi) => depositOf(a.id, yi) > 0.5);
+                            const hasWithdrawal = periods.some((_p, yi) => withdrawnOf(a.id, yi) > 0.5);
+                            const hasOther = periods.some((_p, yi) => Math.abs(otherOf(a.id, yi)) > 0.5);
+                            const acctKey = `aa:${a.id}`;
+                            return (
+                              <Fragment key={a.id}>
                                 <tr
-                                  className={`text-dim hover:bg-accent/15 ${hasTax ? "cursor-pointer" : ""}`}
-                                  onClick={hasTax ? () => toggle(`wd:acct:${a.id}`) : undefined}
+                                  className="cursor-pointer border-t border-border hover:bg-accent/15"
+                                  onClick={() => toggle(acctKey)}
                                 >
-                                  <td className="py-2.5 pl-12">
-                                    {hasTax ? (
-                                      <ToggleLabel label="Withdrawn" expanded={isOpen(`wd:acct:${a.id}`)} onToggle={() => toggle(`wd:acct:${a.id}`)} />
-                                    ) : (
-                                      "Withdrawn"
-                                    )}
+                                  <td className="py-2.5 pl-10 font-medium">
+                                    <ToggleLabel label={a.label} expanded={isOpen(acctKey)} onToggle={() => toggle(acctKey)} />
                                   </td>
-                                  {cells((yi) => withdrawnOf(a.id, yi))}
+                                  {cells((yi) => netOf(a.id, a.fromPaycheck, yi), { signed: true })}
                                 </tr>
-                                {hasTax && isOpen(`wd:acct:${a.id}`) && (
+                                {isOpen(acctKey) && (
                                   <>
-                                    <tr className="border-t border-border text-dim hover:bg-accent/15">
-                                      <td className="py-2.5 pl-[4.5rem] text-xs italic">Estimated withholding</td>
-                                      {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
-                                    </tr>
-                                    <tr className="border-t border-border text-dim hover:bg-accent/15">
-                                      <td className="py-2.5 pl-[4.5rem] text-xs italic">Net withdrawal</td>
-                                      {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
-                                    </tr>
+                                    {hasDeposit && (
+                                      <tr className="text-dim hover:bg-accent/15">
+                                        <td className="py-2.5 pl-14">
+                                          Deposited / saved
+                                          {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
+                                        </td>
+                                        {cells((yi) => depositOf(a.id, yi))}
+                                      </tr>
+                                    )}
+                                    {hasWithdrawal && (
+                                      <>
+                                        <tr
+                                          className={`text-dim hover:bg-accent/15 ${hasTax ? "cursor-pointer" : ""}`}
+                                          onClick={hasTax ? () => toggle(`wd:acct:${a.id}`) : undefined}
+                                        >
+                                          <td className="py-2.5 pl-14">
+                                            {hasTax ? (
+                                              <ToggleLabel
+                                                label="Withdrawn"
+                                                expanded={isOpen(`wd:acct:${a.id}`)}
+                                                onToggle={() => toggle(`wd:acct:${a.id}`)}
+                                              />
+                                            ) : (
+                                              "Withdrawn"
+                                            )}
+                                          </td>
+                                          {cells((yi) => withdrawnOf(a.id, yi))}
+                                        </tr>
+                                        {hasTax && isOpen(`wd:acct:${a.id}`) && (
+                                          <>
+                                            <tr className="border-t border-border text-dim hover:bg-accent/15">
+                                              <td className="py-2.5 pl-[5.5rem] text-xs italic">Estimated withholding</td>
+                                              {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
+                                            </tr>
+                                            <tr className="border-t border-border text-dim hover:bg-accent/15">
+                                              <td className="py-2.5 pl-[5.5rem] text-xs italic">Net withdrawal</td>
+                                              {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
+                                            </tr>
+                                          </>
+                                        )}
+                                      </>
+                                    )}
+                                    {hasOther && (
+                                      <tr className="text-dim hover:bg-accent/15">
+                                        <td className="py-2.5 pl-14">Other activity</td>
+                                        {cells((yi) => -otherOf(a.id, yi), { signed: true })}
+                                      </tr>
+                                    )}
                                   </>
                                 )}
-                              </>
-                            )}
-                            {hasOther && (
-                              <tr className="text-dim hover:bg-accent/15">
-                                <td className="py-2.5 pl-12">Other activity</td>
-                                {cells((yi) => -otherOf(a.id, yi), { signed: true })}
-                              </tr>
-                            )}
-                          </>
-                        )}
+                              </Fragment>
+                            );
+                          })}
                       </Fragment>
                     );
                   })

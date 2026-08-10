@@ -177,8 +177,6 @@ body {
      silently broke the build's CSS parser and dropped this whole rule. */
   grid-template-areas:
     "hero"
-    "k1"
-    "k2"
     "chart"
     "list";
 }
@@ -186,12 +184,11 @@ body {
 @media (min-width: 1024px) {
   .bento {
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    /* The two stat rows are kept compact so the hero -- which spans both --
-       lands near 200px rather than stretching tall with a dead gap in it. */
-    grid-template-rows: minmax(94px, auto) minmax(94px, auto) minmax(380px, auto);
+    /* The lower band gets a min-height so the chart has room and the account
+       list can scroll inside it; the hero row is content-sized. */
+    grid-template-rows: auto minmax(380px, auto);
     grid-template-areas:
-      "hero hero hero hero k1 k1"
-      "hero hero hero hero k2 k2"
+      "hero hero hero hero hero hero"
       "chart chart chart chart list list";
   }
 }
