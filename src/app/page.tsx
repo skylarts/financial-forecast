@@ -20,6 +20,7 @@ import { SetupWizardHost } from "@/components/wizard/SetupWizardHost";
 import { JoyConfetti } from "@/components/joy/JoyConfetti";
 import { JoyQuote } from "@/components/joy/JoyQuote";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
+import { todayISO } from "@/engine/dateMath";
 
 function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());
@@ -150,6 +151,7 @@ function HomeContent() {
             accounts={projection.accounts}
             dollarMode={dollarMode}
             isFullRange={range[0] === minYear && range[1] === maxYear}
+            planStartDate={scenario.settings.startDate ?? todayISO()}
             compareKpis={hasCompare ? compareProjection.kpis : null}
             compareName={hasCompare ? compareScenarioRaw!.name : null}
             chart={
