@@ -21,6 +21,7 @@ import {
   type PricePoint,
 } from "@/engine/portfolio/performance";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
+import { chunkSymbols } from "@/lib/portfolio/historyBatch";
 import { Segmented } from "@/components/ui/controls";
 import { BenchmarkPicker } from "./BenchmarkPicker";
 
@@ -217,22 +218,38 @@ export function PerformancePanel({
     if (!symbolList) return;
 
     let cancelled = false;
-    fetch(`/api/prices/history/batch?symbols=${encodeURIComponent(symbolList)}&range=${range}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((body: { histories?: Record<string, PricePoint[]>; skipped?: string[] }) => {
-        if (cancelled) return;
-        setLoaded({
-          key: requestKey,
-          histories: new Map(Object.entries(body.histories ?? {})),
-          skipped: body.skipped ?? [],
-          failed: false,
-        });
-      })
-      .catch(() => {
+
+    // One request is capped, and a ledger that has held hundreds of positions
+    // needs every one of them priced to measure a long window -- a single call
+    // would answer for the first slice and report the rest as skipped, leaving
+    // the series to value the remainder at the last figure paid. The groups go
+    // one after another rather than at once: the route already fans each one
+    // out across the feed, and firing them in parallel is what the cap exists
+    // to prevent.
+    (async () => {
+      const histories = new Map<string, PricePoint[]>();
+      const skipped: string[] = [];
+      try {
+        for (const chunk of chunkSymbols(symbolList.split(","))) {
+          const response = await fetch(
+            `/api/prices/history/batch?symbols=${encodeURIComponent(chunk.join(","))}&range=${range}`,
+          );
+          if (!response.ok) throw new Error(String(response.status));
+          const body: { histories?: Record<string, PricePoint[]>; skipped?: string[] } =
+            await response.json();
+          if (cancelled) return;
+          for (const [symbol, points] of Object.entries(body.histories ?? {})) {
+            histories.set(symbol, points);
+          }
+          skipped.push(...(body.skipped ?? []));
+        }
+        if (!cancelled) setLoaded({ key: requestKey, histories, skipped, failed: false });
+      } catch {
         if (!cancelled) {
           setLoaded({ key: requestKey, histories: new Map(), skipped: [], failed: true });
         }
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
