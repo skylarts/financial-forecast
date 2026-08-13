@@ -8,6 +8,7 @@ import {
   type PortfolioAccount,
   type PortfolioAccountType,
 } from "@/domain/portfolio";
+import { accountCashBalances, type AccountCash } from "@/engine/portfolio/cash";
 import { analyzePortfolio, type PriceMap } from "@/engine/portfolio/metrics";
 import type { Portfolio } from "@/domain/portfolio";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
@@ -24,6 +25,25 @@ const INPUT =
 function accountValue(portfolio: Portfolio, prices: PriceMap, accountId: string) {
   const { summary } = analyzePortfolio(portfolio, prices, { accountIds: [accountId] });
   return { value: summary.totalValue, costBasis: summary.costBasis };
+}
+
+const EMPTY_CASH: AccountCash = { balance: 0, opening: 0, implied: 0, solvent: true };
+
+/**
+ * Why the cash figure is what it is. Worth spelling out only when the ledger
+ * needed help: a balance replayed from a complete ledger is just the balance,
+ * and explaining it would be noise on every row.
+ */
+function cashTitle(cash: AccountCash): string {
+  if (!cash.solvent) {
+    return "This ledger records trades but not the deposits that funded them, so this balance is inferred rather than counted. Import the account's cash activity to make it exact.";
+  }
+  if (cash.implied !== 0) {
+    return `Replayed from the ledger, seeded with ${money(
+      cash.opening + cash.implied,
+    )} — ${money(cash.implied)} of that is implied by spending recorded before the first deposit. Set the opening cash to what the first statement shows and this goes away.`;
+  }
+  return "Replayed from every cash movement in the ledger.";
 }
 
 function AccountRow({
@@ -45,6 +65,7 @@ function AccountRow({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const { value, costBasis } = accountValue(portfolio, prices, account.id);
+  const cash = accountCashBalances(portfolio).get(account.id) ?? EMPTY_CASH;
   const linked = forecastAccounts.find((a) => a.id === account.forecastAccountId) ?? null;
 
   return (
@@ -80,10 +101,21 @@ function AccountRow({
       <td className="px-3 py-2 text-right">
         <input
           type="number"
-          value={account.cashBalance}
-          onChange={(e) => updateAccount(account.id, { cashBalance: Number(e.target.value) || 0 })}
-          className={`${INPUT} w-28 text-right tabular-nums`}
+          value={account.openingCashBalance}
+          onChange={(e) =>
+            updateAccount(account.id, { openingCashBalance: Number(e.target.value) || 0 })
+          }
+          className={`${INPUT} w-24 text-right tabular-nums`}
+          title="Cash the account held before its first recorded transaction. Leave at 0 when the ledger runs from the account's opening."
         />
+      </td>
+      <td className="px-3 py-2 text-right text-[12.5px] tabular-nums text-foreground">
+        <span title={cashTitle(cash)}>{money(cash.balance)}</span>
+        {cash.implied !== 0 && (
+          <span className="ml-1 text-dim-2" title={cashTitle(cash)}>
+            *
+          </span>
+        )}
       </td>
       <td className="px-3 py-2 text-right text-[12.5px] font-semibold tabular-nums text-foreground">
         {money(value)}
@@ -162,7 +194,7 @@ export function AccountsPanel({
               institution: "",
               type: "taxable",
               forecastAccountId: null,
-              cashBalance: 0,
+              openingCashBalance: 0,
             })
           }
         >
@@ -179,12 +211,28 @@ export function AccountsPanel({
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-border">
-                {["Name", "Institution", "Type", "Cash", "Value", "Forecast account", ""].map((h, i) => (
+                {[
+                  "Name",
+                  "Institution",
+                  "Type",
+                  "Opening cash",
+                  "Cash",
+                  "Value",
+                  "Forecast account",
+                  "",
+                ].map((h, i) => (
                   <th
                     key={h || i}
                     className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2 ${
-                      i >= 3 && i <= 4 ? "text-right" : i === 6 ? "text-right" : "text-left"
+                      (i >= 3 && i <= 5) || i === 7 ? "text-right" : "text-left"
                     }`}
+                    title={
+                      i === 3
+                        ? "Cash held before the ledger's first row. Leave at 0 when the ledger runs from the account's opening."
+                        : i === 4
+                          ? "Replayed from the ledger's own deposits, trades, dividends and fees — not typed in."
+                          : undefined
+                    }
                   >
                     {h}
                   </th>

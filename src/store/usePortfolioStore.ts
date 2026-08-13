@@ -5,6 +5,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import {
   normalizeSymbol,
+  portfolioAccountSchema,
   portfolioSchema,
   type Portfolio,
   type PortfolioAccount,
@@ -24,7 +25,25 @@ const STORAGE_KEY = "portfolio-tracker";
  * generated lot id names the contract the way the rest of the app will.
  */
 function tidy(portfolio: Portfolio): Portfolio {
-  return withAssignedLotIds(withCanonicalSymbols(portfolio));
+  return withAssignedLotIds(withCanonicalSymbols(withMigratedAccounts(portfolio)));
+}
+
+/**
+ * Brings a stored account up to the current shape.
+ *
+ * Only the accounts, and only through the schema, which applies the defaults a
+ * save written before a field existed cannot carry. The one that matters today
+ * is cash: accounts used to store a hand-typed *current* balance, and it is
+ * deliberately dropped rather than migrated -- the ledger derives that balance
+ * now, so keeping the old number as an opening balance would count the same
+ * dollars twice, on top of a figure that was already stale by however long it
+ * had been since anyone retyped it.
+ */
+function withMigratedAccounts(portfolio: Portfolio): Portfolio {
+  return {
+    ...portfolio,
+    accounts: portfolio.accounts.map((account) => portfolioAccountSchema.parse(account)),
+  };
 }
 
 const emptyPortfolio: Portfolio = {

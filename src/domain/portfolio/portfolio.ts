@@ -39,10 +39,20 @@ export const portfolioAccountSchema = z.object({
    */
   forecastAccountId: idSchema.nullable().default(null),
   /**
-   * Uninvested cash sitting in the account. Tracked as a running balance
-   * rather than a position because no statement reports it as a lot.
+   * Cash the account held before its first recorded transaction.
+   *
+   * Only a seed, never the current balance: cash on hand is replayed from the
+   * ledger's own movements like everything else here (see `accountCashBalances`).
+   * A ledger that runs from the account's opening leaves this at zero; one built
+   * from an export that begins mid-history sets it to what the first statement
+   * opened with.
+   *
+   * This field used to hold the *current* balance, typed in by hand and updated
+   * by nothing. Old saves are read without it -- their value described a balance
+   * the ledger now derives, and carrying it forward as a seed would count those
+   * same dollars a second time.
    */
-  cashBalance: z.number().default(0),
+  openingCashBalance: z.number().default(0),
 });
 export type PortfolioAccount = z.infer<typeof portfolioAccountSchema>;
 

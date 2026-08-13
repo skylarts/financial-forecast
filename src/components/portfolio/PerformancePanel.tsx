@@ -203,6 +203,17 @@ export function PerformancePanel({
     [portfolio.transactions, scopeAccountId],
   );
 
+  // What the accounts in scope opened holding, before their ledgers begin. The
+  // series replays from the same seed the Accounts tab's balance does, so the
+  // two cannot drift apart on a ledger that starts mid-history.
+  const openingCash = useMemo(
+    () =>
+      portfolio.accounts
+        .filter((a) => scopeAccountId === "all" || a.id === scopeAccountId)
+        .reduce((sum, a) => sum + a.openingCashBalance, 0),
+    [portfolio.accounts, scopeAccountId],
+  );
+
   const earliest = useMemo(() => {
     const dates = scopedTransactions.map((tx) => tx.date).sort();
     return dates[0] ?? todayIso();
@@ -320,8 +331,9 @@ export function PerformancePanel({
         to,
         accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
         splits,
+        openingCash,
       }),
-    [scopedTransactions, histories, splits, from, to, scopeAccountId],
+    [scopedTransactions, histories, splits, from, to, scopeAccountId, openingCash],
   );
 
   const benchmarkSeries = useMemo(
@@ -390,6 +402,7 @@ export function PerformancePanel({
         to: end,
         accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
         splits,
+        openingCash,
       });
 
       // The fetch only went back so far. A window starting before the data does
@@ -413,7 +426,7 @@ export function PerformancePanel({
         }),
       };
     });
-  }, [scopedTransactions, histories, splits, benchmarks, earliest, scopeAccountId]);
+  }, [scopedTransactions, histories, splits, benchmarks, earliest, scopeAccountId, openingCash]);
 
   const portfolioReturn = totalReturn(series.points);
   const portfolioAnnualized = annualizedReturn(series.points);

@@ -32,7 +32,7 @@ function portfolio(transactions: Transaction[]): Portfolio {
         institution: "",
         type: "taxable",
         forecastAccountId: null,
-        cashBalance: 0,
+        openingCashBalance: 0,
       },
     ],
     transactions,

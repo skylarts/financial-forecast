@@ -373,7 +373,7 @@ export function PortfolioApp() {
                   institution: "",
                   type: "taxable",
                   forecastAccountId: null,
-                  cashBalance: 0,
+                  openingCashBalance: 0,
                 });
               }
               setImporting(true);

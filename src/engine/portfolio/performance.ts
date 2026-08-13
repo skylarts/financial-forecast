@@ -5,6 +5,7 @@ import {
   signedCashFlow,
   type Transaction,
 } from "@/domain/portfolio";
+import { replayableCash } from "./cash";
 
 export interface PricePoint {
   date: ISODate;
@@ -86,57 +87,6 @@ const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
  * and the day is measured like any other.
  */
 const FLOW_DOMINANCE = 1;
-
-/**
- * Whether a ledger accounts for the money it spends, and the opening cash
- * balance it implies.
- *
- * Measured at each day's close rather than after every row, because the order
- * of transactions inside one date is arbitrary -- a rebalance's purchases are
- * routinely listed ahead of the sales that paid for them, which would read as
- * an overdraft that never happened.
- *
- * `floor` is the smallest opening balance consistent with never having spent
- * money the account did not hold. It is a deduction rather than a guess: an
- * account that bought $1,000 of stock before its first recorded deposit
- * demonstrably held $1,000 the ledger does not mention, and starting from zero
- * would carry that day at nothing and measure the next one against it. Seeding
- * the balance rather than fixing it up per day keeps the series a single
- * running total, which is what makes the window's opening value inheritable.
- */
-function replayableCash(ordered: readonly Transaction[]): {
-  solvent: boolean;
-  floor: number;
-} {
-  let cash = 0;
-  let arrived = 0;
-  let worstDeficit = 0;
-
-  for (let i = 0; i < ordered.length; i += 1) {
-    const tx = ordered[i];
-    cash += signedCashFlow(tx);
-    if (tx.type === "cash_deposit") arrived += Math.abs(signedCashFlow(tx));
-    if (tx.type === "transfer_in") arrived += Math.abs(tx.quantity * tx.price);
-
-    const endOfDay = i + 1 === ordered.length || ordered[i + 1].date !== tx.date;
-    if (endOfDay && cash < -worstDeficit) worstDeficit = -cash;
-  }
-
-  if (worstDeficit === 0) return { solvent: true, floor: 0 };
-
-  // A deficit on its own is not disqualifying, and is usually just dating:
-  // settlement routinely stamps a purchase a day ahead of the transfer that
-  // cleared for it, and a same-day rebalance lists its buys before its sells.
-  // Seeding the balance absorbs all of that.
-  //
-  // What the seed cannot absorb is a ledger with no funding in it at all -- a
-  // file of trade confirmations and no cash activity, where the implied opening
-  // balance is not a settlement artifact but the entire cost of the portfolio.
-  // The line is drawn where the deduction stops being modest: an account cannot
-  // plausibly have opened holding more than every dollar the ledger can vouch
-  // for having arrived, and one that records nothing arriving vouches for none.
-  return { solvent: worstDeficit <= arrived, floor: worstDeficit };
-}
 
 /**
  * Running share count per symbol, by transaction.
@@ -548,6 +498,12 @@ export interface SeriesOptions {
    * {@link splitScales}.
    */
   splits?: ReadonlyMap<string, readonly SplitEvent[]>;
+  /**
+   * Cash the accounts in scope held before their ledgers begin. Seeds the replay
+   * so a window opening mid-history inherits it, and so this series and the
+   * Accounts tab's balance are built on the same footing rather than drifting.
+   */
+  openingCash?: number;
 }
 
 /**
@@ -576,7 +532,7 @@ export function buildPerformanceSeries(
   histories: ReadonlyMap<string, readonly PricePoint[]>,
   options: SeriesOptions,
 ): PerformanceSeries {
-  const { from, to, accountIds, splits } = options;
+  const { from, to, accountIds, splits, openingCash = 0 } = options;
   const scoped = accountIds
     ? transactions.filter((tx) => accountIds.includes(tx.accountId))
     : [...transactions];
@@ -584,7 +540,7 @@ export function buildPerformanceSeries(
 
   const days = tradingDays(histories, from, to);
   const relevant = ordered.filter((tx) => tx.date <= to);
-  const funding = replayableCash(relevant);
+  const funding = replayableCash(relevant, openingCash);
   const basis: "account" | "securities" = funding.solvent ? "account" : "securities";
   if (days.length === 0) return { points: [], approximated: [], basis };
 
@@ -644,7 +600,7 @@ export function buildPerformanceSeries(
   };
 
   const held = new Map<string, number>();
-  let cash = funding.floor;
+  let cash = openingCash + funding.floor;
   let cursor = 0;
 
   // Everything before the window opens is history: replay it so the window
