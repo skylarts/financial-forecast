@@ -116,11 +116,30 @@ function flowFor(tx: Transaction, priceOn: (symbol: string) => number | null): n
   return -signedCashFlow(tx);
 }
 
+/**
+ * The close on the given day, or the last one before it.
+ *
+ * Binary search rather than a walk from the front, because this is the hot
+ * path of the whole series: it runs once per held symbol per day, and the
+ * arrays are years of daily closes. Scanning them was quadratic in the size of
+ * the window -- a five-year chart over a wide ledger spent seconds inside this
+ * function alone, on the main thread, before anything could be drawn.
+ *
+ * Requires `points` sorted ascending by date, which is how the feed builds
+ * them.
+ */
 function lastOnOrBefore(points: readonly PricePoint[], date: ISODate): number | null {
+  let low = 0;
+  let high = points.length - 1;
   let answer: number | null = null;
-  for (const point of points) {
-    if (point.date > date) break;
-    answer = point.close;
+  while (low <= high) {
+    const mid = (low + high) >>> 1;
+    if (points[mid].date <= date) {
+      answer = points[mid].close;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
   }
   return answer;
 }

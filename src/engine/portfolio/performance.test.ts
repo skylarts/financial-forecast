@@ -466,3 +466,45 @@ describe("a day the feed could not price", () => {
     expect(totalReturn(points)!).toBeGreaterThan(-1);
   });
 });
+
+describe("valuing a day the feed has no close for", () => {
+  // The close is found by binary search over years of daily points, so the
+  // cases that matter are the edges: a day before the first close, a day
+  // between two, and a day past the last.
+  it("carries the last close forward across gaps and past the end", () => {
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-05", 120]])],
+      // Priced only on the days in between, to put dates in the window that
+      // VTI itself has no point for.
+      ["SPY", history([["2024-01-02", 10], ["2024-01-03", 10], ["2024-01-04", 10], ["2024-01-05", 10], ["2024-01-08", 10]])],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 })],
+      histories,
+      { from: "2024-01-02", to: "2024-01-08" },
+    );
+
+    expect(points.map((p) => `${p.date}:${p.value}`)).toEqual([
+      "2024-01-02:1000",
+      // No close on the 3rd or 4th: the 2nd's price still stands.
+      "2024-01-03:1000",
+      "2024-01-04:1000",
+      "2024-01-05:1200",
+      // Past VTI's last point, still carried rather than dropping to zero.
+      "2024-01-08:1200",
+    ]);
+  });
+
+  it("holds a position opened before the feed's first close at nothing", () => {
+    const histories = new Map([["VTI", history([["2024-01-05", 100]])]]);
+
+    const { points } = buildPerformanceSeries(
+      [tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 })],
+      histories,
+      { from: "2024-01-05", to: "2024-01-05" },
+    );
+
+    expect(points[0].value).toBe(1000);
+  });
+});
