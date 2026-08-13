@@ -42,6 +42,23 @@ export interface PerformanceSeries {
 const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
 
 /**
+ * How large a day's flow may be, relative to what was invested going into it,
+ * before that day stops being a measurement.
+ *
+ * A time-weighted return divides the day's earnings by the base it opened on,
+ * which only says anything while that base is the larger of the two. Once more
+ * money moves than was invested to begin with, the quotient is describing the
+ * size of the trade rather than what the holdings did, so one is the ceiling:
+ * the day's flow may not exceed the base it started from.
+ *
+ * On the ledger this was found on, that neutralizes six days -- a portfolio
+ * sold out entirely and bought back weeks later, twice -- and nothing else in
+ * five years. Raising it lets the second of those days back in, and one such
+ * day permanently rescales every day after it.
+ */
+const FLOW_DOMINANCE = 1;
+
+/**
  * Running share count per symbol, by transaction.
  *
  * Deliberately simpler than the lot ledger: valuing a portfolio needs only how
@@ -295,15 +312,20 @@ export function buildPerformanceSeries(
     // withdrawals taken back out. A day that opened with nothing invested has
     // no return to measure -- money arriving is not performance -- so the index
     // holds flat rather than reporting the first purchase as an infinite gain.
-    // A holding the feed could not price is carried at the last figure paid,
-    // so on a ledger with many of those the day's flow can exceed everything
-    // the book appears to be worth. That makes the factor negative, and a
-    // negative factor does not represent a loss -- it flips the index's sign
-    // and every later day compounds the wrong way, walking the curve off the
-    // bottom of the chart. A position cannot lose more than all of itself in a
-    // day, so a factor at or below zero is a valuation failure, not a return:
-    // hold the index flat, exactly as a day that opened with nothing invested.
-    if (previousValue > 0) {
+    //
+    // The same holds when the base is merely negligible rather than empty. This
+    // series values securities alone, so a ledger that sold out entirely reads
+    // as near-zero even though the cash is sitting right there waiting to be
+    // redeployed; a portfolio liquidated in March and bought back weeks later
+    // opened the second day on the float dust left behind by the first. Buying
+    // back in then divides a full position by that dust, which is not a loss of
+    // everything -- it is a denominator that was never a base to measure from.
+    // Left in, one such day permanently rescales every day after it.
+    //
+    // A position also cannot lose more than all of itself in a day, so a factor
+    // at or below zero is a valuation failure rather than a return: the feed
+    // could not price something and it fell back to the last figure paid.
+    if (previousValue > 0 && Math.abs(flow) <= previousValue * FLOW_DOMINANCE) {
       const factor = (value - flow) / previousValue;
       if (factor > 0) index *= factor;
     }
