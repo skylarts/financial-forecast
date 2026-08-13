@@ -1,4 +1,5 @@
 import { fetchHistories } from "@/lib/portfolio/priceFeed";
+import { HISTORY_BATCH_LIMIT } from "@/lib/portfolio/historyBatch";
 
 const ALLOWED_RANGES = new Set(["1mo", "3mo", "6mo", "ytd", "1y", "2y", "5y", "10y", "max"]);
 const DEFAULT_RANGE = "5y";
@@ -20,7 +21,7 @@ const DEFAULT_RANGE = "5y";
  * late-alphabet ticker -- SPY, VTI, VOO -- past the cut, and the page rendered
  * as though the feed simply had nothing for them.
  */
-const MAX_SYMBOLS = 120;
+const MAX_SYMBOLS = HISTORY_BATCH_LIMIT;
 
 /**
  * Daily closes for many symbols at once.

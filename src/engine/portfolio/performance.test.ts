@@ -402,3 +402,67 @@ describe("indexPrices", () => {
     expect(indexPrices(history([["2020-01-02", 50]]), "2024-01-02", "2024-01-03")).toEqual([]);
   });
 });
+
+describe("symbol priority against a capped request", () => {
+  // The caller's order is a priority order: whatever it lists first is what
+  // survives the server's cap. Sorting the whole list alphabetically is what
+  // let a wide ledger drop every holding past the cut-off.
+  it("puts still-open positions ahead of closed ones", () => {
+    const symbols = symbolsForWindow(
+      [
+        tx({ type: "buy", date: "2024-02-01", quantity: 10, price: 100, symbol: "AAA" }),
+        tx({ type: "sell", date: "2024-03-01", quantity: 10, price: 120, symbol: "AAA" }),
+        tx({ type: "buy", date: "2024-02-01", quantity: 5, price: 100, symbol: "ZZZ" }),
+      ],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    // ZZZ is still held, so it leads despite sorting last.
+    expect(symbols).toEqual(["ZZZ", "AAA"]);
+  });
+
+  it("still returns every symbol the window needs", () => {
+    const symbols = symbolsForWindow(
+      [
+        tx({ type: "buy", date: "2024-02-01", quantity: 1, price: 10, symbol: "CCC" }),
+        tx({ type: "sell", date: "2024-05-01", quantity: 1, price: 12, symbol: "CCC" }),
+        tx({ type: "buy", date: "2024-02-01", quantity: 1, price: 10, symbol: "BBB" }),
+        tx({ type: "buy", date: "2024-02-01", quantity: 1, price: 10, symbol: "DDD" }),
+      ],
+      "2024-01-01",
+      "2024-12-31",
+    );
+
+    expect([...symbols].sort()).toEqual(["BBB", "CCC", "DDD"]);
+    expect(symbols.slice(0, 2).sort()).toEqual(["BBB", "DDD"]);
+  });
+});
+
+describe("a day the feed could not price", () => {
+  // An unpriced holding is carried at the last figure paid, so a big purchase
+  // can exceed everything the book appears to be worth. That factor is a
+  // valuation failure, not a return, and letting it through flips the index
+  // negative and compounds the wrong way for every day after it.
+  // The fallback is the last figure ever paid, applied to every day in the
+  // window -- so a holding bought high and topped up cheap later is carried at
+  // the cheap price on the day of the expensive purchase. The money spent then
+  // dwarfs what the book appears to be worth, and the factor turns negative.
+  it("holds the index flat rather than letting it go negative", () => {
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 1, price: 100, symbol: "PRICED" }),
+        // Nothing in `histories` for this one, so both days lean on the
+        // fallback, which ends up being the $1 paid on the second day.
+        tx({ type: "buy", date: "2024-01-03", quantity: 10, price: 100, symbol: "DARK" }),
+        tx({ type: "buy", date: "2024-01-04", quantity: 1, price: 1, symbol: "DARK" }),
+      ],
+      new Map([["PRICED", history([["2024-01-02", 100], ["2024-01-03", 100], ["2024-01-04", 110]])]]),
+      { from: "2024-01-02", to: "2024-01-04" },
+    );
+
+    expect(points.every((p) => p.index > 0)).toBe(true);
+    expect(totalReturn(points)).not.toBeNull();
+    expect(totalReturn(points)!).toBeGreaterThan(-1);
+  });
+});

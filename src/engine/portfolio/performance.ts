@@ -168,6 +168,7 @@ export function symbolsForWindow(
 
   const needed = new Set<string>();
   const openingPosition = new Map<string, number>();
+  const closingPosition = new Map<string, number>();
 
   for (const tx of ordered) {
     if (tx.date > to) break;
@@ -180,6 +181,7 @@ export function symbolsForWindow(
       // Traded inside the window, so it matters whichever way it moved.
       needed.add(normalizeSymbol(tx.symbol));
     }
+    applyToShares(closingPosition, tx);
   }
 
   // Whatever was still on the books when the window opened has to be valued
@@ -188,7 +190,15 @@ export function symbolsForWindow(
     if (Math.abs(shares) > 1e-9) needed.add(symbol);
   }
 
-  return [...needed].sort();
+  // Still-open positions lead, because the caller's list is a priority order
+  // against a capped request and these are the ones that decide the closing
+  // figure. Sorting the whole list alphabetically instead is what let a ledger
+  // wide enough to overflow the cap drop every holding past the cut-off and
+  // price them at the last figure paid -- the same failure the benchmarks were
+  // already pulled to the front to escape.
+  const stillHeld = (symbol: string) => Math.abs(closingPosition.get(symbol) ?? 0) > 1e-9;
+  const all = [...needed].sort();
+  return [...all.filter(stillHeld), ...all.filter((s) => !stillHeld(s))];
 }
 
 export interface SeriesOptions {
@@ -285,8 +295,17 @@ export function buildPerformanceSeries(
     // withdrawals taken back out. A day that opened with nothing invested has
     // no return to measure -- money arriving is not performance -- so the index
     // holds flat rather than reporting the first purchase as an infinite gain.
+    // A holding the feed could not price is carried at the last figure paid,
+    // so on a ledger with many of those the day's flow can exceed everything
+    // the book appears to be worth. That makes the factor negative, and a
+    // negative factor does not represent a loss -- it flips the index's sign
+    // and every later day compounds the wrong way, walking the curve off the
+    // bottom of the chart. A position cannot lose more than all of itself in a
+    // day, so a factor at or below zero is a valuation failure, not a return:
+    // hold the index flat, exactly as a day that opened with nothing invested.
     if (previousValue > 0) {
-      index *= (value - flow) / previousValue;
+      const factor = (value - flow) / previousValue;
+      if (factor > 0) index *= factor;
     }
 
     points.push({ date: day, value, flow, index });
