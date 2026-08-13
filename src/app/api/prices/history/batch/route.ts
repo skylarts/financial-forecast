@@ -56,11 +56,28 @@ export async function GET(request: Request) {
 
   const results = await fetchHistories(symbols, range);
 
+  // Ranges are tiered so neighbouring windows share one cached upstream fetch,
+  // which means a three-year chart is answered out of a ten-year pull and two
+  // thirds of what comes back predates anything it will draw. The upstream
+  // fetch stays keyed by range -- switching windows still reuses it -- and only
+  // the reply is cut down, because sending closes the caller cannot plot costs
+  // it a download and a parse of tens of megabytes before the first pixel.
+  const from = params.get("from");
+  const trim = (points: { date: string; close: number }[]) => {
+    if (!from) return points;
+    const first = points.findIndex((point) => point.date >= from);
+    if (first === -1) return points.slice(-1);
+    // One close from before the window comes too: a position is valued from
+    // the last price on or before each day, and the first day of the window
+    // usually has to reach back past it.
+    return points.slice(Math.max(0, first - 1));
+  };
+
   const histories: Record<string, { date: string; close: number }[]> = {};
   for (const [symbol, result] of results) {
     // A symbol the feed has nothing for is omitted rather than sent as an empty
     // array, so the caller can tell "no history" apart from "no data yet".
-    if (result.points.length > 0) histories[symbol] = result.points;
+    if (result.points.length > 0) histories[symbol] = trim(result.points);
   }
 
   return Response.json({ histories, skipped });

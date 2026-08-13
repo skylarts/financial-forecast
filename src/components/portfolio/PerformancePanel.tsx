@@ -80,6 +80,15 @@ function fetchRangeFor(period: Period): string {
   return "2y";
 }
 
+/**
+ * How long a typed date is left alone before the chart follows it.
+ *
+ * Long enough to type a four-digit year into a date input without the window
+ * jumping to the year 2 on the way there, short enough that finishing the date
+ * and looking up finds the chart already moving.
+ */
+const DATE_ENTRY_SETTLE_MS = 700;
+
 function isoDaysAgo(months: number): string {
   const date = new Date();
   date.setMonth(date.getMonth() - months);
@@ -153,8 +162,15 @@ export function PerformancePanel({
   scopeAccountId: string;
 }) {
   const [period, setPeriod] = useState<Period>("1y");
+  // What the chart is drawn from, and separately what the boxes are showing.
+  // A date input fires a change for every segment typed, so the year is
+  // reported as 0002 on the way to 2026 -- committing each of those redraws a
+  // window nobody asked for and refetches the prices behind it. The typed value
+  // is held here until it settles, which is what makes the field usable at all.
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const [draftFrom, setDraftFrom] = useState("");
+  const [draftTo, setDraftTo] = useState("");
   const [benchmarks, setBenchmarks] = useState<string[]>(["SPY"]);
   const [loaded, setLoaded] = useState<{
     key: string;
@@ -163,6 +179,17 @@ export function PerformancePanel({
     skipped: string[];
     failed: boolean;
   } | null>(null);
+
+  // A part-typed date settles into the real one a beat later; committing on the
+  // pause keeps the boxes responsive without needing the user to hit anything.
+  useEffect(() => {
+    if (draftFrom === customFrom && draftTo === customTo) return;
+    const timer = setTimeout(() => {
+      setCustomFrom(draftFrom);
+      setCustomTo(draftTo);
+    }, DATE_ENTRY_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [draftFrom, draftTo, customFrom, customTo]);
 
   const scopedTransactions = useMemo(
     () =>
@@ -211,10 +238,10 @@ export function PerformancePanel({
   }, [scopedTransactions, benchmarks, from, to, scopeAccountId]);
 
   const fetchRange = fetchRangeFor(period);
-  const requestKey = `${fetchRange}::${neededSymbols.join(",")}`;
+  const requestKey = `${fetchRange}::${from}::${neededSymbols.join(",")}`;
 
   useEffect(() => {
-    const [range, symbolList] = requestKey.split("::");
+    const [range, windowStart, symbolList] = requestKey.split("::");
     if (!symbolList) return;
 
     let cancelled = false;
@@ -232,7 +259,7 @@ export function PerformancePanel({
       try {
         for (const chunk of chunkSymbols(symbolList.split(","))) {
           const response = await fetch(
-            `/api/prices/history/batch?symbols=${encodeURIComponent(chunk.join(","))}&range=${range}`,
+            `/api/prices/history/batch?symbols=${encodeURIComponent(chunk.join(","))}&range=${range}&from=${windowStart}`,
           );
           if (!response.ok) throw new Error(String(response.status));
           const body: { histories?: Record<string, PricePoint[]>; skipped?: string[] } =
@@ -399,11 +426,17 @@ export function PerformancePanel({
           From
           <input
             type="date"
-            value={period === "custom" ? customFrom : from}
-            max={customTo || undefined}
+            value={period === "custom" ? draftFrom : from}
+            max={draftTo || undefined}
             onChange={(e) => {
-              setCustomFrom(e.target.value);
+              setDraftFrom(e.target.value);
               setPeriod("custom");
+            }}
+            // Leaving the field or pressing enter means it is finished, so
+            // there is nothing left to wait for.
+            onBlur={() => setCustomFrom(draftFrom)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setCustomFrom(draftFrom);
             }}
             className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
           />
@@ -412,11 +445,15 @@ export function PerformancePanel({
           To
           <input
             type="date"
-            value={period === "custom" ? customTo : to}
-            min={customFrom || undefined}
+            value={period === "custom" ? draftTo : to}
+            min={draftFrom || undefined}
             onChange={(e) => {
-              setCustomTo(e.target.value);
+              setDraftTo(e.target.value);
               setPeriod("custom");
+            }}
+            onBlur={() => setCustomTo(draftTo)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setCustomTo(draftTo);
             }}
             className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
           />
@@ -427,6 +464,8 @@ export function PerformancePanel({
             onClick={() => {
               setCustomFrom("");
               setCustomTo("");
+              setDraftFrom("");
+              setDraftTo("");
               setPeriod("1y");
             }}
             className="text-[11.5px] text-dim-2 underline hover:text-foreground"
