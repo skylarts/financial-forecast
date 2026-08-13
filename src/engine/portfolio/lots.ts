@@ -223,8 +223,13 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
   const open = new Map<string, OpenLot[]>();
   const closedLots: ClosedLot[] = [];
   const warnings: LedgerWarning[] = [];
-  /** Every lot id handed out so far, to catch two lots answering to one name. */
-  const issued = new Set<string>();
+  // Every lot id handed out so far, to catch two lots answering to one name --
+  // scoped per account, because a sale can only ever draw on the lots
+  // `positionKey` puts it next to: its own account's queue for that symbol and
+  // side. Two accounts naming a lot "VTI-1" are not competing for the same
+  // shares, so there is nothing for either sale to confuse it with; keying
+  // this globally was flagging accounts that could never collide.
+  const issued = new Map<Id, Set<string>>();
 
   // Exercised and assigned contracts fold their premium into the shares they
   // deliver, so the stock legs need their adjustments resolved before replay.
@@ -248,15 +253,17 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
       // A purchase names exactly one lot -- its own. If a statement crammed
       // several ids into the field, the first is the one being opened.
       const lotId = parseLotIds(tx.lotId)[0] ?? tx.id;
-      if (issued.has(lotId)) {
+      const issuedHere = issued.get(tx.accountId) ?? new Set<string>();
+      if (!issued.has(tx.accountId)) issued.set(tx.accountId, issuedHere);
+      if (issuedHere.has(lotId)) {
         warnings.push({
           txId: tx.id,
           date: tx.date,
           symbol,
-          message: `Lot id "${lotId}" is already in use by an earlier purchase, so a sale naming it can't tell the two apart. Give this one a different id.`,
+          message: `Lot id "${lotId}" is already in use by an earlier purchase in this account, so a sale naming it can't tell the two apart. Give this one a different id.`,
         });
       }
-      issued.add(lotId);
+      issuedHere.add(lotId);
       lots.push({
         id: lotId,
         accountId: tx.accountId,

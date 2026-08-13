@@ -119,6 +119,24 @@ describe("buildLotLedger", () => {
     expect(warnings[0].message).toContain("already in use");
   });
 
+  it("does not flag the same lot id reused across different accounts", () => {
+    // A sale can only ever draw on its own account's queue for that symbol and
+    // side, so two accounts naming a lot "LOT-A" are never competing for the
+    // same shares -- there is nothing for a sale in either one to confuse it
+    // with.
+    const { warnings, closedLots } = buildLotLedger([
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, lotId: "LOT-A", accountId: "acct-1" }),
+      tx({ type: "buy", date: "2024-06-10", quantity: 5, price: 150, lotId: "LOT-A", accountId: "acct-2" }),
+      tx({ type: "sell", date: "2025-03-10", quantity: 10, price: 200, lotId: "LOT-A", accountId: "acct-1" }),
+      tx({ type: "sell", date: "2025-03-10", quantity: 5, price: 200, lotId: "LOT-A", accountId: "acct-2" }),
+    ]);
+
+    expect(warnings).toHaveLength(0);
+    // Each sale drew its own account's lot, at that account's cost.
+    expect(closedLots.find((l) => l.accountId === "acct-1")?.costBasis).toBe(1000);
+    expect(closedLots.find((l) => l.accountId === "acct-2")?.costBasis).toBe(750);
+  });
+
   it("does not report an oversell when the named lot covers the trade exactly", () => {
     const { warnings } = buildLotLedger([
       tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, lotId: "LOT-A" }),
