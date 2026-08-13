@@ -641,6 +641,15 @@ export function PerformancePanel({
             </p>
           )}
 
+          {series.basis === "securities" && (
+            <p className="mt-2 text-[11.5px] text-dim-2">
+              These figures cover the investments only, not the cash beside them — this
+              ledger records purchases it has no deposits for, so there is no saying what
+              its cash balance was on any past day. Importing the account&apos;s cash
+              activity would let the return cover the whole account.
+            </p>
+          )}
+
           {series.approximated.length > 0 && (
             <p className="mt-2 text-[11.5px] text-dim-2">
               Still holding {series.approximated.join(", ")} with no price history behind them —

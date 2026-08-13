@@ -13,9 +13,13 @@ export interface PricePoint {
 
 export interface PerformancePoint {
   date: ISODate;
-  /** Market value of the positions held at that day's close. */
+  /**
+   * What the account was worth at that day's close: positions plus the cash
+   * beside them on an `account` basis, positions alone on a `securities` one.
+   * See {@link PerformanceSeries.basis}.
+   */
   value: number;
-  /** Net money moved into the invested pool that day; negative is money out. */
+  /** Net money moved in from outside that day; negative is money out. */
   flow: number;
   /** Time-weighted growth of one dollar, 1 at the start of the window. */
   index: number;
@@ -36,6 +40,21 @@ export interface PerformanceSeries {
    * the cases where the *answer* is uncertain under years of noise.
    */
   approximated: string[];
+  /**
+   * Which portfolio the returns describe.
+   *
+   * `account` is the real one: securities plus the cash sitting beside them,
+   * replayed from the ledger's own cash movements. A sale converts securities
+   * into cash rather than shrinking the portfolio, so only money crossing the
+   * account boundary counts as a flow, and idle cash shows up as the drag it is.
+   *
+   * `securities` is the fallback for a ledger that cannot say what its cash was
+   * doing -- see {@link replayableCash}. It values positions alone, which
+   * makes every purchase look like a contribution arriving and every sale like a
+   * withdrawal leaving. That still chains into a defensible return, but a day
+   * the ledger emptied out has no base left to measure the next one against.
+   */
+  basis: "account" | "securities";
 }
 
 /** Types whose share movement is a transfer of value, not a purchase. */
@@ -43,7 +62,8 @@ const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
 
 /**
  * How large a day's flow may be, relative to what was invested going into it,
- * before that day stops being a measurement.
+ * before that day stops being a measurement. Applies on a `securities` basis
+ * only, which is the one that cannot see the cash a sale left behind.
  *
  * A time-weighted return divides the day's earnings by the base it opened on,
  * which only says anything while that base is the larger of the two. Once more
@@ -51,12 +71,63 @@ const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
  * size of the trade rather than what the holdings did, so one is the ceiling:
  * the day's flow may not exceed the base it started from.
  *
- * On the ledger this was found on, that neutralizes six days -- a portfolio
- * sold out entirely and bought back weeks later, twice -- and nothing else in
- * five years. Raising it lets the second of those days back in, and one such
- * day permanently rescales every day after it.
+ * This is a blunt instrument -- it discards whatever the holdings really did
+ * that day -- and it is a symptom of the basis rather than a fix. On an
+ * `account` basis the cash is in the denominator, the collapse never starts,
+ * and the day is measured like any other.
  */
 const FLOW_DOMINANCE = 1;
+
+/**
+ * Whether a ledger accounts for the money it spends, and the opening cash
+ * balance it implies.
+ *
+ * Measured at each day's close rather than after every row, because the order
+ * of transactions inside one date is arbitrary -- a rebalance's purchases are
+ * routinely listed ahead of the sales that paid for them, which would read as
+ * an overdraft that never happened.
+ *
+ * `floor` is the smallest opening balance consistent with never having spent
+ * money the account did not hold. It is a deduction rather than a guess: an
+ * account that bought $1,000 of stock before its first recorded deposit
+ * demonstrably held $1,000 the ledger does not mention, and starting from zero
+ * would carry that day at nothing and measure the next one against it. Seeding
+ * the balance rather than fixing it up per day keeps the series a single
+ * running total, which is what makes the window's opening value inheritable.
+ */
+function replayableCash(ordered: readonly Transaction[]): {
+  solvent: boolean;
+  floor: number;
+} {
+  let cash = 0;
+  let arrived = 0;
+  let worstDeficit = 0;
+
+  for (let i = 0; i < ordered.length; i += 1) {
+    const tx = ordered[i];
+    cash += signedCashFlow(tx);
+    if (tx.type === "cash_deposit") arrived += Math.abs(signedCashFlow(tx));
+    if (tx.type === "transfer_in") arrived += Math.abs(tx.quantity * tx.price);
+
+    const endOfDay = i + 1 === ordered.length || ordered[i + 1].date !== tx.date;
+    if (endOfDay && cash < -worstDeficit) worstDeficit = -cash;
+  }
+
+  if (worstDeficit === 0) return { solvent: true, floor: 0 };
+
+  // A deficit on its own is not disqualifying, and is usually just dating:
+  // settlement routinely stamps a purchase a day ahead of the transfer that
+  // cleared for it, and a same-day rebalance lists its buys before its sells.
+  // Seeding the balance absorbs all of that.
+  //
+  // What the seed cannot absorb is a ledger with no funding in it at all -- a
+  // file of trade confirmations and no cash activity, where the implied opening
+  // balance is not a settlement artifact but the entire cost of the portfolio.
+  // The line is drawn where the deduction stops being modest: an account cannot
+  // plausibly have opened holding more than every dollar the ledger can vouch
+  // for having arrived, and one that records nothing arriving vouches for none.
+  return { solvent: worstDeficit <= arrived, floor: worstDeficit };
+}
 
 /**
  * Running share count per symbol, by transaction.
@@ -134,6 +205,34 @@ function flowFor(tx: Transaction, priceOn: (symbol: string) => number | null): n
 }
 
 /**
+ * Money crossing the account's boundary on a transaction.
+ *
+ * The flow a time-weighted return has to strip out is the money the investor
+ * put in or took out -- nothing else. Once cash is tracked alongside the
+ * positions, a purchase stops qualifying: it swaps cash for securities and
+ * leaves the account worth exactly what it was a moment earlier. So do sales,
+ * and so does a dividend, which moves value out of the share price and into the
+ * cash balance without a dollar entering or leaving.
+ *
+ * That leaves deposits, withdrawals, and securities carried in or out of the
+ * account by a custodian transfer. Fees are deliberately not flows either: the
+ * money genuinely left, and a return that quietly excused its own costs would
+ * flatter every account that pays them.
+ */
+function externalFlowFor(tx: Transaction, priceOn: (symbol: string) => number | null): number {
+  if (TRANSFER_TYPES.has(tx.type)) {
+    if (tx.symbol === null) return 0;
+    const symbol = normalizeSymbol(tx.symbol);
+    const price = priceOn(symbol);
+    if (price === null) return 0;
+    const value = tx.quantity * price * contractMultiplier(symbol);
+    return tx.type === "transfer_in" ? value : -value;
+  }
+  if (tx.type === "cash_deposit" || tx.type === "cash_withdrawal") return signedCashFlow(tx);
+  return 0;
+}
+
+/**
  * The close on the given day, or the last one before it.
  *
  * Binary search rather than a walk from the front, because this is the hot
@@ -159,6 +258,73 @@ function lastOnOrBefore(points: readonly PricePoint[], date: ISODate): number | 
     }
   }
   return answer;
+}
+
+/**
+ * How far a feed close may sit from the price the ledger paid the same day
+ * before the gap is read as a change of units rather than ordinary movement.
+ *
+ * A fill and that day's close differ by a percent or two. Ten percent is well
+ * clear of that and far under the smallest split anyone runs, so a symbol whose
+ * two sources already agree is left exactly as the feed reported it.
+ */
+const RESCALE_THRESHOLD = 0.1;
+
+/**
+ * Per-symbol factors that restate feed history in the ledger's own units.
+ *
+ * The feed reports history split-adjusted -- what one of today's shares was
+ * worth back then -- while the ledger holds share counts and prices as they
+ * were actually traded. Multiplying one by the other prices a position by every
+ * split since, in whichever direction the splits ran, and both directions were
+ * badly wrong on the ledger this was written for. SCHD's three-for-one valued a
+ * $2,500 purchase at $834 the day it was made; NVDA's four-for-one and
+ * ten-for-one together put it at a thirty-ninth. In the other direction a $10
+ * holding in SOXS -- a leveraged fund that reverse splits repeatedly to stay
+ * off the floor -- priced at $2,565,000 a share and was worth $3.1M against an
+ * account of $10,000, burying every other position in it.
+ *
+ * The correction needs no split calendar, because every transaction is already
+ * an observation of what a share cost that day. Dividing the feed's close by
+ * the ledger's price gives the factor between the two sets of units, and the
+ * factor only moves when a split lands -- so the observations are kept as a
+ * series and read piecewise, the same way prices are. A ratio near one is
+ * snapped to exactly one, so nothing is rescaled on the strength of a fill
+ * landing a few cents off the close.
+ *
+ * The residue is the stretch between the last trade before a split and the
+ * first after it, where the old factor is carried until a trade reveals the new
+ * one. That window is priced on the wrong side of the split, which is worth far
+ * less than being wrong across the entire history.
+ */
+function priceScales(
+  ordered: readonly Transaction[],
+  histories: ReadonlyMap<string, readonly PricePoint[]>,
+): Map<string, PricePoint[]> {
+  const scales = new Map<string, PricePoint[]>();
+
+  for (const tx of ordered) {
+    if (tx.symbol === null || tx.price <= 0) continue;
+    const symbol = normalizeSymbol(tx.symbol);
+    const points = histories.get(symbol);
+    if (!points || points.length === 0) continue;
+    const close = lastOnOrBefore(points, tx.date);
+    if (close === null || close <= 0) continue;
+
+    const ratio = close / tx.price;
+    const scale = Math.abs(ratio - 1) <= RESCALE_THRESHOLD ? 1 : ratio;
+    const series = scales.get(symbol);
+    if (series) series.push({ date: tx.date, close: scale });
+    else scales.set(symbol, [{ date: tx.date, close: scale }]);
+  }
+
+  // A symbol that never disagreed needs no entry at all, which keeps the
+  // ordinary case -- almost every symbol, every day -- to a single lookup.
+  for (const [symbol, series] of scales) {
+    if (series.every((point) => point.close === 1)) scales.delete(symbol);
+  }
+
+  return scales;
 }
 
 /**
@@ -254,10 +420,16 @@ export interface SeriesOptions {
  * is unfair in both directions: the only honest comparison strips contribution
  * timing out entirely, which is what chaining daily returns does.
  *
- * The portfolio here is positions only. Account cash balances are a snapshot
- * with no history behind them, so there is no honest way to say what cash was
- * sitting there a year ago -- and guessing would put a made-up number into the
- * denominator of every return on the page.
+ * The portfolio is the account: positions plus cash. A stored cash balance is
+ * only ever a snapshot, but the ledger is the history behind it -- replaying
+ * its own money movements says what cash was sitting there on any past day
+ * without inventing a figure. That matters beyond tidiness, because valuing
+ * securities alone makes a portfolio that sold everything look like a portfolio
+ * worth nothing, and the next purchase then divides a full position by the
+ * float dust the sale left behind.
+ *
+ * A ledger that does not account for the money it spends cannot support that,
+ * so it falls back to valuing positions alone. See {@link PerformanceSeries.basis}.
  */
 export function buildPerformanceSeries(
   transactions: readonly Transaction[],
@@ -271,33 +443,64 @@ export function buildPerformanceSeries(
   const ordered = [...scoped].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   const days = tradingDays(histories, from, to);
-  if (days.length === 0) return { points: [], approximated: [] };
+  const relevant = ordered.filter((tx) => tx.date <= to);
+  const funding = replayableCash(relevant);
+  const basis: "account" | "securities" = funding.solvent ? "account" : "securities";
+  if (days.length === 0) return { points: [], approximated: [], basis };
 
-  /** Flat fallback for a symbol the feed has nothing for. */
-  const fallbackPrice = new Map<string, number>();
+  /**
+   * Prices the ledger itself supplies, for a symbol the feed cannot cover.
+   *
+   * Kept as a series rather than one figure per symbol, and read as the last
+   * price traded on or before the day being valued. A single price has to be
+   * the last one ever paid, which is applied backwards over the whole window --
+   * so a delisted SPAC bought at $25 and sold at $10 a year later is carried at
+   * $10 on the day it was bought, booking a loss on the purchase and handing it
+   * back over the months that follow. Every trade the ledger holds is a real
+   * observation of that day's price, and using the nearest one keeps the line
+   * flat between trades instead of wrong at both ends.
+   */
+  const ledgerPrices = new Map<string, PricePoint[]>();
   for (const tx of ordered) {
     if (tx.symbol === null || tx.price <= 0) continue;
-    fallbackPrice.set(normalizeSymbol(tx.symbol), tx.price);
+    const symbol = normalizeSymbol(tx.symbol);
+    const series = ledgerPrices.get(symbol);
+    if (series) series.push({ date: tx.date, close: tx.price });
+    else ledgerPrices.set(symbol, [{ date: tx.date, close: tx.price }]);
   }
+
+  const scales = priceScales(ordered, histories);
 
   const usedFallback = new Set<string>();
   const priceOn = (symbol: string, date: ISODate): number | null => {
     const points = histories.get(symbol);
     const close = points ? lastOnOrBefore(points, date) : null;
-    if (close !== null) return close;
-    const fallback = fallbackPrice.get(symbol);
-    if (fallback === undefined) return null;
+    if (close !== null) {
+      const series = scales.get(symbol);
+      if (series === undefined) return close;
+      const scale = lastOnOrBefore(series, date) ?? series[0].close;
+      return scale === 1 ? close : close / scale;
+    }
+    const series = ledgerPrices.get(symbol);
+    if (series === undefined) return null;
+    // Before the first trade the ledger has nothing to say, but neither is
+    // there a position yet, so the earliest price stands in for that edge.
+    const fallback = lastOnOrBefore(series, date) ?? series[0].close;
     usedFallback.add(symbol);
     return fallback;
   };
 
   const held = new Map<string, number>();
+  let cash = funding.floor;
   let cursor = 0;
 
   // Everything before the window opens is history: replay it so the window
-  // starts from the position actually held, not from an empty portfolio.
+  // starts from the position and the cash actually held, not from an empty
+  // portfolio. The opening balance is the whole point of replaying it -- a
+  // window that begins mid-ledger inherits both sides of what came before.
   while (cursor < ordered.length && ordered[cursor].date < from) {
     applyToShares(held, ordered[cursor]);
+    cash += signedCashFlow(ordered[cursor]);
     cursor += 1;
   }
 
@@ -309,7 +512,7 @@ export function buildPerformanceSeries(
       if (price === null) continue;
       total += shares * price * contractMultiplier(symbol);
     }
-    return total;
+    return basis === "account" ? total + cash : total;
   };
 
   const points: PerformancePoint[] = [];
@@ -320,31 +523,37 @@ export function buildPerformanceSeries(
     let flow = 0;
     while (cursor < ordered.length && ordered[cursor].date <= day) {
       const tx = ordered[cursor];
-      flow += flowFor(tx, (symbol) => priceOn(symbol, day));
+      const on = (symbol: string) => priceOn(symbol, day);
+      flow += basis === "account" ? externalFlowFor(tx, on) : flowFor(tx, on);
       applyToShares(held, tx);
+      cash += signedCashFlow(tx);
       cursor += 1;
     }
 
     const value = valueOn(day);
 
-    // The return the investments earned, with the day's contributions and
-    // withdrawals taken back out. A day that opened with nothing invested has
-    // no return to measure -- money arriving is not performance -- so the index
-    // holds flat rather than reporting the first purchase as an infinite gain.
-    //
-    // The same holds when the base is merely negligible rather than empty. This
-    // series values securities alone, so a ledger that sold out entirely reads
-    // as near-zero even though the cash is sitting right there waiting to be
-    // redeployed; a portfolio liquidated in March and bought back weeks later
-    // opened the second day on the float dust left behind by the first. Buying
-    // back in then divides a full position by that dust, which is not a loss of
-    // everything -- it is a denominator that was never a base to measure from.
-    // Left in, one such day permanently rescales every day after it.
+    // The return the account earned, with the day's contributions and
+    // withdrawals taken back out. A day that opened with nothing has no return
+    // to measure -- money arriving is not performance -- so the index holds flat
+    // rather than reporting the first deposit as an infinite gain.
     //
     // A position also cannot lose more than all of itself in a day, so a factor
     // at or below zero is a valuation failure rather than a return: the feed
     // could not price something and it fell back to the last figure paid.
-    if (previousValue > 0 && Math.abs(flow) <= previousValue * FLOW_DOMINANCE) {
+    //
+    // On a securities basis the base can also be merely negligible rather than
+    // empty, because a ledger that sold out entirely reads as near-zero even
+    // though the cash is sitting right there waiting to be redeployed. Buying
+    // back in weeks later then divides a full position by the float dust the
+    // sale left behind, and one such day permanently rescales every day after
+    // it. Neutralising the day is a blunt guard -- it throws away whatever the
+    // holdings really did -- and it is needed only because that basis cannot
+    // see the cash. Tracking the cash removes the collapse at its source, so
+    // the guard does not apply there: a deposit larger than the account is
+    // ordinary early on, and it arrives in the value as well as the flow.
+    const measurable =
+      basis === "account" || Math.abs(flow) <= previousValue * FLOW_DOMINANCE;
+    if (previousValue > 0 && measurable) {
       const factor = (value - flow) / previousValue;
       if (factor > 0) index *= factor;
     }
@@ -359,7 +568,7 @@ export function buildPerformanceSeries(
     .filter((symbol) => Math.abs(held.get(symbol) ?? 0) > 1e-9)
     .sort();
 
-  return { points, approximated };
+  return { points, approximated, basis };
 }
 
 /** Growth over the whole window, or null when there was nothing to measure. */

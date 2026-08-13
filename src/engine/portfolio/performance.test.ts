@@ -109,7 +109,7 @@ describe("buildPerformanceSeries", () => {
     expect(totalReturn(points)).toBeCloseTo(0, 10);
   });
 
-  it("ignores deposits and account fees, which never touch the investments", () => {
+  it("does not count a deposit as a gain, however large", () => {
     const histories = new Map([
       ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110]])],
     ]);
@@ -118,14 +118,55 @@ describe("buildPerformanceSeries", () => {
       [
         tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
         tx({ type: "cash_deposit", date: "2024-01-03", symbol: null, amount: 100000 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    // The account is worth a hundred times what it was and earned 10%.
+    expect(points[1].value).toBeCloseTo(101_100, 6);
+    expect(totalReturn(points)).toBeCloseTo(0.1, 10);
+  });
+
+  it("counts cash left uninvested as the drag it is", () => {
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110], ["2024-01-04", 121]])],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        tx({ type: "cash_deposit", date: "2024-01-03", symbol: null, amount: 100000 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-04" },
+    );
+
+    // VTI ran 10% again on the third day, but by then the deposit had left 99%
+    // of the account sitting in cash, so the account barely moved. Measuring
+    // the securities alone would have reported the full 10% a second time and
+    // credited the account with a gain it never had.
+    expect(totalReturn(points)).toBeCloseTo(0.1012, 4);
+  });
+
+  it("treats an account fee as a cost rather than money withdrawn", () => {
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 100]])],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 1000 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 5, price: 100 }),
         tx({ type: "fee", date: "2024-01-03", symbol: null, amount: 25 }),
       ],
       histories,
       { from: "2024-01-02", to: "2024-01-03" },
     );
 
-    // A six-figure deposit sitting in cash must not dilute a 10% day.
-    expect(totalReturn(points)).toBeCloseTo(0.1, 10);
+    // The money genuinely left. Excusing it would flatter every account that
+    // pays to be run.
+    expect(totalReturn(points)).toBeCloseTo(-0.025, 10);
   });
 
   it("treats transferred-in shares as arriving value, not as a windfall", () => {
@@ -227,19 +268,170 @@ describe("buildPerformanceSeries", () => {
     expect(approximated).toEqual([]);
   });
 
-  it("values a short as a liability", () => {
+  it("values a short as a liability against the cash it raised", () => {
     const histories = new Map([
       ["VTI", history([["2024-01-02", 100], ["2024-01-03", 90]])],
     ]);
 
     const { points } = buildPerformanceSeries(
-      [tx({ type: "short_sell", date: "2024-01-02", quantity: 10, price: 100 })],
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 1000 }),
+        tx({ type: "short_sell", date: "2024-01-02", quantity: 10, price: 100 }),
+      ],
       histories,
       { from: "2024-01-02", to: "2024-01-03" },
     );
 
-    expect(points[0].value).toBe(-1000);
-    expect(points[1].value).toBe(-900);
+    // The sale raised $1,000, so the account holds $2,000 in cash -- and owes
+    // ten shares, which is why it is still only worth the $1,000 put in.
+    expect(points[0].value).toBeCloseTo(1000, 6);
+    // Covering got $100 cheaper, and on a $1,000 account that is a 10% gain.
+    expect(points[1].value).toBeCloseTo(1100, 6);
+    expect(totalReturn(points)).toBeCloseTo(0.1, 10);
+  });
+
+  it("survives selling out entirely and buying back weeks later", () => {
+    // The failure this replaces: valuing securities alone, the account reads as
+    // worth nothing while it sits in cash, and the repurchase then divides a
+    // full position by whatever float dust the sale left behind. One such day
+    // rescales every day after it, which is how a five-year figure ended up at
+    // -98% against a market that rose.
+    const histories = new Map([
+      ["VTI", history([
+        ["2024-01-02", 100], ["2024-01-03", 100], ["2024-01-04", 100],
+        ["2024-01-05", 100], ["2024-01-08", 110],
+      ])],
+    ]);
+
+    const { points, basis } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 1000 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        tx({ type: "sell", date: "2024-01-03", quantity: 10, price: 100 }),
+        tx({ type: "buy", date: "2024-01-05", quantity: 10, price: 100 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-08" },
+    );
+
+    expect(basis).toBe("account");
+    // Worth $1,000 throughout: in stock, then in cash, then in stock again.
+    expect(points.slice(0, 4).map((p) => p.value)).toEqual([1000, 1000, 1000, 1000]);
+    // Nothing happened until the last day, which is the only 10% in the window.
+    expect(totalReturn(points)).toBeCloseTo(0.1, 10);
+  });
+
+  it("falls back to securities when the ledger cannot fund its own purchases", () => {
+    // A part-imported ledger: years of trading with none of the deposits that
+    // paid for it. Replaying cash would open the account at minus its own first
+    // purchase, so the balance is not something this ledger can speak to.
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110]])],
+    ]);
+
+    const { points, basis } = buildPerformanceSeries(
+      [tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 })],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    expect(basis).toBe("securities");
+    expect(points[0].value).toBe(1000);
+    expect(totalReturn(points)).toBeCloseTo(0.1, 6);
+  });
+
+  it("reads a purchase made before its deposit as money already in the account", () => {
+    // Settlement routinely dates a buy a day ahead of the transfer that cleared
+    // for it. The money was demonstrably there, so the account opens holding it
+    // rather than at zero -- which would leave the next day nothing to measure.
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110]])],
+    ]);
+
+    const { points, basis } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        tx({ type: "cash_deposit", date: "2024-01-03", symbol: null, amount: 1000 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    expect(basis).toBe("account");
+    expect(points[0].value).toBeCloseTo(1000, 6);
+    // The deposit settles the overdraft; only the 10% on the stock is return.
+    expect(totalReturn(points)).toBeCloseTo(0.1, 10);
+  });
+
+  it("restates a reverse-split history into the units the ledger traded in", () => {
+    // A leveraged fund after a run of reverse splits: the feed reports history
+    // in terms of today's share, so a $8.28 holding reads as a small fortune
+    // and buries every other position in the account.
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110]])],
+      ["SOXS", history([["2024-01-02", 2_565_000], ["2024-01-03", 2_475_000]])],
+    ]);
+
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 1010 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 1, price: 8.28, symbol: "SOXS" }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    // Priced at the $8.28 it traded at -- and still tracking the feed's own
+    // shape, which a flat fallback would have thrown away.
+    expect(points[0].value).toBeCloseTo(1010, 2);
+    expect(approximated).toEqual([]);
+    const soxsNext = 8.28 * (2_475_000 / 2_565_000);
+    expect(points[1].value).toBeCloseTo(1100 + soxsNext + 1.72, 2);
+  });
+
+  it("restates a forward-split history the same way", () => {
+    // AMZN's twenty-for-one leaves adjusted history at a twentieth of what its
+    // pre-split trades filled at, which understates the position just as badly
+    // in the other direction.
+    const histories = new Map([
+      ["AMZN", history([["2024-01-02", 155], ["2024-01-03", 170.5]])],
+    ]);
+
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 3100 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 1, price: 3100, symbol: "AMZN" }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    expect(approximated).toEqual([]);
+    // One share bought at $3,100, up 10% with the feed.
+    expect(points[0].value).toBeCloseTo(3100, 6);
+    expect(points[1].value).toBeCloseTo(3410, 6);
+    expect(totalReturn(points)).toBeCloseTo(0.1, 6);
+  });
+
+  it("keeps a history that merely differs by intraday movement", () => {
+    // The guard must not fire on the ordinary gap between what a trade filled
+    // at and where the day happened to close.
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 104], ["2024-01-03", 110]])],
+    ]);
+
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 1000 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    expect(approximated).toEqual([]);
+    expect(points[0].value).toBeCloseTo(1040, 6);
   });
 
   it("returns nothing when no history covers the window", () => {
