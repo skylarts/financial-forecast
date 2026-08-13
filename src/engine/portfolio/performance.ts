@@ -261,6 +261,73 @@ function lastOnOrBefore(points: readonly PricePoint[], date: ISODate): number | 
 }
 
 /**
+ * How far a feed close may sit from the price the ledger paid the same day
+ * before the gap is read as a change of units rather than ordinary movement.
+ *
+ * A fill and that day's close differ by a percent or two. Ten percent is well
+ * clear of that and far under the smallest split anyone runs, so a symbol whose
+ * two sources already agree is left exactly as the feed reported it.
+ */
+const RESCALE_THRESHOLD = 0.1;
+
+/**
+ * Per-symbol factors that restate feed history in the ledger's own units.
+ *
+ * The feed reports history split-adjusted -- what one of today's shares was
+ * worth back then -- while the ledger holds share counts and prices as they
+ * were actually traded. Multiplying one by the other prices a position by every
+ * split since, in whichever direction the splits ran, and both directions were
+ * badly wrong on the ledger this was written for. SCHD's three-for-one valued a
+ * $2,500 purchase at $834 the day it was made; NVDA's four-for-one and
+ * ten-for-one together put it at a thirty-ninth. In the other direction a $10
+ * holding in SOXS -- a leveraged fund that reverse splits repeatedly to stay
+ * off the floor -- priced at $2,565,000 a share and was worth $3.1M against an
+ * account of $10,000, burying every other position in it.
+ *
+ * The correction needs no split calendar, because every transaction is already
+ * an observation of what a share cost that day. Dividing the feed's close by
+ * the ledger's price gives the factor between the two sets of units, and the
+ * factor only moves when a split lands -- so the observations are kept as a
+ * series and read piecewise, the same way prices are. A ratio near one is
+ * snapped to exactly one, so nothing is rescaled on the strength of a fill
+ * landing a few cents off the close.
+ *
+ * The residue is the stretch between the last trade before a split and the
+ * first after it, where the old factor is carried until a trade reveals the new
+ * one. That window is priced on the wrong side of the split, which is worth far
+ * less than being wrong across the entire history.
+ */
+function priceScales(
+  ordered: readonly Transaction[],
+  histories: ReadonlyMap<string, readonly PricePoint[]>,
+): Map<string, PricePoint[]> {
+  const scales = new Map<string, PricePoint[]>();
+
+  for (const tx of ordered) {
+    if (tx.symbol === null || tx.price <= 0) continue;
+    const symbol = normalizeSymbol(tx.symbol);
+    const points = histories.get(symbol);
+    if (!points || points.length === 0) continue;
+    const close = lastOnOrBefore(points, tx.date);
+    if (close === null || close <= 0) continue;
+
+    const ratio = close / tx.price;
+    const scale = Math.abs(ratio - 1) <= RESCALE_THRESHOLD ? 1 : ratio;
+    const series = scales.get(symbol);
+    if (series) series.push({ date: tx.date, close: scale });
+    else scales.set(symbol, [{ date: tx.date, close: scale }]);
+  }
+
+  // A symbol that never disagreed needs no entry at all, which keeps the
+  // ordinary case -- almost every symbol, every day -- to a single lookup.
+  for (const [symbol, series] of scales) {
+    if (series.every((point) => point.close === 1)) scales.delete(symbol);
+  }
+
+  return scales;
+}
+
+/**
  * Every date the series should carry a point for: the trading days the feed
  * knows about, which is the only calendar that has prices attached.
  */
@@ -381,20 +448,44 @@ export function buildPerformanceSeries(
   const basis: "account" | "securities" = funding.solvent ? "account" : "securities";
   if (days.length === 0) return { points: [], approximated: [], basis };
 
-  /** Flat fallback for a symbol the feed has nothing for. */
-  const fallbackPrice = new Map<string, number>();
+  /**
+   * Prices the ledger itself supplies, for a symbol the feed cannot cover.
+   *
+   * Kept as a series rather than one figure per symbol, and read as the last
+   * price traded on or before the day being valued. A single price has to be
+   * the last one ever paid, which is applied backwards over the whole window --
+   * so a delisted SPAC bought at $25 and sold at $10 a year later is carried at
+   * $10 on the day it was bought, booking a loss on the purchase and handing it
+   * back over the months that follow. Every trade the ledger holds is a real
+   * observation of that day's price, and using the nearest one keeps the line
+   * flat between trades instead of wrong at both ends.
+   */
+  const ledgerPrices = new Map<string, PricePoint[]>();
   for (const tx of ordered) {
     if (tx.symbol === null || tx.price <= 0) continue;
-    fallbackPrice.set(normalizeSymbol(tx.symbol), tx.price);
+    const symbol = normalizeSymbol(tx.symbol);
+    const series = ledgerPrices.get(symbol);
+    if (series) series.push({ date: tx.date, close: tx.price });
+    else ledgerPrices.set(symbol, [{ date: tx.date, close: tx.price }]);
   }
+
+  const scales = priceScales(ordered, histories);
 
   const usedFallback = new Set<string>();
   const priceOn = (symbol: string, date: ISODate): number | null => {
     const points = histories.get(symbol);
     const close = points ? lastOnOrBefore(points, date) : null;
-    if (close !== null) return close;
-    const fallback = fallbackPrice.get(symbol);
-    if (fallback === undefined) return null;
+    if (close !== null) {
+      const series = scales.get(symbol);
+      if (series === undefined) return close;
+      const scale = lastOnOrBefore(series, date) ?? series[0].close;
+      return scale === 1 ? close : close / scale;
+    }
+    const series = ledgerPrices.get(symbol);
+    if (series === undefined) return null;
+    // Before the first trade the ledger has nothing to say, but neither is
+    // there a position yet, so the earliest price stands in for that edge.
+    const fallback = lastOnOrBefore(series, date) ?? series[0].close;
     usedFallback.add(symbol);
     return fallback;
   };

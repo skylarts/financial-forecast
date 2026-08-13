@@ -363,6 +363,77 @@ describe("buildPerformanceSeries", () => {
     expect(totalReturn(points)).toBeCloseTo(0.1, 10);
   });
 
+  it("restates a reverse-split history into the units the ledger traded in", () => {
+    // A leveraged fund after a run of reverse splits: the feed reports history
+    // in terms of today's share, so a $8.28 holding reads as a small fortune
+    // and buries every other position in the account.
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110]])],
+      ["SOXS", history([["2024-01-02", 2_565_000], ["2024-01-03", 2_475_000]])],
+    ]);
+
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 1010 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 1, price: 8.28, symbol: "SOXS" }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    // Priced at the $8.28 it traded at -- and still tracking the feed's own
+    // shape, which a flat fallback would have thrown away.
+    expect(points[0].value).toBeCloseTo(1010, 2);
+    expect(approximated).toEqual([]);
+    const soxsNext = 8.28 * (2_475_000 / 2_565_000);
+    expect(points[1].value).toBeCloseTo(1100 + soxsNext + 1.72, 2);
+  });
+
+  it("restates a forward-split history the same way", () => {
+    // AMZN's twenty-for-one leaves adjusted history at a twentieth of what its
+    // pre-split trades filled at, which understates the position just as badly
+    // in the other direction.
+    const histories = new Map([
+      ["AMZN", history([["2024-01-02", 155], ["2024-01-03", 170.5]])],
+    ]);
+
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 3100 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 1, price: 3100, symbol: "AMZN" }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    expect(approximated).toEqual([]);
+    // One share bought at $3,100, up 10% with the feed.
+    expect(points[0].value).toBeCloseTo(3100, 6);
+    expect(points[1].value).toBeCloseTo(3410, 6);
+    expect(totalReturn(points)).toBeCloseTo(0.1, 6);
+  });
+
+  it("keeps a history that merely differs by intraday movement", () => {
+    // The guard must not fire on the ordinary gap between what a trade filled
+    // at and where the day happened to close.
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 104], ["2024-01-03", 110]])],
+    ]);
+
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 1000 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    expect(approximated).toEqual([]);
+    expect(points[0].value).toBeCloseTo(1040, 6);
+  });
+
   it("returns nothing when no history covers the window", () => {
     const { points, approximated } = buildPerformanceSeries(
       [tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 })],
