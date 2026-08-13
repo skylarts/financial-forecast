@@ -2,6 +2,7 @@ import type { ISODate } from "@/domain";
 import {
   normalizeSymbol,
   transactionTypeSchema,
+  TRANSACTION_TYPE_LABELS,
   type Transaction,
   type TransactionType,
 } from "@/domain/portfolio";
@@ -276,6 +277,25 @@ export function inferType(raw: string): TransactionType | null {
   return null;
 }
 
+/**
+ * Transfer wording that names no direction -- "Transfer (Securities)",
+ * "Transfer (Cash/ACAT)", a bare "ACAT". The patterns above can only match
+ * wording that says in or out, so these fall through untyped and the row is
+ * dropped. That is how the outbound half of a custodian move goes missing
+ * while the inbound half lands: the shares appear from nowhere, and whatever
+ * closes them later is booked against no cost basis at all.
+ *
+ * The direction is still recoverable from the row itself -- shares leaving
+ * carry a negative quantity, cash arriving a positive amount -- so callers
+ * resolve it by sign rather than discarding the row.
+ */
+export function isDirectionlessTransfer(raw: string): boolean {
+  const text = raw.trim();
+  if (!text) return false;
+  if (!/transfer|journal|acat/i.test(text)) return false;
+  return inferType(text) === null;
+}
+
 /** Stable fingerprint of a source row, used to skip rows already imported. */
 export function hashRow(cells: readonly string[]): string {
   const text = cells.join("");
@@ -314,7 +334,22 @@ export function buildImportRows(
 
     // The action column is the primary signal, but many exports fold the
     // action into a free-text description instead, so fall back to that.
-    let type = inferType(cell(raw, mapping.type)) ?? inferType(note);
+    const action = cell(raw, mapping.type);
+    let type = inferType(action) ?? inferType(note);
+    // A transfer that never says which way it went still carries its direction
+    // in the numbers: shares leaving are negative, cash arriving is positive.
+    // Reading it here keeps both halves of a custodian move in the ledger --
+    // dropping one half is what leaves shares with no cost basis behind them.
+    if (!type && (isDirectionlessTransfer(action) || isDirectionlessTransfer(note))) {
+      if (quantity !== null && quantity !== 0) {
+        type = quantity < 0 ? "transfer_out" : "transfer_in";
+      } else if (amount !== null && amount !== 0) {
+        type = amount < 0 ? "cash_withdrawal" : "cash_deposit";
+      }
+      if (type) {
+        issues.push(`Transfer direction not stated; read as a ${TRANSACTION_TYPE_LABELS[type].toLowerCase()} from the sign.`);
+      }
+    }
     if (!type && quantity !== null && amount !== null) {
       type = amount < 0 ? "buy" : "sell";
       issues.push(`Type not stated; read as a ${type} from the amount's sign.`);

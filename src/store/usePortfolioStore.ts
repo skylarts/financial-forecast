@@ -57,6 +57,12 @@ interface PortfolioState {
   addTransactions: (txs: readonly Omit<Transaction, "id">[]) => number;
   updateTransaction: (id: string, patch: Partial<Omit<Transaction, "id">>) => void;
   removeTransaction: (id: string) => void;
+  /**
+   * Drops many rows in one write. Clearing a ledger to re-import a corrected
+   * file is thousands of rows, and looping `removeTransaction` would re-tidy
+   * the whole portfolio once per row. Returns how many actually went.
+   */
+  removeTransactions: (ids: readonly string[]) => number;
   /** Returns the batch id, so a bad import can be rolled back wholesale. */
   importTransactions: (accountId: string, drafts: readonly DraftTransaction[]) => string;
   undoImport: (batchId: string) => number;
@@ -132,6 +138,14 @@ export const usePortfolioStore = create<PortfolioState>()(
 
         removeTransaction: (id) =>
           mutate((p) => ({ ...p, transactions: p.transactions.filter((tx) => tx.id !== id) })),
+
+        removeTransactions: (ids) => {
+          if (ids.length === 0) return 0;
+          const doomed = new Set(ids);
+          const before = get().portfolio.transactions.length;
+          mutate((p) => ({ ...p, transactions: p.transactions.filter((tx) => !doomed.has(tx.id)) }));
+          return before - get().portfolio.transactions.length;
+        },
 
         importTransactions: (accountId, drafts) => {
           const batchId = nanoid();
