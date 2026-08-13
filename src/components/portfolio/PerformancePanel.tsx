@@ -19,6 +19,7 @@ import {
   symbolsForWindow,
   totalReturn,
   type PricePoint,
+  type SplitEvent,
 } from "@/engine/portfolio/performance";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import { chunkSymbols } from "@/lib/portfolio/historyBatch";
@@ -30,6 +31,7 @@ const MAX_BENCHMARKS = 5;
 /** Stable empty map, so a render with nothing loaded doesn't invalidate every
  *  memo downstream by handing them a fresh reference each time. */
 const EMPTY_HISTORIES: Map<string, PricePoint[]> = new Map();
+const EMPTY_SPLITS: Map<string, SplitEvent[]> = new Map();
 
 /** Where a benchmark's colour comes from. Fixed by slot, so removing one
  *  doesn't repaint the rest. */
@@ -175,6 +177,8 @@ export function PerformancePanel({
   const [loaded, setLoaded] = useState<{
     key: string;
     histories: Map<string, PricePoint[]>;
+    /** The feed's split calendar, which sets the units its closes are quoted in. */
+    splits: Map<string, SplitEvent[]>;
     /** Symbols the server refused to fetch because the request was over its cap. */
     skipped: string[];
     failed: boolean;
@@ -255,6 +259,7 @@ export function PerformancePanel({
     // to prevent.
     (async () => {
       const histories = new Map<string, PricePoint[]>();
+      const splits = new Map<string, SplitEvent[]>();
       const skipped: string[] = [];
       try {
         for (const chunk of chunkSymbols(symbolList.split(","))) {
@@ -262,18 +267,30 @@ export function PerformancePanel({
             `/api/prices/history/batch?symbols=${encodeURIComponent(chunk.join(","))}&range=${range}&from=${windowStart}`,
           );
           if (!response.ok) throw new Error(String(response.status));
-          const body: { histories?: Record<string, PricePoint[]>; skipped?: string[] } =
-            await response.json();
+          const body: {
+            histories?: Record<string, PricePoint[]>;
+            splits?: Record<string, SplitEvent[]>;
+            skipped?: string[];
+          } = await response.json();
           if (cancelled) return;
           for (const [symbol, points] of Object.entries(body.histories ?? {})) {
             histories.set(symbol, points);
           }
+          for (const [symbol, events] of Object.entries(body.splits ?? {})) {
+            splits.set(symbol, events);
+          }
           skipped.push(...(body.skipped ?? []));
         }
-        if (!cancelled) setLoaded({ key: requestKey, histories, skipped, failed: false });
+        if (!cancelled) setLoaded({ key: requestKey, histories, splits, skipped, failed: false });
       } catch {
         if (!cancelled) {
-          setLoaded({ key: requestKey, histories: new Map(), skipped: [], failed: true });
+          setLoaded({
+            key: requestKey,
+            histories: new Map(),
+            splits: new Map(),
+            skipped: [],
+            failed: true,
+          });
         }
       }
     })();
@@ -294,6 +311,7 @@ export function PerformancePanel({
     () => (settled ? loaded.histories : EMPTY_HISTORIES),
     [settled, loaded],
   );
+  const splits = useMemo(() => (settled ? loaded.splits : EMPTY_SPLITS), [settled, loaded]);
 
   const series = useMemo(
     () =>
@@ -301,8 +319,9 @@ export function PerformancePanel({
         from,
         to,
         accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
+        splits,
       }),
-    [scopedTransactions, histories, from, to, scopeAccountId],
+    [scopedTransactions, histories, splits, from, to, scopeAccountId],
   );
 
   const benchmarkSeries = useMemo(
@@ -370,6 +389,7 @@ export function PerformancePanel({
         from: start,
         to: end,
         accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
+        splits,
       });
 
       // The fetch only went back so far. A window starting before the data does
@@ -393,7 +413,7 @@ export function PerformancePanel({
         }),
       };
     });
-  }, [scopedTransactions, histories, benchmarks, earliest, scopeAccountId]);
+  }, [scopedTransactions, histories, splits, benchmarks, earliest, scopeAccountId]);
 
   const portfolioReturn = totalReturn(series.points);
   const portfolioAnnualized = annualizedReturn(series.points);

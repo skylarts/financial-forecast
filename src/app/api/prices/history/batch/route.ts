@@ -52,7 +52,7 @@ export async function GET(request: Request) {
   const symbols = requested.slice(0, MAX_SYMBOLS);
   const skipped = requested.slice(MAX_SYMBOLS);
 
-  if (symbols.length === 0) return Response.json({ histories: {}, skipped });
+  if (symbols.length === 0) return Response.json({ histories: {}, splits: {}, skipped });
 
   const results = await fetchHistories(symbols, range);
 
@@ -74,11 +74,16 @@ export async function GET(request: Request) {
   };
 
   const histories: Record<string, { date: string; close: number }[]> = {};
+  const splits: Record<string, { date: string; ratio: number }[]> = {};
   for (const [symbol, result] of results) {
     // A symbol the feed has nothing for is omitted rather than sent as an empty
     // array, so the caller can tell "no history" apart from "no data yet".
     if (result.points.length > 0) histories[symbol] = trim(result.points);
+    // Splits are deliberately *not* trimmed to the window. A split after the
+    // window still sets the units every close inside it is quoted in, so
+    // dropping it would restate the whole window by the wrong factor.
+    if (result.splits.length > 0) splits[symbol] = result.splits;
   }
 
-  return Response.json({ histories, skipped });
+  return Response.json({ histories, splits, skipped });
 }

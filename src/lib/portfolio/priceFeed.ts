@@ -20,9 +20,31 @@ export interface Quote {
   stale?: boolean;
 }
 
+/**
+ * A share split, as the feed records it.
+ *
+ * `ratio` is how many shares one share became -- 20 for Alphabet's 20-for-1,
+ * 0.1 for a one-for-ten reverse. The date is the day the new shares began
+ * trading, which is the first day the feed's closes are quoted in them.
+ */
+export interface SplitEvent {
+  date: ISODate;
+  ratio: number;
+}
+
 export interface SymbolHistory {
   symbol: string;
   points: PricePoint[];
+  /**
+   * Every split the feed knows of, oldest first.
+   *
+   * Carried with the history rather than fetched separately because the closes
+   * are meaningless without it: the feed quotes all of them in *today's*
+   * shares, so a price from before a split is not the price anyone paid that
+   * day. Asking for the events costs nothing -- it is a query parameter on the
+   * request that was already being made.
+   */
+  splits: SplitEvent[];
 }
 
 /**
@@ -87,7 +109,28 @@ interface ChartResult {
   meta?: ChartMeta;
   timestamp?: number[];
   indicators?: { quote?: { close?: (number | null)[] }[] };
-  events?: { dividends?: Record<string, { amount?: number; date?: number }> };
+  events?: {
+    dividends?: Record<string, { amount?: number; date?: number }>;
+    splits?: Record<string, { numerator?: number; denominator?: number; date?: number }>;
+  };
+}
+
+/** Splits out of a chart response, oldest first and ignoring malformed rows. */
+function splitsFrom(result: ChartResult): SplitEvent[] {
+  const raw = result.events?.splits ?? {};
+  const events: SplitEvent[] = [];
+  for (const entry of Object.values(raw)) {
+    const { numerator, denominator, date } = entry ?? {};
+    if (typeof numerator !== "number" || typeof denominator !== "number") continue;
+    if (typeof date !== "number" || numerator <= 0 || denominator <= 0) continue;
+    const ratio = numerator / denominator;
+    // A one-for-one is not a split; it shows up occasionally as a placeholder
+    // and would only add a needless breakpoint to the factor series.
+    if (ratio === 1) continue;
+    events.push({ date: isoFromEpochSeconds(date), ratio });
+  }
+  events.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return events;
 }
 
 /** Outcome of one chart request, keeping "no such symbol" apart from "it broke". */
@@ -106,11 +149,11 @@ function delay(ms: number): Promise<void> {
 async function requestChart(
   symbol: string,
   range: string,
-  withEvents = false,
+  events = "",
 ): Promise<ChartOutcome> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     symbol,
-  )}?range=${range}&interval=1d${withEvents ? "&events=div" : ""}`;
+  )}?range=${range}&interval=1d${events ? `&events=${events}` : ""}`;
 
   const response = await fetch(url, {
     headers: { accept: "application/json", "user-agent": "Mozilla/5.0" },
@@ -143,14 +186,14 @@ async function requestChart(
 async function fetchChart(
   symbol: string,
   range: string,
-  withEvents = false,
+  events = "",
 ): Promise<ChartOutcome> {
   if (!isValidSymbol(symbol)) return { status: "unknown_symbol" };
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     let outcome: ChartOutcome;
     try {
-      outcome = await requestChart(symbol, range, withEvents);
+      outcome = await requestChart(symbol, range, events);
     } catch {
       outcome = { status: "fetch_failed" };
     }
@@ -301,7 +344,7 @@ export async function fetchDividends(symbol: string, range = "10y"): Promise<Div
   const cached = dividendCache.get(key);
   if (cached && Date.now() - cached.fetchedAt < HISTORY_TTL_MS) return cached.value;
 
-  const outcome = await fetchChart(symbol, range, true);
+  const outcome = await fetchChart(symbol, range, "div");
   if (outcome.status !== "ok") return cached?.value ?? [];
 
   const raw = outcome.result.events?.dividends ?? {};
@@ -325,7 +368,11 @@ export async function fetchHistory(symbol: string, range = "10y"): Promise<Symbo
   const cached = historyCache.get(key);
   if (cached && Date.now() - cached.fetchedAt < HISTORY_TTL_MS) return cached.value;
 
-  const outcome = await fetchChart(symbol, range);
+  // Splits ride along on the request that was already being made. They are not
+  // optional detail: every close below is quoted in today's shares, so without
+  // them a price from before a split cannot be put back into the shares the
+  // ledger was actually holding at the time.
+  const outcome = await fetchChart(symbol, range, "split");
   const result = outcome.status === "ok" ? outcome.result : null;
   const timestamps = result?.timestamp ?? [];
   const closes = result?.indicators?.quote?.[0]?.close ?? [];
@@ -342,7 +389,11 @@ export async function fetchHistory(symbol: string, range = "10y"): Promise<Symbo
   // A failed fetch must not overwrite a good cached history with nothing.
   if (points.length === 0 && cached) return cached.value;
 
-  const history: SymbolHistory = { symbol: symbol.toUpperCase(), points };
+  const history: SymbolHistory = {
+    symbol: symbol.toUpperCase(),
+    points,
+    splits: result ? splitsFrom(result) : [],
+  };
   if (points.length > 0) historyCache.set(key, { value: history, fetchedAt: Date.now() });
   return history;
 }
