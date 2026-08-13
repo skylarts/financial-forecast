@@ -756,3 +756,140 @@ describe("a day whose flow dwarfs what was invested", () => {
     expect(totalReturn(points)).toBeCloseTo(0.1, 6);
   });
 });
+
+describe("the days between a split and the next trade", () => {
+  /**
+   * The real shape of Alphabet's twenty-for-one, which is where this was found.
+   * The feed's closes are all in post-split shares; the ledger bought at $2,169
+   * in June, took the split on 18 July, and did not trade again until the 22nd.
+   *
+   * Inferring the units from trades alone cannot learn the new factor until
+   * that 22nd of July trade, so for four days the share count had multiplied by
+   * twenty while the price was still being multiplied by twenty as well.
+   */
+  const googHistory = history([
+    ["2022-06-16", 108.48], // $2,169.57 in the shares of the day
+    ["2022-07-15", 113.0],
+    ["2022-07-18", 111.0],
+    ["2022-07-19", 112.0],
+    ["2022-07-22", 108.36],
+  ]);
+
+  const bought = tx({
+    type: "buy",
+    date: "2022-06-16",
+    symbol: "GOOG",
+    quantity: 0.0046,
+    price: 2169.5652,
+  });
+  const split = tx({ type: "split", date: "2022-07-18", symbol: "GOOG", quantity: 20 });
+  const boughtAgain = tx({
+    type: "buy",
+    date: "2022-07-22",
+    symbol: "GOOG",
+    quantity: 0.0922,
+    price: 108.4599,
+  });
+
+  const histories = new Map([["GOOG", googHistory]]);
+  const window = { from: "2022-06-16", to: "2022-07-22" } as const;
+
+  it("carries a split holding at a steady value when the feed's calendar is known", () => {
+    const { points } = buildPerformanceSeries(
+      [bought, split, boughtAgain],
+      histories,
+      { ...window, splits: new Map([["GOOG", [{ date: "2022-07-18", ratio: 20 }]]]) },
+    );
+
+    // 0.0046 shares becomes 0.092 across the split, and $111 x 0.092 is $10.21.
+    // Without the calendar this day is worth twenty times that.
+    const onSplitDay = points.find((p) => p.date === "2022-07-18");
+    expect(onSplitDay?.value).toBeCloseTo(0.092 * 111.0, 4);
+
+    // Nothing in the window may move more than the price did.
+    const values = points.map((p) => p.value);
+    expect(Math.max(...values) / Math.min(...values)).toBeLessThan(11);
+  });
+
+  it("falls back to inference for a ledger that never posted the split", () => {
+    // No split row, so the share count never multiplied and the position is
+    // still counted in pre-split shares. Scaling its prices by the calendar
+    // would compound the mismatch rather than resolve it.
+    const { points } = buildPerformanceSeries(
+      [bought],
+      histories,
+      { ...window, splits: new Map([["GOOG", [{ date: "2022-07-18", ratio: 20 }]]]) },
+    );
+
+    // 0.0046 pre-split shares at ~$2,220, not at $111.
+    const onSplitDay = points.find((p) => p.date === "2022-07-18");
+    expect(onSplitDay?.value).toBeCloseTo(0.0046 * 111.0 * 20, 2);
+  });
+
+  it("prices the years before a split in the shares the ledger held then", () => {
+    const { points } = buildPerformanceSeries(
+      [bought, split, boughtAgain],
+      histories,
+      { ...window, splits: new Map([["GOOG", [{ date: "2022-07-18", ratio: 20 }]]]) },
+    );
+
+    // The purchase day itself: 0.0046 shares at $2,169.57, not at $108.48.
+    expect(points[0].value).toBeCloseTo(0.0046 * 108.48 * 20, 4);
+  });
+
+  it("matches a broker that posted the split a day or two late", () => {
+    const lateSplit = tx({
+      type: "split",
+      date: "2022-07-19",
+      symbol: "GOOG",
+      quantity: 20,
+    });
+
+    const { points } = buildPerformanceSeries(
+      [bought, lateSplit, boughtAgain],
+      histories,
+      { ...window, splits: new Map([["GOOG", [{ date: "2022-07-18", ratio: 20 }]]]) },
+    );
+
+    // The price flips to post-split shares on the 19th, the same day the share
+    // count does -- not on the 18th, which would leave the 18th counted in old
+    // shares and priced in new ones.
+    expect(points.find((p) => p.date === "2022-07-18")?.value).toBeCloseTo(
+      0.0046 * 111.0 * 20,
+      2,
+    );
+    expect(points.find((p) => p.date === "2022-07-19")?.value).toBeCloseTo(
+      0.092 * 112.0,
+      4,
+    );
+
+    const values = points.map((p) => p.value);
+    expect(Math.max(...values) / Math.min(...values)).toBeLessThan(11);
+  });
+
+  it("restates a reverse split in the other direction", () => {
+    // One-for-ten: the feed's old closes are a tenth of what was really paid.
+    const reverseHistory = history([
+      ["2024-01-02", 50],
+      ["2024-01-03", 48],
+      ["2024-01-04", 47],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", symbol: "SOXS", quantity: 100, price: 5 }),
+        tx({ type: "split", date: "2024-01-04", symbol: "SOXS", quantity: 0.1 }),
+      ],
+      new Map([["SOXS", reverseHistory]]),
+      {
+        from: "2024-01-02",
+        to: "2024-01-04",
+        splits: new Map([["SOXS", [{ date: "2024-01-04", ratio: 0.1 }]]]),
+      },
+    );
+
+    // 100 shares at $5 on the way in, 10 shares at $47 on the way out.
+    expect(points[0].value).toBeCloseTo(500, 6);
+    expect(points[points.length - 1].value).toBeCloseTo(470, 6);
+  });
+});

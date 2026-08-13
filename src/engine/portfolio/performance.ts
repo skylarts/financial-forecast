@@ -11,6 +11,15 @@ export interface PricePoint {
   close: number;
 }
 
+/**
+ * A split as the feed reports it: the day the new shares began trading, and how
+ * many shares one share became. Reverse splits carry a ratio below one.
+ */
+export interface SplitEvent {
+  date: ISODate;
+  ratio: number;
+}
+
 export interface PerformancePoint {
   date: ISODate;
   /**
@@ -328,6 +337,130 @@ function priceScales(
 }
 
 /**
+ * A date early enough to sit before any ledger, used to open a piecewise series
+ * whose first real breakpoint still needs a value in front of it.
+ */
+const BEFORE_ANY_LEDGER = "0000-01-01" as ISODate;
+
+/**
+ * How far a broker may date a split from the day the feed says it took effect
+ * before the two stop describing the same event.
+ *
+ * Brokers post the share adjustment when it settles, which routinely lands a
+ * day or two after new shares begin trading, and a weekend can stretch that
+ * further. Across the ledgers this was measured on the gap ran to four days --
+ * IGM's six-for-one traded from 7 March 2024 and was posted on the 11th -- so
+ * a week is the working figure rather than a tight fit around the worst case
+ * observed. It costs nothing to be generous: the ratios have to agree to within
+ * a percent as well, and nothing legitimate puts two splits of one symbol
+ * inside the same week.
+ */
+const SPLIT_MATCH_DAYS = 7;
+
+/** Tolerance on a split ratio, which brokers occasionally record rounded. */
+const RATIO_TOLERANCE = 0.01;
+
+function daysBetween(a: ISODate, b: ISODate): number {
+  return Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000;
+}
+
+/** The split rows the ledger itself records, per symbol. */
+function ledgerSplits(ordered: readonly Transaction[]): Map<string, SplitEvent[]> {
+  const bySymbol = new Map<string, SplitEvent[]>();
+  for (const tx of ordered) {
+    if (tx.type !== "split" || tx.symbol === null || tx.quantity <= 0) continue;
+    const symbol = normalizeSymbol(tx.symbol);
+    // `quantity` is the ratio on a split row, not a share count.
+    const event = { date: tx.date, ratio: tx.quantity };
+    const series = bySymbol.get(symbol);
+    if (series) series.push(event);
+    else bySymbol.set(symbol, [event]);
+  }
+  return bySymbol;
+}
+
+/**
+ * Exact restatement factors, built from a known split calendar.
+ *
+ * The feed quotes every close in *today's* shares. The ledger counts shares as
+ * they were held, applying each split on the day the broker posted it. So a
+ * close from before a split has to be multiplied back up by every split since
+ * before it can meet the share count of that day -- and that product is a
+ * known, dated quantity rather than something to be inferred.
+ *
+ * This supersedes {@link priceScales}, which recovered the same factor by
+ * dividing the feed's close by the price the ledger paid. That inference is
+ * sound but it can only learn a new factor from a *trade*, so between the last
+ * trade before a split and the first after it the old factor stood -- while the
+ * share count had already multiplied. Both sides moved by the split and the
+ * position was carried at the square of it. Alphabet's twenty-for-one on
+ * 18 July 2022 was not traded again until the 22nd, and for those four days the
+ * holding was worth four hundred times what it should have been; Amazon's, in
+ * June, went seven weeks before the next trade. The same thing happened to IGM
+ * in the Roth over 11-13 March 2024. Reading the calendar directly removes the
+ * gap entirely: the factor changes on the day the split does.
+ *
+ * Returned in the same shape and convention as {@link priceScales} -- a
+ * piecewise series read by date, where the day's price is the close divided by
+ * the scale -- so both can feed one lookup.
+ */
+function splitScales(events: readonly SplitEvent[]): PricePoint[] {
+  const ordered = [...events].sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  // Walked backwards, because the factor for a given day is the product of
+  // everything that happened *after* it, and the most recent stretch is 1.
+  const series: PricePoint[] = [];
+  let scale = 1;
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    series.unshift({ date: ordered[i].date, close: scale });
+    scale /= ordered[i].ratio;
+  }
+  series.unshift({ date: BEFORE_ANY_LEDGER, close: scale });
+  return series;
+}
+
+/**
+ * The ledger's own rows for the splits the feed reports, or null if it did not
+ * record all of them.
+ *
+ * The factor restates prices into the units of the day, which is only the right
+ * thing to meet the share count with if the ledger moved its shares on the same
+ * days. A ledger that records the split does; one that silently kept a
+ * pre-split share count does not, and scaling its prices would compound the
+ * mismatch rather than resolve it. That ledger is better served by the
+ * inference, which measures whatever units it is in fact keeping. So every
+ * split the feed reports has to be matched, and the check runs per symbol --
+ * one holding whose broker never posted a split says nothing about the rest.
+ *
+ * What comes back is the *ledger's* rows rather than the feed's, and that is
+ * the point of returning them at all. The feed dates a split to the day the new
+ * shares began trading; a broker posts it when it settles, a day or two later.
+ * Taking the price's breakpoint from the feed and the share count's from the
+ * ledger would leave the days between them priced in one set of shares and
+ * counted in the other -- a one-day trough of the whole split ratio, which is
+ * the same bug in miniature. Reading both from the ledger row puts the two
+ * changes on the same morning, whichever morning the broker chose. The feed's
+ * role is to say the split happened and what it was worth, not when the ledger
+ * acted on it.
+ */
+function matchedSplits(
+  feed: readonly SplitEvent[],
+  ledger: readonly SplitEvent[],
+): SplitEvent[] | null {
+  const matched: SplitEvent[] = [];
+  for (const event of feed) {
+    const row = ledger.find(
+      (candidate) =>
+        daysBetween(candidate.date, event.date) <= SPLIT_MATCH_DAYS &&
+        Math.abs(candidate.ratio / event.ratio - 1) <= RATIO_TOLERANCE,
+    );
+    if (row === undefined) return null;
+    matched.push(row);
+  }
+  return matched;
+}
+
+/**
  * Every date the series should carry a point for: the trading days the feed
  * knows about, which is the only calendar that has prices attached.
  */
@@ -408,6 +541,13 @@ export interface SeriesOptions {
   to: ISODate;
   /** Narrows to one or more accounts; omit for everything. */
   accountIds?: readonly Id[];
+  /**
+   * The feed's split calendar per symbol. Optional, and the series is still
+   * built without it -- the units are then inferred from the ledger's own
+   * prices, which is right except in the days around a split. See
+   * {@link splitScales}.
+   */
+  splits?: ReadonlyMap<string, readonly SplitEvent[]>;
 }
 
 /**
@@ -436,7 +576,7 @@ export function buildPerformanceSeries(
   histories: ReadonlyMap<string, readonly PricePoint[]>,
   options: SeriesOptions,
 ): PerformanceSeries {
-  const { from, to, accountIds } = options;
+  const { from, to, accountIds, splits } = options;
   const scoped = accountIds
     ? transactions.filter((tx) => accountIds.includes(tx.accountId))
     : [...transactions];
@@ -469,7 +609,20 @@ export function buildPerformanceSeries(
     else ledgerPrices.set(symbol, [{ date: tx.date, close: tx.price }]);
   }
 
+  // The feed's calendar where the ledger tracks it, the inference everywhere
+  // else. Per symbol rather than all-or-nothing: a holding whose broker never
+  // posted its split still gets the treatment that suits it, without costing
+  // every other holding the exact answer.
   const scales = priceScales(ordered, histories);
+  if (splits) {
+    const posted = ledgerSplits(ordered);
+    for (const [symbol, events] of splits) {
+      if (events.length === 0) continue;
+      const rows = matchedSplits(events, posted.get(symbol) ?? []);
+      if (rows === null) continue;
+      scales.set(symbol, splitScales(rows));
+    }
+  }
 
   const usedFallback = new Set<string>();
   const priceOn = (symbol: string, date: ISODate): number | null => {
