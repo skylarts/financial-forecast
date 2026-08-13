@@ -508,3 +508,59 @@ describe("valuing a day the feed has no close for", () => {
     expect(points[0].value).toBe(1000);
   });
 });
+
+describe("a day whose flow dwarfs what was invested", () => {
+  // This series values securities alone, so selling out entirely reads as an
+  // empty book even though the cash is sitting there waiting. Buying back in
+  // then divides a whole position by the float dust the sale left behind --
+  // not a loss of everything, just a denominator that was never a base.
+  it("does not read buying back into an emptied portfolio as a total loss", () => {
+    const histories = new Map([
+      [
+        "VTI",
+        history([
+          ["2024-01-02", 100],
+          ["2024-01-03", 100],
+          ["2024-01-04", 99.5],
+        ]),
+      ],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        // Sold down to a sliver -- not to nothing, which the empty-book check
+        // already covers. What is left is the base the next day divides by.
+        tx({ type: "sell", date: "2024-01-03", quantity: 9, price: 100 }),
+        // The same money straight back to work: $10,000 of flow against the
+        // $100 still on the books. Measured, that reads as losing half the
+        // portfolio on a day the shares moved half a percent.
+        tx({ type: "buy", date: "2024-01-04", quantity: 100, price: 100 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-04" },
+    );
+
+    expect(totalReturn(points)).toBeCloseTo(0, 6);
+  });
+
+  it("still measures an ordinary day that adds to an existing position", () => {
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110]])],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100 }),
+        // $220 against a $1,000 base is a normal top-up, not a restart. Bought
+        // at the day's close, so it carries no same-day gain of its own and
+        // what is left to measure is the 10% the original shares made.
+        tx({ type: "buy", date: "2024-01-03", quantity: 2, price: 110 }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03" },
+    );
+
+    expect(totalReturn(points)).toBeCloseTo(0.1, 6);
+  });
+});
