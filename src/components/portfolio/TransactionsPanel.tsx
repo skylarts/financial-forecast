@@ -327,7 +327,9 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const updateTransaction = usePortfolioStore((s) => s.updateTransaction);
   const removeTransaction = usePortfolioStore((s) => s.removeTransaction);
+  const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
   const [adding, setAdding] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [accountFilter, setAccountFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -505,6 +507,36 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
               Clear filters
             </Btn>
           )}
+          {/* Deletes exactly what the filters are showing, so the same control
+              covers emptying the ledger before re-importing a corrected file
+              and clearing one bad account or date range. */}
+          {rows.length > 0 &&
+            (confirmingClear ? (
+              <>
+                <Btn
+                  onClick={() => {
+                    removeTransactions(rows.map((tx) => tx.id));
+                    setConfirmingClear(false);
+                    setEditingId(null);
+                  }}
+                  title="This cannot be undone"
+                >
+                  Delete {rows.length}
+                </Btn>
+                <Btn onClick={() => setConfirmingClear(false)}>Keep</Btn>
+              </>
+            ) : (
+              <Btn
+                onClick={() => setConfirmingClear(true)}
+                title={
+                  filtersActive
+                    ? `Delete the ${rows.length} transactions matching these filters`
+                    : `Delete all ${rows.length} transactions in this portfolio`
+                }
+              >
+                {filtersActive ? `Delete ${rows.length} shown` : "Delete all"}
+              </Btn>
+            ))}
           {portfolio.accounts.length > 0 && (
             <Btn
               variant="primary"

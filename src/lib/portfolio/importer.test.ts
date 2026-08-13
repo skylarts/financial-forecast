@@ -3,6 +3,7 @@ import {
   buildImportRows,
   guessMapping,
   inferType,
+  isDirectionlessTransfer,
   parseDate,
   parseDelimited,
   parseNumber,
@@ -173,5 +174,71 @@ describe("buildImportRows", () => {
     }));
 
     expect(second[0].duplicate).toBe(true);
+  });
+});
+
+describe("directionless transfer wording", () => {
+  it.each(["Transfer (Securities)", "Transfer (Cash/ACAT)", "ACAT"])(
+    "leaves %s untyped on wording alone",
+    (input) => {
+      expect(inferType(input)).toBeNull();
+      expect(isDirectionlessTransfer(input)).toBe(true);
+    },
+  );
+
+  it.each(["Transfer In", "Transfer Out", "YOU BOUGHT"])(
+    "does not claim %s, which already resolves",
+    (input) => {
+      expect(isDirectionlessTransfer(input)).toBe(false);
+    },
+  );
+
+  function transferRows(csv: string) {
+    const table = parseDelimited(csv);
+    return buildImportRows(table, guessMapping(table.headers));
+  }
+
+  // Both halves of a custodian move must survive. Dropping the outbound half is
+  // what leaves shares in the ledger that nothing ever paid for, so whatever
+  // closes them later gets booked against a zero cost basis.
+  it("reads a securities transfer's direction from the quantity's sign", () => {
+    const [out, back] = transferRows(
+      [
+        "Run Date,Action,Symbol,Quantity,Price,Amount",
+        "12/05/2025,Transfer (Securities),AMZN,-11,,",
+        "12/08/2025,Transfer In,AMZN,11,,",
+      ].join("\n"),
+    );
+
+    expect(out.skip).toBe(false);
+    expect(out.draft.type).toBe("transfer_out");
+    expect(out.draft.quantity).toBe(11);
+    expect(out.issues[0]).toMatch(/direction not stated/i);
+    expect(back.draft.type).toBe("transfer_in");
+  });
+
+  it("reads a cash transfer's direction from the amount when it moves no shares", () => {
+    const [inbound, outbound] = transferRows(
+      [
+        "Run Date,Action,Symbol,Quantity,Price,Amount",
+        "12/05/2025,Transfer (Cash/ACAT),,,,119.55",
+        "12/15/2025,Transfer (Cash/ACAT),,,,-40.00",
+      ].join("\n"),
+    );
+
+    expect(inbound.skip).toBe(false);
+    expect(inbound.draft.type).toBe("cash_deposit");
+    expect(outbound.draft.type).toBe("cash_withdrawal");
+  });
+
+  it("still skips a transfer that carries no sign to read", () => {
+    const [row] = transferRows(
+      ["Run Date,Action,Symbol,Quantity,Price,Amount", "12/05/2025,Transfer (Securities),AMZN,,,"].join(
+        "\n",
+      ),
+    );
+
+    expect(row.skip).toBe(true);
+    expect(row.issues.join(" ")).toMatch(/could not tell/i);
   });
 });
