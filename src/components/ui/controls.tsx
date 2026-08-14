@@ -17,6 +17,8 @@ export function Btn({
   type = "button",
   variant = "neutral",
   className = "",
+  ariaHasPopup,
+  ariaExpanded,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -26,6 +28,9 @@ export function Btn({
   /** "primary" is the deep accent fill; use it for at most one action per region. */
   variant?: "neutral" | "primary";
   className?: string;
+  /** Set both when the button opens a menu, so it announces as one. */
+  ariaHasPopup?: "menu";
+  ariaExpanded?: boolean;
 }) {
   const base =
     "rounded-md px-3 py-1.5 text-[12.5px] transition-colors disabled:opacity-50";
@@ -34,7 +39,15 @@ export function Btn({
       ? "bg-pri text-pri-fg font-semibold border border-transparent hover:brightness-110"
       : "border border-border bg-panel text-dim hover:border-accent hover:text-foreground";
   return (
-    <button type={type} id={id} title={title} onClick={onClick} className={`${base} ${styles} ${className}`}>
+    <button
+      type={type}
+      id={id}
+      title={title}
+      onClick={onClick}
+      aria-haspopup={ariaHasPopup}
+      aria-expanded={ariaExpanded}
+      className={`${base} ${styles} ${className}`}
+    >
       {children}
     </button>
   );
