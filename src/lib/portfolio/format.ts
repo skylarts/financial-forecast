@@ -47,8 +47,10 @@ export function shortDate(iso: string): string {
 export function lotTermLabel(lot: {
   taxable: boolean;
   term: "long" | "short";
-  untaxedReason?: "transfer" | "premium_absorbed";
+  untaxedReason?: "transfer" | "premium_absorbed" | "reorganization";
 }): string {
   if (lot.taxable) return lot.term === "long" ? "Long" : "Short";
-  return lot.untaxedReason === "premium_absorbed" ? "In basis" : "Transfer";
+  if (lot.untaxedReason === "premium_absorbed") return "In basis";
+  if (lot.untaxedReason === "reorganization") return "Exchanged";
+  return "Transfer";
 }

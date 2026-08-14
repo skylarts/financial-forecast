@@ -58,7 +58,7 @@ export interface ClosedLot {
    * Why an untaxed disposal realized nothing, so the UI can say which it was
    * rather than calling every one of them a transfer. Absent when `taxable`.
    */
-  untaxedReason?: "transfer" | "premium_absorbed";
+  untaxedReason?: "transfer" | "premium_absorbed" | "reorganization";
   /**
    * True when no open lot backed these shares and they were booked at zero
    * basis. Callers that trace a disposal back to its acquisition have to skip
@@ -91,7 +91,7 @@ export interface LotLedger {
  */
 function typeRank(type: TransactionType): number {
   if (opensLotOn(type)) return 0;
-  if (type === "split") return 1;
+  if (type === "split" || type === "spinoff") return 1;
   if (closesLotOn(type)) return 2;
   // Retiring a contract comes after the ordinary closings so that a contract
   // sold and expired on the same date still draws down in that order.
@@ -205,6 +205,116 @@ function retireContracts(
 }
 
 /**
+ * Applies a spinoff, merger, or ticker exchange to every open long lot of
+ * `symbol`.
+ *
+ * A real spinoff (`spinoffBasisRetained` between 0 and 1) never touches the
+ * parent's share count -- Danaher shareholders kept every DHR share when
+ * Veralto was carved out of it. Only the *basis* moves: each open lot hands
+ * over the fraction the company's Form 8937 says goes to the new symbol, the
+ * parent keeps the rest, and the new symbol opens with exactly that much
+ * basis on the *same* acquired date -- basis and holding period both tack
+ * from the original purchase, per the ordinary spinoff basis-allocation rule.
+ *
+ * A full exchange or reorganization -- the parent stops existing, e.g. GGPI
+ * becoming PSNY -- is the boundary case of the same mechanic: basis retained
+ * is 0, so every open lot closes out untaxed (a reorganization realizes
+ * nothing) and the new symbol opens at the full basis and the same date,
+ * scaled by the share ratio.
+ *
+ * Only long lots are handled -- a corporate action retiring a short position
+ * is not a case any statement in this ledger has needed yet.
+ */
+function applySpinoff(
+  tx: Transaction,
+  symbol: string,
+  open: Map<string, OpenLot[]>,
+  closedLots: ClosedLot[],
+  warnings: LedgerWarning[],
+): void {
+  const newSymbol = tx.spinoffSymbol ? normalizeSymbol(tx.spinoffSymbol) : null;
+  const ratio = tx.spinoffShareRatio;
+  const retained = tx.spinoffBasisRetained;
+
+  if (!newSymbol || ratio === null || ratio <= 0 || retained === null || retained < 0 || retained > 1) {
+    warnings.push({
+      txId: tx.id,
+      date: tx.date,
+      symbol,
+      message:
+        "Spinoff ignored: it needs a new symbol, a positive share ratio, and a basis-retained fraction between 0 and 1.",
+    });
+    return;
+  }
+
+  const key = positionKey(tx.accountId, symbol, "long");
+  const lots = open.get(key) ?? [];
+  const openLots = lots.filter((lot) => lot.quantity > EPSILON);
+  if (openLots.length === 0) {
+    warnings.push({
+      txId: tx.id,
+      date: tx.date,
+      symbol,
+      message: `Spinoff into ${newSymbol} ignored: no open ${symbol} position on this date to apply it to.`,
+    });
+    return;
+  }
+
+  const childKey = positionKey(tx.accountId, newSymbol, "long");
+  const childLots = open.get(childKey) ?? [];
+  if (!open.has(childKey)) open.set(childKey, childLots);
+
+  const retires = retained <= 0;
+  for (const lot of openLots) {
+    const childBasis = lot.costBasis * (1 - retained);
+    const childQuantity = lot.quantity * ratio;
+
+    childLots.push({
+      id: `${tx.id}-${lot.id}`,
+      accountId: tx.accountId,
+      symbol: newSymbol,
+      side: "long",
+      acquiredDate: lot.acquiredDate,
+      quantity: childQuantity,
+      costBasis: childBasis,
+      openTxId: tx.id,
+    });
+
+    if (retires) {
+      closedLots.push({
+        id: lot.id,
+        accountId: tx.accountId,
+        symbol,
+        side: "long",
+        acquiredDate: lot.acquiredDate,
+        disposedDate: tx.date,
+        quantity: lot.quantity,
+        costBasis: lot.costBasis,
+        proceeds: 0,
+        gain: 0,
+        term: holdingTerm(lot.acquiredDate, tx.date),
+        taxable: false,
+        untaxedReason: "reorganization",
+        unmatched: false,
+        openTxId: lot.openTxId,
+        closeTxId: tx.id,
+      });
+      lot.quantity = 0;
+      lot.costBasis = 0;
+    } else {
+      lot.costBasis -= childBasis;
+    }
+  }
+
+  if (retires) {
+    open.set(
+      key,
+      lots.filter((lot) => lot.quantity > EPSILON),
+    );
+  }
+}
+
+/**
  * Replays a transaction ledger into open and closed tax lots.
  *
  * Long and short lots are kept in separate queues, so a sell only ever draws
@@ -298,6 +408,11 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
           lot.quantity *= ratio;
         }
       }
+      continue;
+    }
+
+    if (tx.type === "spinoff") {
+      applySpinoff(tx, symbol, open, closedLots, warnings);
       continue;
     }
 

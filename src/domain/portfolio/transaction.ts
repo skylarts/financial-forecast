@@ -21,6 +21,11 @@ export const transactionTypeSchema = z.enum([
   /** Ratio split; `quantity` carries the new-shares-per-old-share multiplier. */
   "split",
   /**
+   * A spinoff, merger, or ticker exchange: `symbol`'s lots hand a fraction of
+   * their basis to a new `spinoffSymbol` position. See `spinoffBasisRetained`.
+   */
+  "spinoff",
+  /**
    * An option contract reached expiry worthless. Closes the contract's lot at
    * nothing: a long writes the premium off, a short keeps it. Applies to
    * whichever side the position is on, so it needs no long/short variant.
@@ -48,6 +53,7 @@ export const TRANSACTION_TYPE_LABELS: Record<TransactionType, string> = {
   dividend: "Dividend",
   reinvest: "Reinvest",
   split: "Split",
+  spinoff: "Spinoff / exchange",
   option_expire: "Expired",
   option_exercise: "Exercised",
   option_assign: "Assigned",
@@ -72,7 +78,7 @@ export const TRANSACTION_TYPE_GROUPS: { label: string; types: TransactionType[] 
   { label: "Income", types: ["dividend", "reinvest", "interest"] },
   { label: "Options", types: ["option_expire", "option_exercise", "option_assign"] },
   { label: "Transfers", types: ["transfer_in", "transfer_out"] },
-  { label: "Other", types: ["split", "fee", "cash_deposit", "cash_withdrawal"] },
+  { label: "Other", types: ["split", "spinoff", "fee", "cash_deposit", "cash_withdrawal"] },
 ];
 
 /**
@@ -92,6 +98,7 @@ export const SHARE_TRANSACTION_TYPES: readonly TransactionType[] = [
   "buy_to_cover",
   "reinvest",
   "split",
+  "spinoff",
   "option_expire",
   "option_exercise",
   "option_assign",
@@ -186,6 +193,21 @@ export const transactionSchema = z.object({
    * what the holding period runs from -- not the transfer date.
    */
   acquiredDate: isoDateSchema.nullable().default(null),
+  /** For spinoff: the new symbol the distribution creates, e.g. VLTO out of DHR. */
+  spinoffSymbol: z.string().nullable().default(null),
+  /** For spinoff: new shares of spinoffSymbol issued per one share of symbol. */
+  spinoffShareRatio: z.number().positive().nullable().default(null),
+  /**
+   * For spinoff: the fraction of each open lot's cost basis that stays with
+   * `symbol` -- the rest becomes spinoffSymbol's opening basis. A true spinoff
+   * (the parent keeps trading) is a fraction between 0 and 1: DHR retained
+   * 0.8834 of its basis when VLTO was carved out, VLTO opened with the other
+   * 0.1166. A full share-for-share exchange or reorganization -- the old
+   * symbol stops existing, e.g. GGPI becoming PSNY -- is the boundary case
+   * of that: 0 retained, so every open lot closes out (untaxed) and
+   * spinoffSymbol opens at the full basis and the original acquired date.
+   */
+  spinoffBasisRetained: z.number().min(0).max(1).nullable().default(null),
   note: z.string().default(""),
   /** Groups rows that arrived in one import, so a bad import can be undone. */
   importBatchId: idSchema.nullable().default(null),
@@ -258,6 +280,7 @@ export function signedCashFlow(tx: Transaction): number {
     case "cash_withdrawal":
       return -gross;
     case "split":
+    case "spinoff":
     case "transfer_in":
     case "transfer_out":
       return 0;
