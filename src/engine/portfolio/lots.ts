@@ -18,6 +18,20 @@ import { resolveOptionPremiums } from "./optionPremiums";
  *  lot left behind by floating-point division. */
 const EPSILON = 1e-9;
 
+/**
+ * Every brokerage in this ledger prints share quantities to 5 decimal places.
+ * A spinoff's child quantity is computed at full floating-point precision
+ * (parent shares times a ratio like 1/3), so rounding it to that same
+ * precision is what keeps it from drifting a few millionths of a share away
+ * from the quantity the statement itself will print on the sale that later
+ * closes it -- which would otherwise look like a (harmless but noisy) oversell.
+ */
+const SHARE_DECIMALS = 5;
+
+function roundToShareDecimals(quantity: number): number {
+  return Math.round(quantity * 10 ** SHARE_DECIMALS) / 10 ** SHARE_DECIMALS;
+}
+
 export interface OpenLot {
   /** The statement's lot id when it gave one, else the opening transaction's id. */
   id: string;
@@ -267,7 +281,7 @@ function applySpinoff(
   const retires = retained <= 0;
   for (const lot of openLots) {
     const childBasis = lot.costBasis * (1 - retained);
-    const childQuantity = lot.quantity * ratio;
+    const childQuantity = roundToShareDecimals(lot.quantity * ratio);
 
     childLots.push({
       id: `${tx.id}-${lot.id}`,

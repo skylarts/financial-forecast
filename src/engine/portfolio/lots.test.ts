@@ -256,6 +256,29 @@ describe("buildLotLedger", () => {
     expect(warnings[0].message).toMatch(/needs a new symbol/);
   });
 
+  it("spinoff: rounds the child quantity to the same 5 decimals every statement prints", () => {
+    // A real case: 0.14762 DHR at 1/3 is 0.049206666... VLTO -- full precision
+    // would drift a few millionths of a share away from the 0.04921 the
+    // statement itself prints on the sale that later closes this lot, which
+    // reads as a (harmless but noisy) oversell. Rounded, it matches exactly.
+    const { openLots, closedLots, warnings } = buildLotLedger([
+      tx({ type: "buy", date: "2022-01-10", quantity: 0.14762, price: 100, symbol: "DHR" }),
+      tx({
+        type: "spinoff",
+        date: "2023-09-30",
+        symbol: "DHR",
+        spinoffSymbol: "VLTO",
+        spinoffShareRatio: 1 / 3,
+        spinoffBasisRetained: 0.8834,
+      }),
+      tx({ type: "sell", date: "2023-10-06", quantity: 0.04921, price: 50, symbol: "VLTO" }),
+    ]);
+
+    expect(openLots.find((l) => l.symbol === "VLTO")).toBeUndefined();
+    expect(closedLots.find((l) => l.symbol === "VLTO")?.quantity).toBe(0.04921);
+    expect(warnings).toHaveLength(0);
+  });
+
   it("applies a same-day buy before a same-day sell regardless of file order", () => {
     const { closedLots, warnings } = buildLotLedger([
       tx({ type: "sell", date: "2024-01-10", quantity: 10, price: 120 }),
