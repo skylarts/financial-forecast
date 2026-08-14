@@ -15,6 +15,9 @@ function tx(partial: Partial<Transaction> & { type: TransactionType; date: strin
     fees: 0,
     lotId: null,
     acquiredDate: null,
+    spinoffSymbol: null,
+    spinoffShareRatio: null,
+    spinoffBasisRetained: null,
     note: "",
     importBatchId: null,
     sourceHash: null,
@@ -154,6 +157,103 @@ describe("buildLotLedger", () => {
 
     expect(openLots[0].quantity).toBe(40);
     expect(openLots[0].costBasis).toBe(1000);
+  });
+
+  it("spinoff: parent keeps its shares, hands a fraction of basis to the new symbol", () => {
+    // DHR -> VLTO, September 2023: 1 VLTO per 3 DHR, 88.34% of basis stays with DHR.
+    const { openLots } = buildLotLedger([
+      tx({ type: "buy", date: "2022-01-10", quantity: 30, price: 100, symbol: "DHR" }),
+      tx({
+        type: "spinoff",
+        date: "2023-09-30",
+        symbol: "DHR",
+        spinoffSymbol: "VLTO",
+        spinoffShareRatio: 1 / 3,
+        spinoffBasisRetained: 0.8834,
+      }),
+    ]);
+
+    const dhr = openLots.find((l) => l.symbol === "DHR")!;
+    const vlto = openLots.find((l) => l.symbol === "VLTO")!;
+    expect(dhr.quantity).toBe(30); // unchanged: a spinoff never touches the parent's share count
+    expect(dhr.costBasis).toBeCloseTo(2650.2, 5); // 3000 * 0.8834
+    expect(vlto.quantity).toBeCloseTo(10, 10); // 30 * 1/3
+    expect(vlto.costBasis).toBeCloseTo(349.8, 5); // 3000 * 0.1166
+    expect(vlto.acquiredDate).toBe("2022-01-10"); // holding period tacks from the original purchase
+  });
+
+  it("spinoff: pro-rates basis across every open lot of the parent, by lot", () => {
+    const { openLots } = buildLotLedger([
+      tx({ type: "buy", date: "2022-01-10", quantity: 10, price: 100, symbol: "DHR" }),
+      tx({ type: "buy", date: "2022-06-10", quantity: 10, price: 200, symbol: "DHR" }),
+      tx({
+        type: "spinoff",
+        date: "2023-09-30",
+        symbol: "DHR",
+        spinoffSymbol: "VLTO",
+        spinoffShareRatio: 1 / 3,
+        spinoffBasisRetained: 0.8834,
+      }),
+    ]);
+
+    const vltoLots = openLots.filter((l) => l.symbol === "VLTO");
+    expect(vltoLots).toHaveLength(2);
+    expect(vltoLots.find((l) => l.acquiredDate === "2022-01-10")?.costBasis).toBeCloseTo(1000 * 0.1166, 5);
+    expect(vltoLots.find((l) => l.acquiredDate === "2022-06-10")?.costBasis).toBeCloseTo(2000 * 0.1166, 5);
+  });
+
+  it("spinoff: a full exchange (basis retained 0) retires the parent and opens the new symbol at full basis", () => {
+    // GGPI -> PSNY, June 2022: 1:1, a tax-free Section 351 exchange -- GGPI stops existing.
+    const { openLots, closedLots } = buildLotLedger([
+      tx({ type: "buy", date: "2021-10-01", quantity: 100, price: 10, symbol: "GGPI" }),
+      tx({
+        type: "spinoff",
+        date: "2022-06-23",
+        symbol: "GGPI",
+        spinoffSymbol: "PSNY",
+        spinoffShareRatio: 1,
+        spinoffBasisRetained: 0,
+      }),
+    ]);
+
+    expect(openLots.find((l) => l.symbol === "GGPI")).toBeUndefined();
+    const psny = openLots.find((l) => l.symbol === "PSNY")!;
+    expect(psny.quantity).toBe(100);
+    expect(psny.costBasis).toBe(1000);
+    expect(psny.acquiredDate).toBe("2021-10-01"); // full holding-period carryover
+
+    expect(closedLots).toHaveLength(1);
+    expect(closedLots[0].symbol).toBe("GGPI");
+    expect(closedLots[0].taxable).toBe(false);
+    expect(closedLots[0].untaxedReason).toBe("reorganization");
+    expect(closedLots[0].gain).toBe(0);
+  });
+
+  it("spinoff: warns and does nothing when there's no open position to apply it to", () => {
+    const { openLots, warnings } = buildLotLedger([
+      tx({
+        type: "spinoff",
+        date: "2023-09-30",
+        symbol: "DHR",
+        spinoffSymbol: "VLTO",
+        spinoffShareRatio: 1 / 3,
+        spinoffBasisRetained: 0.8834,
+      }),
+    ]);
+
+    expect(openLots).toHaveLength(0);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toMatch(/no open DHR position/);
+  });
+
+  it("spinoff: warns and does nothing when the ratio or basis fields are missing", () => {
+    const { warnings } = buildLotLedger([
+      tx({ type: "buy", date: "2022-01-10", quantity: 10, price: 100, symbol: "DHR" }),
+      tx({ type: "spinoff", date: "2023-09-30", symbol: "DHR", spinoffSymbol: "VLTO" }),
+    ]);
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toMatch(/needs a new symbol/);
   });
 
   it("applies a same-day buy before a same-day sell regardless of file order", () => {

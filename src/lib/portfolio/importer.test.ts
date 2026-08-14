@@ -177,6 +177,40 @@ describe("buildImportRows", () => {
   });
 });
 
+describe("buildImportRows: spinoff", () => {
+  const header = "Date,Action,Symbol,Spinoff: new symbol,Spinoff: share ratio,Spinoff: basis retained";
+
+  function rows(dataLine: string) {
+    const table = parseDelimited([header, dataLine].join("\n"));
+    return buildImportRows(table, guessMapping(table.headers));
+  }
+
+  it("maps the three spinoff columns onto the draft", () => {
+    const [row] = rows("09/30/2023,spinoff,DHR,VLTO,0.3333,0.8834");
+
+    expect(row.skip).toBe(false);
+    expect(row.draft).toMatchObject({
+      type: "spinoff",
+      symbol: "DHR",
+      spinoffSymbol: "VLTO",
+      spinoffShareRatio: 0.3333,
+      spinoffBasisRetained: 0.8834,
+    });
+  });
+
+  it("recognizes spinoff wording in the action column via free text", () => {
+    expect(inferType("Spinoff")).toBe("spinoff");
+    expect(inferType("Stock Merger")).toBe("spinoff");
+  });
+
+  it("skips a spinoff row missing its ratio or basis, rather than importing a no-op", () => {
+    const [row] = rows("09/30/2023,spinoff,DHR,VLTO,,");
+
+    expect(row.skip).toBe(true);
+    expect(row.issues.join(" ")).toContain("share ratio");
+  });
+});
+
 describe("directionless transfer wording", () => {
   it.each(["Transfer (Securities)", "Transfer (Cash/ACAT)", "ACAT"])(
     "leaves %s untyped on wording alone",

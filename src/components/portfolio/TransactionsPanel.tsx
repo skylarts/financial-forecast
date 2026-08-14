@@ -84,6 +84,9 @@ interface TxFormState {
   fees: string;
   lotId: string;
   acquiredDate: string;
+  spinoffSymbol: string;
+  spinoffShareRatio: string;
+  spinoffBasisRetained: string;
 }
 
 function blankForm(accountId: string): TxFormState {
@@ -98,6 +101,9 @@ function blankForm(accountId: string): TxFormState {
     fees: "",
     lotId: "",
     acquiredDate: "",
+    spinoffSymbol: "",
+    spinoffShareRatio: "",
+    spinoffBasisRetained: "",
   };
 }
 
@@ -114,7 +120,19 @@ function formFromTransaction(tx: Transaction): TxFormState {
     fees: tx.fees > 0 ? String(tx.fees) : "",
     lotId: tx.lotId ?? "",
     acquiredDate: tx.acquiredDate ?? "",
+    spinoffSymbol: tx.spinoffSymbol ?? "",
+    spinoffShareRatio: tx.spinoffShareRatio === null ? "" : String(tx.spinoffShareRatio),
+    spinoffBasisRetained: tx.spinoffBasisRetained === null ? "" : String(tx.spinoffBasisRetained),
   };
+}
+
+/** Turns the basis-retained form field into a 0-1 fraction, tolerant of "88.34" or "0.8834". */
+function parseBasisRetained(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const value = Number.parseFloat(trimmed);
+  if (Number.isNaN(value)) return null;
+  return value > 1 ? value / 100 : value;
 }
 
 /**
@@ -149,7 +167,17 @@ function TransactionForm({
     form.type !== "cash_withdrawal" &&
     form.type !== "interest" &&
     form.type !== "fee";
-  const canSubmit = form.date !== "" && form.accountId !== "" && (!needsSymbol || form.symbol.trim() !== "");
+  const isSpinoff = form.type === "spinoff";
+  const spinoffBasisRetained = parseBasisRetained(form.spinoffBasisRetained);
+  const spinoffValid =
+    !isSpinoff ||
+    (form.spinoffSymbol.trim() !== "" &&
+      Number.parseFloat(form.spinoffShareRatio) > 0 &&
+      spinoffBasisRetained !== null &&
+      spinoffBasisRetained >= 0 &&
+      spinoffBasisRetained <= 1);
+  const canSubmit =
+    form.date !== "" && form.accountId !== "" && (!needsSymbol || form.symbol.trim() !== "") && spinoffValid;
   const opensLot = opensLotOn(form.type) !== null;
   const closesLot = closesLotOn(form.type) !== null;
   const lotHint = closesLot
@@ -201,53 +229,91 @@ function TransactionForm({
 
       {needsSymbol && (
         <div className="mt-2 flex">
-          <SymbolField value={form.symbol} onChange={(symbol) => set({ symbol })} />
+          <SymbolField
+            value={form.symbol}
+            onChange={(symbol) => set({ symbol })}
+            label={isSpinoff ? "Existing symbol" : "Symbol"}
+          />
+        </div>
+      )}
+
+      {isSpinoff && (
+        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md border border-border-soft bg-panel p-2">
+          <SymbolField
+            value={form.spinoffSymbol}
+            onChange={(spinoffSymbol) => set({ spinoffSymbol })}
+            label="New symbol"
+          />
+          <label className="text-[11.5px] text-dim-2">
+            <span className="mb-0.5 block">Share ratio</span>
+            <input
+              value={form.spinoffShareRatio}
+              onChange={(e) => set({ spinoffShareRatio: e.target.value })}
+              placeholder="0.3333"
+              title="New shares issued per one existing share, e.g. 1 VLTO for every 3 DHR is 0.3333."
+              className={`${INPUT} w-24 text-right`}
+            />
+          </label>
+          <label className="text-[11.5px] text-dim-2">
+            <span className="mb-0.5 block">Basis retained</span>
+            <input
+              value={form.spinoffBasisRetained}
+              onChange={(e) => set({ spinoffBasisRetained: e.target.value })}
+              placeholder="88.34"
+              title="Percent of cost basis staying with the existing symbol -- from the company's Form 8937. 0 for a full exchange or reorganization, where the existing symbol stops existing."
+              className={`${INPUT} w-24 text-right`}
+            />
+          </label>
         </div>
       )}
 
       <div className="mt-2 flex flex-wrap items-end gap-2">
-        <label className="text-[11.5px] text-dim-2">
-          <span className="mb-0.5 block">
-            {form.type === "split" ? "Ratio" : isOptionLifecycleType(form.type) ? "Contracts" : "Shares"}
-          </span>
-          <input
-            value={form.quantity}
-            onChange={(e) => set({ quantity: e.target.value })}
-            placeholder={form.type === "split" ? "2" : isOptionLifecycleType(form.type) ? "1" : "10"}
-            className={`${INPUT} w-24 text-right`}
-          />
-        </label>
-        <label className="text-[11.5px] text-dim-2">
-          <span className="mb-0.5 block">Price</span>
-          <input
-            value={form.price}
-            onChange={(e) => set({ price: e.target.value })}
-            // Retiring a contract carries no price of its own: an expiry is
-            // worth nothing, and an exercise settles through its stock leg.
-            disabled={isOptionLifecycleType(form.type)}
-            placeholder={isOptionLifecycleType(form.type) ? "—" : "220.50"}
-            className={`${INPUT} w-24 text-right disabled:opacity-40`}
-          />
-        </label>
-        <label className="text-[11.5px] text-dim-2">
-          <span className="mb-0.5 block">Amount</span>
-          <input
-            value={form.amount}
-            onChange={(e) => set({ amount: e.target.value })}
-            placeholder="auto"
-            title="Leave blank to compute from shares × price."
-            className={`${INPUT} w-24 text-right`}
-          />
-        </label>
-        <label className="text-[11.5px] text-dim-2">
-          <span className="mb-0.5 block">Fees</span>
-          <input
-            value={form.fees}
-            onChange={(e) => set({ fees: e.target.value })}
-            placeholder="0"
-            className={`${INPUT} w-20 text-right`}
-          />
-        </label>
+        {!isSpinoff && (
+          <>
+            <label className="text-[11.5px] text-dim-2">
+              <span className="mb-0.5 block">
+                {form.type === "split" ? "Ratio" : isOptionLifecycleType(form.type) ? "Contracts" : "Shares"}
+              </span>
+              <input
+                value={form.quantity}
+                onChange={(e) => set({ quantity: e.target.value })}
+                placeholder={form.type === "split" ? "2" : isOptionLifecycleType(form.type) ? "1" : "10"}
+                className={`${INPUT} w-24 text-right`}
+              />
+            </label>
+            <label className="text-[11.5px] text-dim-2">
+              <span className="mb-0.5 block">Price</span>
+              <input
+                value={form.price}
+                onChange={(e) => set({ price: e.target.value })}
+                // Retiring a contract carries no price of its own: an expiry is
+                // worth nothing, and an exercise settles through its stock leg.
+                disabled={isOptionLifecycleType(form.type)}
+                placeholder={isOptionLifecycleType(form.type) ? "—" : "220.50"}
+                className={`${INPUT} w-24 text-right disabled:opacity-40`}
+              />
+            </label>
+            <label className="text-[11.5px] text-dim-2">
+              <span className="mb-0.5 block">Amount</span>
+              <input
+                value={form.amount}
+                onChange={(e) => set({ amount: e.target.value })}
+                placeholder="auto"
+                title="Leave blank to compute from shares × price."
+                className={`${INPUT} w-24 text-right`}
+              />
+            </label>
+            <label className="text-[11.5px] text-dim-2">
+              <span className="mb-0.5 block">Fees</span>
+              <input
+                value={form.fees}
+                onChange={(e) => set({ fees: e.target.value })}
+                placeholder="0"
+                className={`${INPUT} w-20 text-right`}
+              />
+            </label>
+          </>
+        )}
         {(opensLot || closesLot) && (
           <label className="text-[11.5px] text-dim-2">
             <span className="mb-0.5 block">Lot ID</span>
@@ -570,6 +636,9 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
               fees: num(form.fees),
               lotId: form.lotId.trim() || null,
               acquiredDate: form.acquiredDate || null,
+              spinoffSymbol: form.spinoffSymbol.trim() ? normalizeSymbol(form.spinoffSymbol) : null,
+              spinoffShareRatio: form.spinoffShareRatio.trim() === "" ? null : num(form.spinoffShareRatio),
+              spinoffBasisRetained: parseBasisRetained(form.spinoffBasisRetained),
               note: "",
               importBatchId: null,
               sourceHash: null,
@@ -658,6 +727,9 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
                                   fees: num(form.fees),
                                   lotId: form.lotId.trim() || null,
                                   acquiredDate: form.acquiredDate || null,
+                                  spinoffSymbol: form.spinoffSymbol.trim() ? normalizeSymbol(form.spinoffSymbol) : null,
+                                  spinoffShareRatio: form.spinoffShareRatio.trim() === "" ? null : num(form.spinoffShareRatio),
+                                  spinoffBasisRetained: parseBasisRetained(form.spinoffBasisRetained),
                                 });
                                 setEditingId(null);
                               }}

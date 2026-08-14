@@ -23,6 +23,12 @@ export interface ColumnMapping {
   fees: number | null;
   lotId: number | null;
   acquiredDate: number | null;
+  /** For a spinoff/exchange row: the new symbol the distribution creates. */
+  spinoffSymbol: number | null;
+  /** For a spinoff/exchange row: new shares of spinoffSymbol per one old share. */
+  spinoffShareRatio: number | null;
+  /** For a spinoff/exchange row: fraction of basis staying with `symbol`, 0-1. */
+  spinoffBasisRetained: number | null;
   note: number | null;
 }
 
@@ -38,6 +44,9 @@ export const IMPORT_FIELD_LABELS: Record<ImportField, string> = {
   fees: "Fees",
   lotId: "Lot ID",
   acquiredDate: "Date acquired",
+  spinoffSymbol: "Spinoff: new symbol",
+  spinoffShareRatio: "Spinoff: share ratio",
+  spinoffBasisRetained: "Spinoff: basis retained",
   note: "Description",
 };
 
@@ -144,6 +153,9 @@ const FIELD_PATTERNS: Record<ImportField, RegExp[]> = {
   fees: [/fees?\s*(and|&)\s*comm/i, /commission/i, /^fees?$/i, /fee/i],
   amount: [/net\s*amount/i, /^amount$/i, /proceeds/i, /total/i, /principal/i, /amount/i],
   lotId: [/lot\s*(id|number|#)/i, /^lot$/i],
+  spinoffSymbol: [/spinoff.*symbol/i, /new\s*symbol/i],
+  spinoffShareRatio: [/spinoff.*ratio/i, /share\s*ratio/i],
+  spinoffBasisRetained: [/basis\s*retained/i, /spinoff.*basis/i],
   note: [/description/i, /memo/i, /^note$/i],
 };
 
@@ -163,6 +175,9 @@ export function guessMapping(headers: readonly string[]): ColumnMapping {
     fees: null,
     lotId: null,
     acquiredDate: null,
+    spinoffSymbol: null,
+    spinoffShareRatio: null,
+    spinoffBasisRetained: null,
     note: null,
   };
   const claimed = new Set<number>();
@@ -179,6 +194,9 @@ export function guessMapping(headers: readonly string[]): ColumnMapping {
     "fees",
     "amount",
     "lotId",
+    "spinoffSymbol",
+    "spinoffShareRatio",
+    "spinoffBasisRetained",
     "note",
   ];
 
@@ -245,6 +263,9 @@ const TYPE_PATTERNS: [RegExp, TransactionType][] = [
   [/reinvest|drip/i, "reinvest"],
   [/dividend|cap(ital)?\s*gain|distribution\s*received/i, "dividend"],
   [/interest/i, "interest"],
+  // Ahead of the plain "split" pattern below: "spin-off" wording never carries
+  // a ratio simple enough for that type to replay correctly on its own.
+  [/spin[\s-]?off|stock\s*merger|reorganiz/i, "spinoff"],
   [/split/i, "split"],
   [/(transfer|journal|received).*(in|received)|in\s*bound/i, "transfer_in"],
   [/(transfer|journal|delivered).*(out|delivered)/i, "transfer_out"],
@@ -330,6 +351,9 @@ export function buildImportRows(
     const amount = parseNumber(cell(raw, mapping.amount));
     const fees = parseNumber(cell(raw, mapping.fees));
     const symbolRaw = cell(raw, mapping.symbol).trim();
+    const spinoffSymbolRaw = cell(raw, mapping.spinoffSymbol).trim();
+    const spinoffShareRatio = parseNumber(cell(raw, mapping.spinoffShareRatio));
+    const spinoffBasisRetained = parseNumber(cell(raw, mapping.spinoffBasisRetained));
     const note = cell(raw, mapping.note).trim();
 
     // The action column is the primary signal, but many exports fold the
@@ -361,6 +385,17 @@ export function buildImportRows(
     const needsSymbol = type !== null && type !== "cash_deposit" && type !== "cash_withdrawal" && type !== "interest" && type !== "fee";
     if (needsSymbol && !symbolRaw) issues.push("No symbol on a row that needs one.");
 
+    // A spinoff drives the lot engine's pro-rata basis split, so a row
+    // missing any of these three would silently do nothing on import rather
+    // than raise the position it's meant to create -- skip it instead.
+    if (type === "spinoff") {
+      if (!spinoffSymbolRaw) issues.push("Spinoff row has no new symbol.");
+      if (spinoffShareRatio === null || spinoffShareRatio <= 0) issues.push("Spinoff row has no positive share ratio.");
+      if (spinoffBasisRetained === null || spinoffBasisRetained < 0 || spinoffBasisRetained > 1) {
+        issues.push("Spinoff row's basis retained must be between 0 and 1.");
+      }
+    }
+
     const sourceHash = hashRow(raw);
     const draft: DraftTransaction = {
       date: date ?? "",
@@ -372,15 +407,23 @@ export function buildImportRows(
       fees: fees === null ? 0 : Math.abs(fees),
       lotId: cell(raw, mapping.lotId).trim() || null,
       acquiredDate: parseDate(cell(raw, mapping.acquiredDate)),
+      spinoffSymbol: spinoffSymbolRaw ? normalizeSymbol(spinoffSymbolRaw) : null,
+      spinoffShareRatio,
+      spinoffBasisRetained,
       note,
       sourceHash,
     };
+
+    const spinoffIncomplete =
+      type === "spinoff" &&
+      (!spinoffSymbolRaw || spinoffShareRatio === null || spinoffShareRatio <= 0 ||
+        spinoffBasisRetained === null || spinoffBasisRetained < 0 || spinoffBasisRetained > 1);
 
     return {
       raw,
       draft,
       issues,
-      skip: !date || !type || (needsSymbol && !symbolRaw),
+      skip: !date || !type || (needsSymbol && !symbolRaw) || spinoffIncomplete,
       duplicate: seen.has(sourceHash),
     };
   });
