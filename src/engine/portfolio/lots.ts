@@ -97,6 +97,85 @@ export interface LotLedger {
 }
 
 /**
+ * Cancels the two legs of a custody move that never left the account.
+ *
+ * Changing brokers files as a `transfer_out` from the old custodian and a
+ * matching `transfer_in` at the new one, but both land in the same account
+ * here, because the account is the same account -- only the custodian changed.
+ * Replayed literally that reads as "close every lot, then open new ones", and
+ * the damage is threefold: the closings book a disposal at zero proceeds, so
+ * the ledger carries a loss the size of the whole position; the openings inherit
+ * whatever basis the receiving statement printed, which is the transfer-date
+ * market value whenever the old broker failed to pass basis along; and the
+ * reopened lots queue up behind shares bought years later, so the next sale
+ * draws newest-first instead of FIFO.
+ *
+ * Netting the legs before replay sidesteps all three -- the original lots are
+ * never disturbed, so they keep their true basis, their acquired dates, and
+ * their place in the queue. The rows stay in the ledger; they just stop moving
+ * shares that never moved.
+ *
+ * Only whole matched shares cancel. An imbalance is a real transfer of the
+ * remainder and survives with its basis scaled to the shares still standing, so
+ * a genuine one-way move in or out is left entirely alone. Legs are paired
+ * within one account, symbol, and date: a same-day pair is what a custody move
+ * looks like on a statement, and matching any wider would risk cancelling two
+ * unrelated transfers that happened to offset.
+ */
+function netInternalTransfers(transactions: readonly Transaction[]): readonly Transaction[] {
+  const legs = new Map<string, { in: Transaction[]; out: Transaction[] }>();
+  for (const tx of transactions) {
+    if (tx.symbol === null) continue;
+    if (tx.type !== "transfer_in" && tx.type !== "transfer_out") continue;
+    const key = `${tx.accountId}::${normalizeSymbol(tx.symbol)}::${tx.date}`;
+    const group = legs.get(key) ?? { in: [], out: [] };
+    if (!legs.has(key)) legs.set(key, group);
+    group[tx.type === "transfer_in" ? "in" : "out"].push(tx);
+  }
+
+  /** Shares left on each leg once the matched quantity is drawn off it. */
+  const survivingShares = new Map<Id, number>();
+  for (const group of legs.values()) {
+    const totalIn = group.in.reduce((sum, tx) => sum + tx.quantity, 0);
+    const totalOut = group.out.reduce((sum, tx) => sum + tx.quantity, 0);
+    const matched = Math.min(totalIn, totalOut);
+    if (matched <= EPSILON) continue;
+
+    for (const side of [group.in, group.out]) {
+      let toCancel = matched;
+      for (const tx of side) {
+        if (toCancel <= EPSILON) break;
+        const taken = Math.min(tx.quantity, toCancel);
+        toCancel -= taken;
+        survivingShares.set(tx.id, tx.quantity - taken);
+      }
+    }
+  }
+
+  if (survivingShares.size === 0) return transactions;
+
+  const netted: Transaction[] = [];
+  for (const tx of transactions) {
+    const surviving = survivingShares.get(tx.id);
+    if (surviving === undefined) {
+      netted.push(tx);
+      continue;
+    }
+    if (surviving <= EPSILON) continue;
+    // The remainder is a real transfer, so it keeps the share of the basis that
+    // rides with the shares still moving.
+    const share = surviving / tx.quantity;
+    netted.push({
+      ...tx,
+      quantity: surviving,
+      amount: tx.amount === null ? null : tx.amount * share,
+      fees: tx.fees * share,
+    });
+  }
+  return netted;
+}
+
+/**
  * Same-day ordering. A statement gives no intraday timestamps, so a buy and a
  * sell of the same symbol on the same day would otherwise resolve in whatever
  * order the file happened to list them -- and a sell sorted ahead of its own
@@ -355,14 +434,18 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
   // this globally was flagging accounts that could never collide.
   const issued = new Map<Id, Set<string>>();
 
+  // A custody move is two legs of one non-event; cancelling them first keeps
+  // the lots they would have churned exactly where they are.
+  const rows = netInternalTransfers(transactions);
+
   // Exercised and assigned contracts fold their premium into the shares they
   // deliver, so the stock legs need their adjustments resolved before replay.
-  const { pairings, unpaired } = resolveOptionPremiums(transactions);
+  const { pairings, unpaired } = resolveOptionPremiums(rows);
   for (const problem of unpaired) {
     warnings.push(problem);
   }
 
-  for (const tx of sortForReplay(transactions)) {
+  for (const tx of sortForReplay(rows)) {
     if (tx.symbol === null) continue;
     const symbol = normalizeSymbol(tx.symbol);
     const openSide = opensLotOn(tx.type);
