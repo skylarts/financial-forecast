@@ -114,6 +114,11 @@ export function RealizedPanel({
   const filtered = useMemo(() => {
     const query = search.trim().toUpperCase();
     return closedLots.filter((lot) => {
+      // Untaxed disposals realized nothing. Shares moved out to another account
+      // close at zero proceeds, so listing them here would read as a total loss
+      // on the whole position -- and the summary above already excludes them,
+      // which is exactly the mismatch that makes this table look wrong.
+      if (!lot.taxable) return false;
       if (query && !lot.symbol.includes(query)) return false;
       if (outcome === "winners" && lot.gain <= 0) return false;
       if (outcome === "losers" && lot.gain >= 0) return false;

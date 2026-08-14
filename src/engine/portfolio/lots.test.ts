@@ -329,6 +329,131 @@ describe("buildLotLedger", () => {
     expect(closedLots[0].term).toBe("long");
   });
 
+  it("leaves a lot untouched when a custody move transfers it out and straight back in", () => {
+    const { openLots, closedLots } = buildLotLedger([
+      tx({ type: "buy", date: "2020-01-10", quantity: 10, price: 100 }),
+      tx({ type: "transfer_out", date: "2024-05-10", quantity: 10 }),
+      tx({
+        type: "transfer_in",
+        date: "2024-05-10",
+        quantity: 10,
+        amount: 1000,
+        acquiredDate: "2020-01-10",
+      }),
+    ]);
+
+    // The shares never left the account, so nothing closed and the original lot
+    // keeps its own acquired date rather than restarting at the transfer.
+    expect(closedLots).toHaveLength(0);
+    expect(openLots).toHaveLength(1);
+    expect(openLots[0].quantity).toBe(10);
+    expect(openLots[0].costBasis).toBe(1000);
+    expect(openLots[0].acquiredDate).toBe("2020-01-10");
+  });
+
+  it("ignores the basis a custody move's incoming leg claims", () => {
+    // A broker that receives shares without basis attached stamps them at the
+    // transfer-date market value. Netting the legs means the real basis -- the
+    // one the ledger already knows -- is what survives.
+    const { openLots } = buildLotLedger([
+      tx({ type: "buy", date: "2020-01-10", quantity: 10, price: 100 }),
+      tx({ type: "transfer_out", date: "2024-05-10", quantity: 10, amount: 3000 }),
+      tx({
+        type: "transfer_in",
+        date: "2024-05-10",
+        quantity: 10,
+        amount: 3000,
+        acquiredDate: "2024-05-10",
+      }),
+    ]);
+
+    expect(openLots).toHaveLength(1);
+    expect(openLots[0].costBasis).toBe(1000);
+    expect(openLots[0].acquiredDate).toBe("2020-01-10");
+  });
+
+  it("keeps a later sale drawing FIFO across a custody move", () => {
+    const { closedLots } = buildLotLedger([
+      tx({ type: "buy", date: "2020-01-10", quantity: 10, price: 100 }),
+      tx({ type: "buy", date: "2023-01-10", quantity: 10, price: 200 }),
+      // Only the older parcel moved custodian; replayed literally it would
+      // requeue behind the 2023 buy and send the next sale newest-first.
+      tx({ type: "transfer_out", date: "2024-05-10", quantity: 10 }),
+      tx({
+        type: "transfer_in",
+        date: "2024-05-10",
+        quantity: 10,
+        amount: 1000,
+        acquiredDate: "2020-01-10",
+      }),
+      tx({ type: "sell", date: "2024-09-10", quantity: 10, price: 300 }),
+    ]);
+
+    expect(closedLots).toHaveLength(1);
+    expect(closedLots[0].costBasis).toBe(1000);
+    expect(closedLots[0].acquiredDate).toBe("2020-01-10");
+    expect(closedLots[0].term).toBe("long");
+  });
+
+  it("nets only the matched shares and moves the rest for real", () => {
+    const { openLots, closedLots } = buildLotLedger([
+      tx({ type: "buy", date: "2020-01-10", quantity: 10, price: 100 }),
+      tx({ type: "transfer_out", date: "2024-05-10", quantity: 10 }),
+      tx({
+        type: "transfer_in",
+        date: "2024-05-10",
+        quantity: 4,
+        amount: 400,
+        acquiredDate: "2020-01-10",
+      }),
+    ]);
+
+    // Four shares round-tripped; the other six genuinely left.
+    expect(openLots).toHaveLength(1);
+    expect(openLots[0].quantity).toBe(4);
+    expect(closedLots).toHaveLength(1);
+    expect(closedLots[0].quantity).toBe(6);
+    expect(closedLots[0].taxable).toBe(false);
+  });
+
+  it("leaves a one-way transfer between two accounts alone", () => {
+    const { openLots, closedLots } = buildLotLedger([
+      tx({ type: "buy", date: "2020-01-10", quantity: 10, price: 100 }),
+      tx({ type: "transfer_out", date: "2024-05-10", quantity: 10 }),
+      tx({
+        type: "transfer_in",
+        date: "2024-05-10",
+        quantity: 10,
+        amount: 1000,
+        acquiredDate: "2020-01-10",
+        accountId: "acct-2",
+      }),
+    ]);
+
+    // Different accounts, so the shares really did move and both legs stand.
+    expect(closedLots).toHaveLength(1);
+    expect(closedLots[0].accountId).toBe("acct-1");
+    expect(openLots).toHaveLength(1);
+    expect(openLots[0].accountId).toBe("acct-2");
+  });
+
+  it("keeps legs on different dates apart", () => {
+    const { openLots, closedLots } = buildLotLedger([
+      tx({ type: "buy", date: "2020-01-10", quantity: 10, price: 100 }),
+      tx({ type: "transfer_out", date: "2024-05-10", quantity: 10 }),
+      tx({
+        type: "transfer_in",
+        date: "2024-06-10",
+        quantity: 10,
+        amount: 1000,
+        acquiredDate: "2020-01-10",
+      }),
+    ]);
+
+    expect(closedLots).toHaveLength(1);
+    expect(openLots).toHaveLength(1);
+  });
+
   it("keeps lots of different accounts and symbols separate", () => {
     const { openLots } = buildLotLedger([
       tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
