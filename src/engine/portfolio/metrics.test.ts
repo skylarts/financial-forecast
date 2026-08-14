@@ -22,6 +22,17 @@ function tx(partial: Partial<Transaction> & { type: TransactionType; date: strin
   };
 }
 
+/** Money arriving in the account, which is what any cash balance has to start from. */
+function deposit(amount: number, accountId = "acct-1"): Transaction {
+  return tx({
+    type: "cash_deposit",
+    date: "2024-01-01",
+    accountId,
+    symbol: null,
+    amount,
+  });
+}
+
 function portfolio(transactions: Transaction[], overrides: Partial<Portfolio> = {}): Portfolio {
   return {
     id: "p1",
@@ -32,7 +43,7 @@ function portfolio(transactions: Transaction[], overrides: Partial<Portfolio> = 
         institution: "",
         type: "taxable",
         forecastAccountId: null,
-        cashBalance: 0,
+        openingCashBalance: 0,
       },
     ],
     transactions,
@@ -155,8 +166,10 @@ describe("analyzePortfolio", () => {
       institution: "",
       type: "roth_ira",
       forecastAccountId: null,
-      cashBalance: 500,
+      openingCashBalance: 0,
     });
+    // $1,500 in, $1,000 spent on the position: the $500 left is the cash.
+    base.transactions.push(deposit(1500, "acct-2"));
 
     const scoped = analyzePortfolio(base, { VTI: { price: 100, date: "2026-08-03" } }, {
       accountIds: ["acct-2"],
@@ -173,8 +186,10 @@ describe("analyzePortfolio", () => {
   });
 
   it("carries uninvested cash as its own holding, weighted with everything else", () => {
-    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
-    base.accounts[0].cashBalance = 250;
+    const base = portfolio([
+      deposit(1250),
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+    ]);
 
     const result = analyzePortfolio(base, { VTI: { price: 75, date: "2026-08-03" } }, {
       asOf: "2026-08-04",
@@ -191,8 +206,10 @@ describe("analyzePortfolio", () => {
   });
 
   it("keeps cash out of every return figure it would dilute", () => {
-    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
-    base.accounts[0].cashBalance = 9000;
+    const base = portfolio([
+      deposit(10000),
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+    ]);
 
     const result = analyzePortfolio(base, { VTI: { price: 150, date: "2026-08-03" } }, {
       asOf: "2026-08-04",
@@ -209,8 +226,11 @@ describe("analyzePortfolio", () => {
   });
 
   it("skips accounts holding no cash rather than listing empty rows", () => {
-    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
-    base.accounts[0].cashBalance = 0;
+    // Every dollar deposited went into the position, so there is no cash row.
+    const base = portfolio([
+      deposit(1000),
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+    ]);
 
     const result = analyzePortfolio(base, { VTI: { price: 100, date: "2026-08-03" } }, {
       asOf: "2026-08-04",
@@ -243,8 +263,10 @@ describe("analyzePortfolio", () => {
   });
 
   it("renormalizes an allocation when cash is excluded", () => {
-    const base = portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]);
-    base.accounts[0].cashBalance = 1000;
+    const base = portfolio([
+      deposit(2000),
+      tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+    ]);
 
     const { holdings } = analyzePortfolio(base, { VTI: { price: 100, date: "2026-08-03" } }, {
       asOf: "2026-08-04",
@@ -269,6 +291,14 @@ describe("short positions", () => {
       tx({ type: "buy_to_cover", date: "2025-06-01", quantity: 40, price: 30 }),
     ]);
 
+  /**
+   * The security row. Shorting pays proceeds into the account, so these ledgers
+   * carry a cash row too -- and it outranks a liability in the value ordering,
+   * which is why the position is found rather than taken from the top.
+   */
+  const position = (result: ReturnType<typeof analyzePortfolio>) =>
+    result.holdings.filter((h) => h.kind === "position");
+
   it("values the open short as a liability", () => {
     const result = analyzePortfolio(
       shorted(),
@@ -276,10 +306,23 @@ describe("short positions", () => {
       { asOf: "2026-08-04" },
     );
 
-    expect(result.holdings[0].side).toBe("short");
-    expect(result.holdings[0].quantity).toBe(60);
-    expect(result.holdings[0].marketValue).toBe(-1200);
+    expect(position(result)[0].side).toBe("short");
+    expect(position(result)[0].quantity).toBe(60);
+    expect(position(result)[0].marketValue).toBe(-1200);
     expect(result.summary.marketValue).toBe(-1200);
+  });
+
+  it("holds the proceeds of a short as cash in the account", () => {
+    const result = analyzePortfolio(
+      shorted(),
+      { VTI: { price: 20, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+
+    // $5,000 came in shorting 100 at $50; covering 40 at $30 paid $1,200 back
+    // out. Those dollars are really sitting in the account, and the ledger is
+    // the only thing that knows it.
+    expect(result.summary.cash).toBe(3800);
   });
 
   it("gains as the price falls below the proceeds it opened at", () => {
@@ -290,8 +333,8 @@ describe("short positions", () => {
     );
 
     // 60 shares shorted at $50 brought in $3,000; covering now would cost $1,200.
-    expect(result.holdings[0].costBasis).toBe(3000);
-    expect(result.holdings[0].unrealizedGain).toBe(1800);
+    expect(position(result)[0].costBasis).toBe(3000);
+    expect(position(result)[0].unrealizedGain).toBe(1800);
   });
 
   it("realizes the spread between the short price and the cover price", () => {
@@ -309,8 +352,8 @@ describe("short positions", () => {
 
     // A short commits no capital, so there is nothing to compute a return on --
     // and on raw flows this profitable position would report a large negative.
-    expect(result.holdings[0].irr).toBeNull();
-    expect(result.holdings[0].unrealizedGainPct).toBeCloseTo(0.6, 6);
+    expect(position(result)[0].irr).toBeNull();
+    expect(position(result)[0].unrealizedGainPct).toBeCloseTo(0.6, 6);
   });
 
   it("keeps a long and a short in the same symbol as separate positions", () => {
@@ -323,9 +366,9 @@ describe("short positions", () => {
       { asOf: "2026-08-04" },
     );
 
-    expect(result.holdings).toHaveLength(2);
-    const long = result.holdings.find((h) => h.side === "long");
-    const short = result.holdings.find((h) => h.side === "short");
+    expect(position(result)).toHaveLength(2);
+    const long = position(result).find((h) => h.side === "long");
+    const short = position(result).find((h) => h.side === "short");
     expect(long?.marketValue).toBe(400);
     expect(short?.marketValue).toBe(-4000);
     expect(result.summary.marketValue).toBe(-3600);

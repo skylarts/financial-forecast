@@ -12,6 +12,7 @@ import {
   type Security,
   type Transaction,
 } from "@/domain/portfolio";
+import { accountCashBalances } from "./cash";
 import { buildLotLedger, type ClosedLot, type LedgerWarning, type OpenLot } from "./lots";
 import { findExpiredContracts, type ExpiredContract } from "./expiredContracts";
 
@@ -346,8 +347,12 @@ export function analyzePortfolio(
   const unrealizedGain = holdings.reduce((sum, h) => sum + h.unrealizedGain, 0);
   const income = holdings.reduce((sum, h) => sum + h.income, 0);
 
+  // Replayed from the ledger, not read off the account: cash is derived here for
+  // the same reason every other total is, so importing a row moves it.
+  const cashByAccount = accountCashBalances(portfolio, { asOf });
   const cashAccounts = portfolio.accounts.filter((a) => inScope(a.id));
-  const cash = cashAccounts.reduce((sum, a) => sum + a.cashBalance, 0);
+  const cashOf = (accountId: Id) => cashByAccount.get(accountId)?.balance ?? 0;
+  const cash = cashAccounts.reduce((sum, a) => sum + cashOf(a.id), 0);
 
   /**
    * Uninvested cash, as a holding per account.
@@ -358,7 +363,8 @@ export function analyzePortfolio(
    * an allocation view is asking for.
    */
   for (const account of cashAccounts) {
-    if (account.cashBalance === 0) continue;
+    const balance = cashOf(account.id);
+    if (balance === 0) continue;
     holdings.push({
       key: `${account.id}::${CASH_SYMBOL}`,
       accountId: account.id,
@@ -372,7 +378,7 @@ export function analyzePortfolio(
       avgCostPerShare: 0,
       price: null,
       priceDate: null,
-      marketValue: account.cashBalance,
+      marketValue: balance,
       unrealizedGain: 0,
       unrealizedGainPct: null,
       weight: 0,
