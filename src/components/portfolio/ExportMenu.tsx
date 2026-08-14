@@ -9,19 +9,26 @@ import {
   toBackupJson,
   toCsv,
 } from "@/lib/portfolio/exportLedger";
+import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { Btn } from "@/components/ui/controls";
 
 /**
- * Gets the ledger back out of the browser.
+ * Gets the ledger back out of the browser, and back in.
  *
- * Two formats rather than one because they answer different questions: the CSV
+ * Export offers two formats because they answer different questions: the CSV
  * is for reading and correcting the transactions somewhere else and importing
- * them back, the JSON is the whole portfolio for backup. Both are worth having
- * where the data lives only in this browser's local storage.
+ * them back through the ordinary Import dialog, the JSON is the whole
+ * portfolio for backup. Restore is the JSON's other half -- `importJson`
+ * already existed on the store, reachable only from the console, which meant
+ * fixing a bad row still meant hand-editing localStorage. This is the button
+ * for it.
  */
 export function ExportMenu({ portfolio }: { portfolio: Portfolio }) {
   const [open, setOpen] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const importJson = usePortfolioStore((s) => s.importJson);
 
   // Close on an outside click or on Escape, so the menu never strands itself
   // open over the page.
@@ -92,6 +99,55 @@ export function ExportMenu({ portfolio }: { portfolio: Portfolio }) {
             <span className="mt-0.5 block text-[11px] text-dim">
               Accounts, transactions and securities
             </span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`${item} border-t border-border-soft`}
+            onClick={() => {
+              setOpen(false);
+              fileInput.current?.click();
+            }}
+          >
+            Restore backup (JSON)…
+            <span className="mt-0.5 block text-[11px] text-dim">
+              Replaces everything currently loaded
+            </span>
+          </button>
+        </div>
+      )}
+      <input
+        ref={fileInput}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = ""; // lets the same file be picked again after an error
+          if (!file) return;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(await file.text());
+          } catch {
+            setRestoreError("That file isn't valid JSON.");
+            return;
+          }
+          const result = importJson(parsed);
+          setRestoreError(result.ok ? null : result.error);
+        }}
+      />
+      {restoreError && (
+        <div
+          role="alert"
+          className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-border bg-panel px-3 py-2 text-[12px] text-foreground shadow-lg"
+        >
+          {restoreError}
+          <button
+            type="button"
+            onClick={() => setRestoreError(null)}
+            className="ml-2 text-dim underline hover:text-foreground"
+          >
+            Dismiss
           </button>
         </div>
       )}
