@@ -25,6 +25,7 @@ import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
 import { HoldingDetail } from "./HoldingDetail";
 import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
+import { ExportMenu } from "./ExportMenu";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import { AllocationPanel, type AllocationDimension } from "./AllocationPanel";
@@ -364,6 +365,7 @@ export function PortfolioApp() {
           >
             Sync dividends
           </Btn>
+          <ExportMenu portfolio={portfolio} />
           <Btn
             variant="primary"
             onClick={() => {
