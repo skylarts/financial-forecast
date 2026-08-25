@@ -20,13 +20,13 @@ import {
 } from "@/domain/portfolio";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { money, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
-import { Btn, Segmented } from "@/components/ui/controls";
+import { Btn } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
 import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
 
 const TX_GROUPINGS = [
-  { value: "none", label: "Flat" },
+  { value: "none", label: "None" },
   { value: "symbol", label: "By stock" },
   { value: "account", label: "By account" },
   { value: "type", label: "By type" },
@@ -389,7 +389,14 @@ function num(raw: string): number {
   return Number.isFinite(value) ? Math.abs(value) : 0;
 }
 
-export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
+export function TransactionsPanel({
+  portfolio,
+  scopeAccountId,
+}: {
+  portfolio: Portfolio;
+  /** "all", or one account id -- set by the Account dropdown in the page header. */
+  scopeAccountId: string;
+}) {
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const updateTransaction = usePortfolioStore((s) => s.updateTransaction);
   const removeTransaction = usePortfolioStore((s) => s.removeTransaction);
@@ -397,7 +404,6 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
   const [adding, setAdding] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [accountFilter, setAccountFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
   const [fromDate, setFromDate] = useState("");
@@ -446,7 +452,7 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
     const exactTicker = tickers.includes(query) ? query : null;
 
     return portfolio.transactions
-      .filter((tx) => accountFilter === "all" || tx.accountId === accountFilter)
+      .filter((tx) => scopeAccountId === "all" || tx.accountId === scopeAccountId)
       // One box covers both symbol and lot id. Generated ids lead with the
       // symbol, so a plain "VTI" still finds every VTI row and a full id
       // narrows to the purchase and the sales that drew on it -- which is the
@@ -460,11 +466,10 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
         typeFilter === "all" ? true : groupTypes ? groupTypes.includes(tx.type) : tx.type === typeFilter,
       )
       .filter((tx) => (!fromDate || tx.date >= fromDate) && (!toDate || tx.date <= toDate));
-  }, [portfolio.transactions, accountFilter, search, typeFilter, fromDate, toDate, tickers]);
+  }, [portfolio.transactions, scopeAccountId, search, typeFilter, fromDate, toDate, tickers]);
 
   const rows = useMemo(() => apply(filtered), [apply, filtered]);
-  const filtersActive =
-    accountFilter !== "all" || search !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
+  const filtersActive = search !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
 
   const groups = useMemo(() => {
     if (grouping === "none") return [{ key: "", label: "", rows }];
@@ -477,17 +482,13 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             ? TRANSACTION_TYPE_LABELS[tx.type]
             : tx.date.slice(0, 7);
 
-    // Ranked by how much cash each group moved, in either direction: a group
-    // that took $40k out is as worth surfacing as one that put $40k in.
-    return buildGroups(rows, labelFor, (groupRows) =>
-      groupRows.reduce((sum, tx) => sum + Math.abs(signedCashFlow(tx)), 0),
-    );
+    return buildGroups(rows, labelFor);
   }, [rows, grouping, accountNames]);
 
   const collapse = useCollapsedGroups(grouping);
   const groupKeys = useMemo(() => groups.map((g) => g.key), [groups]);
 
-  const defaultAccountId = accountFilter === "all" ? portfolio.accounts[0]?.id : accountFilter;
+  const defaultAccountId = scopeAccountId === "all" ? portfolio.accounts[0]?.id : scopeAccountId;
 
   return (
     <div className="p-5">
@@ -497,18 +498,6 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
           <span className="ml-2 text-[12px] font-normal text-dim-2">{rows.length} rows</span>
         </h2>
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={accountFilter}
-            onChange={(e) => setAccountFilter(e.target.value)}
-            className={INPUT}
-          >
-            <option value="all">All accounts</option>
-            {portfolio.accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -552,18 +541,22 @@ export function TransactionsPanel({ portfolio }: { portfolio: Portfolio }) {
             To
             <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={INPUT} />
           </label>
-          <Segmented
-            options={TX_GROUPINGS}
+          <select
             value={grouping}
-            onChange={setGrouping}
-            size="sm"
-            ariaLabel="Group transactions"
-          />
+            onChange={(e) => setGrouping(e.target.value as TxGrouping)}
+            aria-label="Group transactions"
+            className={INPUT}
+          >
+            {TX_GROUPINGS.map((g) => (
+              <option key={g.value} value={g.value}>
+                {g.label}
+              </option>
+            ))}
+          </select>
           {grouping !== "none" && <GroupToggles groupKeys={groupKeys} collapse={collapse} />}
           {filtersActive && (
             <Btn
               onClick={() => {
-                setAccountFilter("all");
                 setSearch("");
                 setTypeFilter("all");
                 setFromDate("");

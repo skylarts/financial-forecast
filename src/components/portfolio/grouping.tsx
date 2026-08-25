@@ -25,15 +25,14 @@ export interface Group<T> {
  * the caller has already sorted, and re-sorting here would silently override
  * whichever column the user clicked.
  *
- * Groups are ordered by `weigh`, largest first, so the biggest holdings sit at
- * the top the way they do when grouping is off. Ties fall back to the label so
- * the order is stable across renders rather than depending on insertion.
+ * Groups themselves are ordered by where their first row lands in that same
+ * sorted input, not by a fixed metric like total value -- a `Map`'s keys
+ * iterate in insertion order, so the group holding the topmost row surfaces
+ * first automatically. That's what makes a click on any column, money or not,
+ * visibly reorder a grouped table: the old fixed weighting only ever
+ * responded to the columns it happened to be computed from.
  */
-export function buildGroups<T>(
-  rows: readonly T[],
-  labelFor: (row: T) => string,
-  weigh: (rows: readonly T[]) => number,
-): Group<T>[] {
+export function buildGroups<T>(rows: readonly T[], labelFor: (row: T) => string): Group<T>[] {
   const map = new Map<string, T[]>();
   for (const row of rows) {
     const label = labelFor(row);
@@ -42,12 +41,7 @@ export function buildGroups<T>(
     else map.set(label, [row]);
   }
 
-  return [...map.entries()]
-    .map(([label, groupRows]) => ({ key: label, label, rows: groupRows }))
-    .sort((a, b) => {
-      const difference = weigh(b.rows) - weigh(a.rows);
-      return difference !== 0 ? difference : a.label.localeCompare(b.label);
-    });
+  return [...map.entries()].map(([label, groupRows]) => ({ key: label, label, rows: groupRows }));
 }
 
 export interface CollapseState {

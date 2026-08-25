@@ -12,7 +12,7 @@ const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-d
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
 const GROUPINGS = [
-  { value: "none", label: "Flat" },
+  { value: "none", label: "None" },
   { value: "symbol", label: "By stock" },
   { value: "account", label: "By account" },
   { value: "term", label: "By term" },
@@ -139,9 +139,7 @@ export function RealizedPanel({
             ? lotTermLabel(lot)
             : lot.disposedDate.slice(0, 4);
 
-    // Ranked by what each group actually realized, so the biggest winners and
-    // the biggest losses both sit at the ends rather than buried mid-table.
-    return buildGroups(sorted, labelFor, (rows) => rows.reduce((s, lot) => s + lot.gain, 0));
+    return buildGroups(sorted, labelFor);
   }, [sorted, grouping, accountNames]);
 
   const collapse = useCollapsedGroups(grouping);
@@ -196,13 +194,18 @@ export function RealizedPanel({
               size="sm"
               ariaLabel="Filter by outcome"
             />
-            <Segmented
-              options={GROUPINGS}
+            <select
               value={grouping}
-              onChange={setGrouping}
-              size="sm"
-              ariaLabel="Group realized gains"
-            />
+              onChange={(e) => setGrouping(e.target.value as RealizedGrouping)}
+              aria-label="Group realized gains"
+              className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
+            >
+              {GROUPINGS.map((g) => (
+                <option key={g.value} value={g.value}>
+                  {g.label}
+                </option>
+              ))}
+            </select>
             {grouping !== "none" && <GroupToggles groupKeys={groupKeys} collapse={collapse} />}
             {sorted.length !== closedLots.length && (
               <span className="text-[11.5px] text-dim-2">

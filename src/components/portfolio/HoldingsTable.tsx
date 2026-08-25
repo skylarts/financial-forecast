@@ -130,8 +130,7 @@ export function HoldingsTable({
             ? "Short positions"
             : "Long positions";
 
-    // Ordered by size so the money leads, matching the row sort.
-    return buildGroups(sorted, labelFor, (rows) => rows.reduce((s, h) => s + h.marketValue, 0));
+    return buildGroups(sorted, labelFor);
   }, [sorted, grouping, accountNames]);
 
   const collapse = useCollapsedGroups(grouping);
