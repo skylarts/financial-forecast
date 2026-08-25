@@ -48,7 +48,7 @@ const TABS = [
 type Tab = (typeof TABS)[number]["value"];
 
 const GROUPINGS = [
-  { value: "none", label: "Flat" },
+  { value: "none", label: "None" },
   { value: "account", label: "By account" },
   { value: "assetClass", label: "By class" },
   { value: "side", label: "By side" },
@@ -494,13 +494,18 @@ export function PortfolioApp() {
                   ariaLabel="Filter by position side"
                 />
               )}
-              <Segmented
-                options={GROUPINGS}
+              <select
                 value={grouping}
-                onChange={setGrouping}
-                size="sm"
-                ariaLabel="Group holdings"
-              />
+                onChange={(e) => setGrouping(e.target.value as HoldingGrouping)}
+                aria-label="Group holdings"
+                className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
+              >
+                {GROUPINGS.map((g) => (
+                  <option key={g.value} value={g.value}>
+                    {g.label}
+                  </option>
+                ))}
+              </select>
               <label className="flex items-center gap-1.5 text-[12px] text-dim">
                 <input
                   type="checkbox"
@@ -686,7 +691,9 @@ export function PortfolioApp() {
           />
         )}
 
-        {tab === "transactions" && <TransactionsPanel portfolio={portfolio} />}
+        {tab === "transactions" && (
+          <TransactionsPanel portfolio={portfolio} scopeAccountId={scopeAccountId} />
+        )}
 
         {tab === "accounts" && (
           <AccountsPanel
