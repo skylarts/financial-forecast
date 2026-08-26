@@ -1,7 +1,10 @@
-/** Whole dollars — right for totals, where cents are noise. */
+/** Dollars and cents — used for every dollar figure, totals included. */
 export function money(n: number): string {
   const sign = n < 0 ? "-" : "";
-  return `${sign}$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return `${sign}$${Math.abs(n).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 /** Dollars and cents — right for per-share prices, where cents are the point. */
