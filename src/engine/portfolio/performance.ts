@@ -89,6 +89,20 @@ const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
 const FLOW_DOMINANCE = 1;
 
 /**
+ * Every brokerage in this ledger prints share quantities to 5 decimal places.
+ * A spinoff's child quantity is computed at full floating-point precision
+ * (parent shares times a ratio like 1/3), so rounding it to that same
+ * precision keeps it from drifting a few millionths of a share away from
+ * whatever a later sale of the child names. Kept local rather than shared
+ * with the lot ledger's copy -- this file is deliberately independent of it.
+ */
+const SHARE_DECIMALS = 5;
+
+function roundToShareDecimals(quantity: number): number {
+  return Math.round(quantity * 10 ** SHARE_DECIMALS) / 10 ** SHARE_DECIMALS;
+}
+
+/**
  * Running share count per symbol, by transaction.
  *
  * Deliberately simpler than the lot ledger: valuing a portfolio needs only how
@@ -126,6 +140,20 @@ function applyToShares(held: Map<string, number>, tx: Transaction): void {
       // Retires the contract from whichever side it was held on.
       held.set(symbol, current > 0 ? current - tx.quantity : current + tx.quantity);
       break;
+    case "spinoff": {
+      // Moves shares into the new symbol, scaled by the statement's ratio --
+      // without this the child never gets credited here (it's tracked by cost
+      // basis in the lot ledger, not share count, so this file has no other
+      // way to learn about it). A full exchange also retires the parent the
+      // same way the lot ledger does, or it sits at its pre-spinoff count
+      // forever, valued at whatever it last traded for.
+      if (tx.spinoffSymbol === null || tx.spinoffShareRatio === null || tx.spinoffBasisRetained === null) break;
+      const childSymbol = normalizeSymbol(tx.spinoffSymbol);
+      const childCurrent = held.get(childSymbol) ?? 0;
+      held.set(childSymbol, childCurrent + roundToShareDecimals(current * tx.spinoffShareRatio));
+      if (tx.spinoffBasisRetained <= 0) held.set(symbol, 0);
+      break;
+    }
     default:
       break;
   }
