@@ -39,6 +39,24 @@ export const portfolioAccountSchema = z.object({
    */
   forecastAccountId: idSchema.nullable().default(null),
   /**
+   * Whether a linked account's value is written into the forecast on its own.
+   *
+   * On by default, so linking an account is all it takes to keep the forecast's
+   * starting balance current. Turn it off to keep the link -- and the side-by-side
+   * comparison it gives you -- for an account whose forecast entry stands for more
+   * than the slice tracked here, where an automatic write would understate it.
+   */
+  syncToForecast: z.boolean().default(true),
+  /**
+   * Which person in the forecast household this account belongs to, by their
+   * `Person.id`. Null means joint -- the same convention forecast accounts use
+   * (see `ownerId` in `src/domain/account.ts`), so the two sides read alike.
+   *
+   * Held here rather than read through `forecastAccountId` so an account tracked
+   * only in the portfolio still has an owner.
+   */
+  ownerId: idSchema.nullable().default(null),
+  /**
    * Cash the account held before its first recorded transaction.
    *
    * Only a seed, never the current balance: cash on hand is replayed from the

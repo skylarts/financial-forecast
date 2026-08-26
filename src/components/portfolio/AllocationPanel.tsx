@@ -8,13 +8,16 @@ import {
   type AssetClass,
   type PortfolioAccount,
 } from "@/domain/portfolio";
+import type { Person } from "@/domain/household";
 import { buildAllocation, type AllocationSlice, type Holding } from "@/engine/portfolio/metrics";
 import { money } from "@/lib/portfolio/format";
+import { ownerLabel } from "@/lib/people";
 import { Segmented } from "@/components/ui/controls";
 
 const DIMENSIONS = [
   { value: "assetClass", label: "Asset class" },
   { value: "account", label: "Account" },
+  { value: "owner", label: "Person" },
   { value: "symbol", label: "Holding" },
   { value: "accountType", label: "Account type" },
   { value: "side", label: "Side" },
@@ -149,12 +152,14 @@ export function AllocationPanel({
   holdings,
   accounts,
   accountNames,
+  people,
   onDrillDown,
   children,
 }: {
   holdings: Holding[];
   accounts: PortfolioAccount[];
   accountNames: Map<string, string>;
+  people: readonly Person[];
   /** Sends a slice through to the holdings view as a filter. */
   onDrillDown: (dimension: AllocationDimension, label: string) => void;
   /** The classify-holdings controls, which live below the charts. */
@@ -167,6 +172,10 @@ export function AllocationPanel({
     () => new Map(accounts.map((a) => [a.id, PORTFOLIO_ACCOUNT_TYPE_LABELS[a.type]])),
     [accounts],
   );
+  const accountOwners = useMemo(
+    () => new Map(accounts.map((a) => [a.id, ownerLabel(people, a.ownerId)])),
+    [accounts, people],
+  );
 
   const slices = useMemo(() => {
     const pick = (h: Holding): string => {
@@ -175,6 +184,8 @@ export function AllocationPanel({
           return ASSET_CLASS_LABELS[h.assetClass as AssetClass] ?? h.assetClass;
         case "account":
           return accountNames.get(h.accountId) ?? "Unknown account";
+        case "owner":
+          return accountOwners.get(h.accountId) ?? "Joint";
         case "symbol":
           return h.kind === "cash" ? "Cash" : h.symbol;
         case "accountType":
@@ -186,7 +197,7 @@ export function AllocationPanel({
       }
     };
     return withOther(buildAllocation(holdings, pick, { includeCash }));
-  }, [holdings, dimension, includeCash, accountNames, accountTypes]);
+  }, [holdings, dimension, includeCash, accountNames, accountTypes, accountOwners]);
 
   const hasCash = useMemo(() => holdings.some((h) => h.kind === "cash"), [holdings]);
   const total = slices.reduce((sum, s) => sum + s.value, 0);

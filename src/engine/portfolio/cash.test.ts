@@ -39,6 +39,8 @@ function portfolio(transactions: Transaction[], opening = 0): Portfolio {
         institution: "",
         type: "taxable",
         forecastAccountId: null,
+        syncToForecast: true,
+        ownerId: null,
         openingCashBalance: opening,
       },
     ],
@@ -128,6 +130,8 @@ describe("accountCashBalances", () => {
       institution: "",
       type: "roth_ira",
       forecastAccountId: null,
+      syncToForecast: true,
+      ownerId: null,
       openingCashBalance: 0,
     });
     p.transactions.push(cash("cash_deposit", "2025-01-02", 7000, "acct-2"));

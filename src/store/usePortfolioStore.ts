@@ -87,7 +87,17 @@ interface PortfolioState {
   undoImport: (batchId: string) => number;
 
   upsertSecurity: (security: Security) => void;
-  linkForecastAccount: (portfolioAccountId: string, forecastAccountId: string | null) => void;
+  /**
+   * `adoptOwnerId` lets the caller carry the forecast account's owner across
+   * onto a portfolio account that doesn't have one yet -- an explicit owner
+   * already set always wins, so pass it as `undefined` (not `null`) when
+   * there's nothing to adopt or the account already has an owner.
+   */
+  linkForecastAccount: (
+    portfolioAccountId: string,
+    forecastAccountId: string | null,
+    adoptOwnerId?: string | null,
+  ) => void;
 
   loadPortfolio: (portfolio: Portfolio) => void;
   importJson: (raw: unknown) => { ok: true } | { ok: false; error: string };
@@ -202,11 +212,19 @@ export const usePortfolioStore = create<PortfolioState>()(
           });
         },
 
-        linkForecastAccount: (portfolioAccountId, forecastAccountId) =>
+        linkForecastAccount: (portfolioAccountId, forecastAccountId, adoptOwnerId) =>
           mutate((p) => ({
             ...p,
             accounts: p.accounts.map((a) =>
-              a.id === portfolioAccountId ? { ...a, forecastAccountId } : a,
+              a.id === portfolioAccountId
+                ? {
+                    ...a,
+                    forecastAccountId,
+                    ...(a.ownerId === null && adoptOwnerId !== undefined
+                      ? { ownerId: adoptOwnerId }
+                      : {}),
+                  }
+                : a,
             ),
           })),
 

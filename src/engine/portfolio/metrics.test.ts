@@ -46,6 +46,8 @@ function portfolio(transactions: Transaction[], overrides: Partial<Portfolio> = 
         institution: "",
         type: "taxable",
         forecastAccountId: null,
+        syncToForecast: true,
+        ownerId: null,
         openingCashBalance: 0,
       },
     ],
@@ -169,6 +171,8 @@ describe("analyzePortfolio", () => {
       institution: "",
       type: "roth_ira",
       forecastAccountId: null,
+      syncToForecast: true,
+      ownerId: null,
       openingCashBalance: 0,
     });
     // $1,500 in, $1,000 spent on the position: the $500 left is the cash.
