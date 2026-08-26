@@ -158,10 +158,12 @@ function GrowthTooltip({
  */
 export function PerformancePanel({
   portfolio,
-  scopeAccountId,
+  scopeAccountIds,
 }: {
   portfolio: Portfolio;
-  scopeAccountId: string;
+  /** null = every account (the "all" scope); otherwise the account ids the
+   *  header's person-or-account picker currently covers. */
+  scopeAccountIds: readonly string[] | null;
 }) {
   const [period, setPeriod] = useState<Period>("1y");
   // What the chart is drawn from, and separately what the boxes are showing.
@@ -197,10 +199,10 @@ export function PerformancePanel({
 
   const scopedTransactions = useMemo(
     () =>
-      scopeAccountId === "all"
+      scopeAccountIds === null
         ? portfolio.transactions
-        : portfolio.transactions.filter((tx) => tx.accountId === scopeAccountId),
-    [portfolio.transactions, scopeAccountId],
+        : portfolio.transactions.filter((tx) => scopeAccountIds.includes(tx.accountId)),
+    [portfolio.transactions, scopeAccountIds],
   );
 
   // What the accounts in scope opened holding, before their ledgers begin. The
@@ -209,9 +211,9 @@ export function PerformancePanel({
   const openingCash = useMemo(
     () =>
       portfolio.accounts
-        .filter((a) => scopeAccountId === "all" || a.id === scopeAccountId)
+        .filter((a) => scopeAccountIds === null || scopeAccountIds.includes(a.id))
         .reduce((sum, a) => sum + a.openingCashBalance, 0),
-    [portfolio.accounts, scopeAccountId],
+    [portfolio.accounts, scopeAccountIds],
   );
 
   const earliest = useMemo(() => {
@@ -242,15 +244,10 @@ export function PerformancePanel({
   const neededSymbols = useMemo(() => {
     const ordered = [
       ...benchmarks,
-      ...symbolsForWindow(
-        scopedTransactions,
-        from,
-        to,
-        scopeAccountId === "all" ? undefined : [scopeAccountId],
-      ),
+      ...symbolsForWindow(scopedTransactions, from, to, scopeAccountIds ?? undefined),
     ];
     return [...new Set(ordered)];
-  }, [scopedTransactions, benchmarks, from, to, scopeAccountId]);
+  }, [scopedTransactions, benchmarks, from, to, scopeAccountIds]);
 
   const fetchRange = fetchRangeFor(period);
   const requestKey = `${fetchRange}::${from}::${neededSymbols.join(",")}`;
@@ -329,11 +326,11 @@ export function PerformancePanel({
       buildPerformanceSeries(scopedTransactions, histories, {
         from,
         to,
-        accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
+        accountIds: scopeAccountIds ?? undefined,
         splits,
         openingCash,
       }),
-    [scopedTransactions, histories, splits, from, to, scopeAccountId, openingCash],
+    [scopedTransactions, histories, splits, from, to, scopeAccountIds, openingCash],
   );
 
   const benchmarkSeries = useMemo(
@@ -400,7 +397,7 @@ export function PerformancePanel({
       const windowed = buildPerformanceSeries(scopedTransactions, histories, {
         from: start,
         to: end,
-        accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
+        accountIds: scopeAccountIds ?? undefined,
         splits,
         openingCash,
       });
@@ -426,7 +423,7 @@ export function PerformancePanel({
         }),
       };
     });
-  }, [scopedTransactions, histories, splits, benchmarks, earliest, scopeAccountId, openingCash]);
+  }, [scopedTransactions, histories, splits, benchmarks, earliest, scopeAccountIds, openingCash]);
 
   const portfolioReturn = totalReturn(series.points);
   const portfolioAnnualized = annualizedReturn(series.points);

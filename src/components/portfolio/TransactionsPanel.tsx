@@ -391,11 +391,12 @@ function num(raw: string): number {
 
 export function TransactionsPanel({
   portfolio,
-  scopeAccountId,
+  scopeAccountIds,
 }: {
   portfolio: Portfolio;
-  /** "all", or one account id -- set by the Account dropdown in the page header. */
-  scopeAccountId: string;
+  /** null = every account (the "all" scope); otherwise the account ids the
+   *  header's person-or-account picker currently covers. */
+  scopeAccountIds: readonly string[] | null;
 }) {
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const updateTransaction = usePortfolioStore((s) => s.updateTransaction);
@@ -452,7 +453,7 @@ export function TransactionsPanel({
     const exactTicker = tickers.includes(query) ? query : null;
 
     return portfolio.transactions
-      .filter((tx) => scopeAccountId === "all" || tx.accountId === scopeAccountId)
+      .filter((tx) => scopeAccountIds === null || scopeAccountIds.includes(tx.accountId))
       // One box covers both symbol and lot id. Generated ids lead with the
       // symbol, so a plain "VTI" still finds every VTI row and a full id
       // narrows to the purchase and the sales that drew on it -- which is the
@@ -466,7 +467,7 @@ export function TransactionsPanel({
         typeFilter === "all" ? true : groupTypes ? groupTypes.includes(tx.type) : tx.type === typeFilter,
       )
       .filter((tx) => (!fromDate || tx.date >= fromDate) && (!toDate || tx.date <= toDate));
-  }, [portfolio.transactions, scopeAccountId, search, typeFilter, fromDate, toDate, tickers]);
+  }, [portfolio.transactions, scopeAccountIds, search, typeFilter, fromDate, toDate, tickers]);
 
   const rows = useMemo(() => apply(filtered), [apply, filtered]);
   const filtersActive = search !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
@@ -488,7 +489,12 @@ export function TransactionsPanel({
   const collapse = useCollapsedGroups(grouping);
   const groupKeys = useMemo(() => groups.map((g) => g.key), [groups]);
 
-  const defaultAccountId = scopeAccountId === "all" ? portfolio.accounts[0]?.id : scopeAccountId;
+  // A scope naming exactly one account (a single-account person, or the
+  // account picker itself) is the obvious default; anything broader -- "all",
+  // or a person who holds several accounts -- falls back to the first account
+  // overall, same as the pre-owner behavior for "all".
+  const defaultAccountId =
+    scopeAccountIds?.length === 1 ? scopeAccountIds[0] : portfolio.accounts[0]?.id;
 
   return (
     <div className="p-5">

@@ -36,7 +36,14 @@ function useHouseholdId(userId: string | undefined, email: string | null | undef
  * useCloudSync for the forecast plan: a no-op while signed out (the tracker
  * behaves exactly as it does today, local-only), and while signed in it
  * pulls the cloud portfolio on sign-in (cloud wins) and pushes local edits
- * up on a short debounce, keyed off `lastSavedAt`. */
+ * up on a short debounce, keyed off `lastSavedAt`.
+ *
+ * The push side doesn't go live until this user's pull has settled -- see
+ * the comment at the second effect below for why that matters more here
+ * than it looks: this store also gets written by a chatty auto-mutation
+ * (every quote refresh restamps a security's last-known price), so a naive
+ * "start listening immediately" gate had a real window to clobber a shared
+ * cloud row with a fresh device's empty local state. */
 export function usePortfolioCloudSync(): { cloudSyncReady: boolean } {
   const { user } = useAuth();
   const hasHydrated = usePortfolioStore((s) => s.hasHydrated);
@@ -98,6 +105,14 @@ export function usePortfolioCloudSync(): { cloudSyncReady: boolean } {
 
   useEffect(() => {
     if (!user || !hasHydrated || !householdResolved) return;
+    // Wait for this user's pull to settle before subscribing. Two problems
+    // solved by the same gate: subscribing early lets the price-writeback
+    // effect stamp lastSavedAt on a fresh device's still-empty local
+    // portfolio and push it over the cloud row before the pull lands; and
+    // starting late means `lastSeen` below is read *after* the pull's own
+    // loadPortfolio call, so that write is already reflected in it instead
+    // of looking like a new local edit that immediately echoes back up.
+    if (pullCompleteForUserId !== user.id) return;
 
     const supabase = createClient();
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -131,7 +146,7 @@ export function usePortfolioCloudSync(): { cloudSyncReady: boolean } {
       if (timer) clearTimeout(timer);
       unsubscribe();
     };
-  }, [user, hasHydrated, householdId, householdResolved]);
+  }, [user, hasHydrated, householdId, householdResolved, pullCompleteForUserId]);
 
   return { cloudSyncReady: !user || pullCompleteForUserId === user.id };
 }

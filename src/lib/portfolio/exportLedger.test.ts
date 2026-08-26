@@ -36,6 +36,8 @@ function portfolio(transactions: Transaction[]): Portfolio {
         institution: "Fidelity",
         type: "taxable",
         forecastAccountId: null,
+        syncToForecast: true,
+        ownerId: null,
         openingCashBalance: 0,
       },
     ],

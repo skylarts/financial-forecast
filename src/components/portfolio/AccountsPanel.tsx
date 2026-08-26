@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Account } from "@/domain";
+import type { Person } from "@/domain/household";
 import {
   PORTFOLIO_ACCOUNT_TYPE_LABELS,
   portfolioAccountTypeSchema,
@@ -13,6 +14,7 @@ import { analyzePortfolio, type PriceMap } from "@/engine/portfolio/metrics";
 import type { Portfolio } from "@/domain/portfolio";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { money } from "@/lib/portfolio/format";
+import { ownerOptions } from "@/lib/people";
 import { Btn } from "@/components/ui/controls";
 
 const INPUT =
@@ -51,12 +53,14 @@ function AccountRow({
   portfolio,
   prices,
   forecastAccounts,
+  people,
   onPush,
 }: {
   account: PortfolioAccount;
   portfolio: Portfolio;
   prices: PriceMap;
   forecastAccounts: Account[];
+  people: readonly Person[];
   onPush: (account: PortfolioAccount, value: number, costBasis: number) => void;
 }) {
   const updateAccount = usePortfolioStore((s) => s.updateAccount);
@@ -98,6 +102,19 @@ function AccountRow({
           ))}
         </select>
       </td>
+      <td className="px-3 py-2">
+        <select
+          value={account.ownerId ?? ""}
+          onChange={(e) => updateAccount(account.id, { ownerId: e.target.value || null })}
+          className={`${INPUT} w-32`}
+        >
+          {ownerOptions(people).map((o) => (
+            <option key={o.value || "joint"} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </td>
       <td className="px-3 py-2 text-right">
         <input
           type="number"
@@ -121,18 +138,48 @@ function AccountRow({
         {money(value)}
       </td>
       <td className="px-3 py-2">
-        <select
-          value={account.forecastAccountId ?? ""}
-          onChange={(e) => linkForecastAccount(account.id, e.target.value || null)}
-          className={`${INPUT} w-48`}
-        >
-          <option value="">— not linked —</option>
-          {forecastAccounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-1.5">
+          <select
+            value={account.forecastAccountId ?? ""}
+            onChange={(e) => {
+              const forecastAccountId = e.target.value || null;
+              // An account not yet assigned to anyone here picks up its
+              // forecast counterpart's owner rather than staying blank --
+              // the forecast side already knows whose account this is, and
+              // an owner set explicitly beforehand always wins (only adopted
+              // when account.ownerId is still null, and only when there's an
+              // owner to adopt).
+              const target = forecastAccountId
+                ? forecastAccounts.find((a) => a.id === forecastAccountId)
+                : null;
+              linkForecastAccount(
+                account.id,
+                forecastAccountId,
+                account.ownerId === null && target ? target.ownerId : undefined,
+              );
+            }}
+            className={`${INPUT} w-40`}
+          >
+            <option value="">— not linked —</option>
+            {forecastAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+          <label
+            className="flex items-center gap-1 text-[11px] text-dim"
+            title="Automatically write this account's value into the forecast whenever it changes. Uncheck to keep the link without the automatic write."
+          >
+            <input
+              type="checkbox"
+              checked={account.syncToForecast}
+              disabled={!account.forecastAccountId}
+              onChange={(e) => updateAccount(account.id, { syncToForecast: e.target.checked })}
+            />
+            Sync
+          </label>
+        </div>
       </td>
       <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-1.5">
@@ -167,11 +214,13 @@ export function AccountsPanel({
   portfolio,
   prices,
   forecastAccounts,
+  people,
   onPush,
 }: {
   portfolio: Portfolio;
   prices: PriceMap;
   forecastAccounts: Account[];
+  people: readonly Person[];
   onPush: (account: PortfolioAccount, value: number, costBasis: number) => void;
 }) {
   const addAccount = usePortfolioStore((s) => s.addAccount);
@@ -194,6 +243,8 @@ export function AccountsPanel({
               institution: "",
               type: "taxable",
               forecastAccountId: null,
+              syncToForecast: true,
+              ownerId: null,
               openingCashBalance: 0,
             })
           }
@@ -215,6 +266,7 @@ export function AccountsPanel({
                   "Name",
                   "Institution",
                   "Type",
+                  "Owner",
                   "Opening cash",
                   "Cash",
                   "Value",
@@ -224,12 +276,12 @@ export function AccountsPanel({
                   <th
                     key={h || i}
                     className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2 ${
-                      (i >= 3 && i <= 5) || i === 7 ? "text-right" : "text-left"
+                      (i >= 4 && i <= 6) || i === 8 ? "text-right" : "text-left"
                     }`}
                     title={
-                      i === 3
+                      i === 4
                         ? "Cash held before the ledger's first row. Leave at 0 when the ledger runs from the account's opening."
-                        : i === 4
+                        : i === 5
                           ? "Replayed from the ledger's own deposits, trades, dividends and fees — not typed in."
                           : undefined
                     }
@@ -247,6 +299,7 @@ export function AccountsPanel({
                   portfolio={portfolio}
                   prices={prices}
                   forecastAccounts={forecastAccounts}
+                  people={people}
                   onPush={onPush}
                 />
               ))}

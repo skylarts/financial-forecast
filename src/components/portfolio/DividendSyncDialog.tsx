@@ -24,12 +24,14 @@ const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
  */
 export function DividendSyncDialog({
   portfolio,
-  scopeAccountId,
+  scopeAccountIds,
   onClose,
   onApply,
 }: {
   portfolio: Portfolio;
-  scopeAccountId: string;
+  /** null = every account (the "all" scope); otherwise the account ids the
+   *  header's person-or-account picker currently covers. */
+  scopeAccountIds: readonly string[] | null;
   onClose: () => void;
   onApply: (proposals: ProposedDividend[]) => void;
 }) {
@@ -46,10 +48,10 @@ export function DividendSyncDialog({
 
   const scopedTransactions = useMemo(
     () =>
-      scopeAccountId === "all"
+      scopeAccountIds === null
         ? portfolio.transactions
-        : portfolio.transactions.filter((tx) => tx.accountId === scopeAccountId),
-    [portfolio.transactions, scopeAccountId],
+        : portfolio.transactions.filter((tx) => scopeAccountIds.includes(tx.accountId)),
+    [portfolio.transactions, scopeAccountIds],
   );
 
   /**
@@ -96,9 +98,9 @@ export function DividendSyncDialog({
   const { proposals, skippedExisting } = useMemo(() => {
     if (!loaded) return { proposals: [] as ProposedDividend[], skippedExisting: 0 };
     return proposeDividends(scopedTransactions, loaded.events, {
-      accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
+      accountIds: scopeAccountIds ?? undefined,
     });
-  }, [loaded, scopedTransactions, scopeAccountId]);
+  }, [loaded, scopedTransactions, scopeAccountIds]);
 
   const selected = useMemo(
     () => proposals.filter((p) => !excluded.has(p.key)),

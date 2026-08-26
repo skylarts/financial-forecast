@@ -14,11 +14,20 @@ import { analyzePortfolio, type Holding, type PriceMap } from "@/engine/portfoli
 import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
 import { usePortfolioCloudSync } from "@/store/usePortfolioCloudSync";
+import { useCloudSync } from "@/store/useCloudSync";
+import { useForecastValueSync } from "@/store/useForecastValueSync";
 import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
 import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
 import { useSecurityProfiles } from "@/store/useSecurityProfiles";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
+import {
+  accountIdsInScope,
+  accountScope,
+  ALL_ACCOUNTS_SCOPE,
+  JOINT_OWNER_SCOPE,
+  ownerScope,
+} from "@/lib/portfolio/scope";
 import type { ImportRow } from "@/lib/portfolio/importer";
 import { toTransaction, type ProposedDividend } from "@/engine/portfolio/dividends";
 import { Btn, Segmented } from "@/components/ui/controls";
@@ -125,12 +134,18 @@ export function PortfolioApp() {
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
   const addAccount = usePortfolioStore((s) => s.addAccount);
   usePortfolioCloudSync();
+  // Mounted here too, not just on the forecast's own page (src/app/page.tsx) --
+  // otherwise a plan edit made from this page (the auto-sync below, or the
+  // manual "Push to forecast" button) never reaches Supabase, and the next
+  // visit to "/" pulls the cloud plan over it and silently discards it.
+  const { cloudSyncReady } = useCloudSync();
 
   const scenario = usePlanStore((s) => s.activeScenario());
   const updateForecastAccount = usePlanStore((s) => s.updateAccount);
+  const people = scenario.household.people;
 
   const [tab, setTab] = useState<Tab>("holdings");
-  const [scopeAccountId, setScopeAccountId] = useState<string>("all");
+  const [scope, setScope] = useState<string>(ALL_ACCOUNTS_SCOPE);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [importing, setImporting] = useState(false);
   const [syncingDividends, setSyncingDividends] = useState(false);
@@ -223,12 +238,27 @@ export function PortfolioApp() {
 
   const { profiles: securityProfiles, loading: classifying } = useSecurityProfiles(symbols);
 
+  useForecastValueSync(portfolio, prices, cloudSyncReady, (count) =>
+    setFlash(`Updated ${count} forecast balance${count === 1 ? "" : "s"}.`),
+  );
+
+  // null = every account (the "all" scope); otherwise the exact account ids
+  // the current scope covers, whether it names one account or one person.
+  const scopeAccountIds = useMemo(
+    () => accountIdsInScope(portfolio.accounts, scope),
+    [portfolio.accounts, scope],
+  );
+  // A few consumers (the holdings table's account column, the transaction
+  // form's default account) only make sense narrowed to a single account,
+  // not a person who might hold several.
+  const soleAccountId = scopeAccountIds?.length === 1 ? scopeAccountIds[0] : null;
+
   const analysis = useMemo(
     () =>
       analyzePortfolio(portfolio, prices, {
-        accountIds: scopeAccountId === "all" ? undefined : [scopeAccountId],
+        accountIds: scopeAccountIds ?? undefined,
       }),
-    [portfolio, prices, scopeAccountId],
+    [portfolio, prices, scopeAccountIds],
   );
 
   const accountNames = useMemo(
@@ -349,7 +379,12 @@ export function PortfolioApp() {
       }
       case "account": {
         const match = portfolio.accounts.find((a) => a.name === label);
-        if (match) setScopeAccountId(match.id);
+        if (match) setScope(accountScope(match.id));
+        break;
+      }
+      case "owner": {
+        const person = people.find((p) => p.name === label);
+        setScope(person ? ownerScope(person.id) : JOINT_OWNER_SCOPE);
         break;
       }
       case "accountType": {
@@ -402,16 +437,27 @@ export function PortfolioApp() {
         <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
         <div className="flex flex-wrap items-center gap-2">
           <select
-            value={scopeAccountId}
-            onChange={(e) => setScopeAccountId(e.target.value)}
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            aria-label="Scope the portfolio to a person or account"
             className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
           >
-            <option value="all">All accounts</option>
-            {portfolio.accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
+            <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
+            <optgroup label="By person">
+              {people.map((p) => (
+                <option key={p.id} value={ownerScope(p.id)}>
+                  {p.name}
+                </option>
+              ))}
+              <option value={JOINT_OWNER_SCOPE}>Joint</option>
+            </optgroup>
+            <optgroup label="By account">
+              {portfolio.accounts.map((a) => (
+                <option key={a.id} value={accountScope(a.id)}>
+                  {a.name}
+                </option>
+              ))}
+            </optgroup>
           </select>
           <Btn onClick={refresh} title="Refetch quotes now">
             {pricesLoading ? "Refreshing…" : "Refresh prices"}
@@ -432,6 +478,8 @@ export function PortfolioApp() {
                   institution: "",
                   type: "taxable",
                   forecastAccountId: null,
+                  syncToForecast: true,
+                  ownerId: null,
                   openingCashBalance: 0,
                 });
               }
@@ -590,7 +638,7 @@ export function PortfolioApp() {
             <HoldingsTable
               holdings={visibleHoldings}
               accountNames={accountNames}
-              showAccount={scopeAccountId === "all"}
+              showAccount={soleAccountId === null}
               grouping={grouping}
               onSelect={setSelected}
             />
@@ -613,6 +661,7 @@ export function PortfolioApp() {
             holdings={analysis.holdings}
             accounts={portfolio.accounts}
             accountNames={accountNames}
+            people={people}
             onDrillDown={handleDrillDown}
           >
             <div>
@@ -735,7 +784,7 @@ export function PortfolioApp() {
         )}
 
         {tab === "performance" && (
-          <PerformancePanel portfolio={portfolio} scopeAccountId={scopeAccountId} />
+          <PerformancePanel portfolio={portfolio} scopeAccountIds={scopeAccountIds} />
         )}
 
         {tab === "realized" && (
@@ -747,7 +796,7 @@ export function PortfolioApp() {
         )}
 
         {tab === "transactions" && (
-          <TransactionsPanel portfolio={portfolio} scopeAccountId={scopeAccountId} />
+          <TransactionsPanel portfolio={portfolio} scopeAccountIds={scopeAccountIds} />
         )}
 
         {tab === "accounts" && (
@@ -755,6 +804,7 @@ export function PortfolioApp() {
             portfolio={portfolio}
             prices={prices}
             forecastAccounts={scenario.accounts}
+            people={people}
             onPush={handlePush}
           />
         )}
@@ -781,7 +831,7 @@ export function PortfolioApp() {
       {syncingDividends && (
         <DividendSyncDialog
           portfolio={portfolio}
-          scopeAccountId={scopeAccountId}
+          scopeAccountIds={scopeAccountIds}
           onClose={() => setSyncingDividends(false)}
           onApply={handleApplyDividends}
         />
