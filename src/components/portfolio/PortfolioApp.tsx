@@ -79,6 +79,7 @@ export function PortfolioApp() {
   const importTransactions = usePortfolioStore((s) => s.importTransactions);
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const addTransactions = usePortfolioStore((s) => s.addTransactions);
+  const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
   const addAccount = usePortfolioStore((s) => s.addAccount);
 
@@ -231,12 +232,22 @@ export function PortfolioApp() {
   const { summary } = analysis;
 
   const handleImport = (accountId: string, rows: ImportRow[]) => {
+    // A statement dividend that lands on a payment the sync already wrote
+    // under its ex-date supersedes that estimate rather than duplicating it.
+    const replacedIds = rows
+      .map((row) => row.syncMatchId)
+      .filter((id): id is string => id !== null);
+    const replaced = replacedIds.length > 0 ? removeTransactions(replacedIds) : 0;
+
     importTransactions(
       accountId,
       rows.map((row) => row.draft),
     );
     setImporting(false);
-    setFlash(`Imported ${rows.length} transaction${rows.length === 1 ? "" : "s"}.`);
+    setFlash(
+      `Imported ${rows.length} transaction${rows.length === 1 ? "" : "s"}` +
+        (replaced > 0 ? `, replacing ${replaced} synced dividend${replaced === 1 ? "" : "s"}.` : "."),
+    );
   };
 
   /**
