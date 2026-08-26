@@ -1,4 +1,4 @@
-import type { ISODate } from "@/domain";
+import type { ISODate, Id } from "@/domain";
 import {
   normalizeSymbol,
   transactionTypeSchema,
@@ -6,6 +6,7 @@ import {
   type Transaction,
   type TransactionType,
 } from "@/domain/portfolio";
+import { isAutoDividendHash, isSameDividendWindow } from "@/engine/portfolio/dividends";
 
 export interface ParsedTable {
   headers: string[];
@@ -61,6 +62,15 @@ export interface ImportRow {
   skip: boolean;
   /** True when an identical row is already in the ledger. */
   duplicate: boolean;
+  /**
+   * Id of the sync-written dividend this row's own statement payment
+   * supersedes, when this dividend/reinvest row falls in that entry's
+   * pay-date window. The two rows never hash the same, so nothing else
+   * catches it. A statement date beats an ex-date estimate, so this row
+   * imports and that transaction is removed rather than the row being
+   * skipped -- otherwise the estimate would sit in the ledger forever.
+   */
+  syncMatchId: string | null;
 }
 
 /** Splits one CSV line, honoring quoted fields and doubled escape quotes. */
@@ -340,8 +350,24 @@ export function buildImportRows(
   table: ParsedTable,
   mapping: ColumnMapping,
   existing: readonly Transaction[] = [],
+  accountId: Id | null = null,
 ): ImportRow[] {
   const seen = new Set(existing.map((tx) => tx.sourceHash).filter((h): h is string => h !== null));
+
+  // Dividends the sync already wrote into the target account, by symbol --
+  // the only thing a statement's own pay-date row can collide with that its
+  // hash won't reveal.
+  const autoDivEntries = new Map<string, { id: string; date: ISODate }[]>();
+  if (accountId !== null) {
+    for (const tx of existing) {
+      if (tx.accountId !== accountId || tx.symbol === null || !isAutoDividendHash(tx.sourceHash)) continue;
+      const symbol = normalizeSymbol(tx.symbol);
+      const entries = autoDivEntries.get(symbol);
+      const entry = { id: tx.id, date: tx.date };
+      if (entries) entries.push(entry);
+      else autoDivEntries.set(symbol, [entry]);
+    }
+  }
 
   return table.rows.map((raw) => {
     const issues: string[] = [];
@@ -419,12 +445,29 @@ export function buildImportRows(
       (!spinoffSymbolRaw || spinoffShareRatio === null || spinoffShareRatio <= 0 ||
         spinoffBasisRetained === null || spinoffBasisRetained < 0 || spinoffBasisRetained > 1);
 
+    let syncMatchId: string | null = null;
+    if (date !== null && (type === "dividend" || type === "reinvest") && symbolRaw !== "") {
+      const candidates = (autoDivEntries.get(normalizeSymbol(symbolRaw)) ?? []).filter((entry) =>
+        isSameDividendWindow(entry.date, date),
+      );
+      // Closest ex-date first: with more than one candidate in window, the
+      // nearest is the one this statement payment most plausibly is.
+      candidates.sort(
+        (a, b) => Math.abs(Date.parse(a.date) - Date.parse(date)) - Math.abs(Date.parse(b.date) - Date.parse(date)),
+      );
+      syncMatchId = candidates[0]?.id ?? null;
+    }
+    if (syncMatchId) {
+      issues.push("Replaces a dividend the price-feed sync added earlier under its ex-date.");
+    }
+
     return {
       raw,
       draft,
       issues,
       skip: !date || !type || (needsSymbol && !symbolRaw) || spinoffIncomplete,
       duplicate: seen.has(sourceHash),
+      syncMatchId,
     };
   });
 }

@@ -57,13 +57,14 @@ export function ImportDialog({
     [table.headers, mappingOverride],
   );
   const rows = useMemo(
-    () => buildImportRows(table, mapping, existingTransactions),
-    [table, mapping, existingTransactions],
+    () => buildImportRows(table, mapping, existingTransactions, accountId || null),
+    [table, mapping, existingTransactions, accountId],
   );
 
   const importable = rows.filter((row) => !row.skip && !(skipDuplicates && row.duplicate));
   const skipped = rows.length - importable.length;
   const flagged = importable.filter((row) => row.issues.length > 0).length;
+  const replacing = importable.filter((row) => row.syncMatchId !== null).length;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -216,6 +217,8 @@ export function ImportDialog({
                               <span className="text-negative">{row.issues[0]}</span>
                             ) : row.duplicate ? (
                               <span className="text-dim-2">Already imported</span>
+                            ) : row.syncMatchId ? (
+                              <span className="text-accent">Replaces a synced dividend</span>
                             ) : row.issues.length > 0 ? (
                               <span className="text-accent">{row.issues[0]}</span>
                             ) : (
@@ -238,16 +241,22 @@ export function ImportDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
-          <Btn onClick={onClose}>Cancel</Btn>
-          <Btn
-            variant="primary"
-            onClick={() => {
-              if (accountId && importable.length > 0) onImport(accountId, importable);
-            }}
-          >
-            Import {importable.length} transaction{importable.length === 1 ? "" : "s"}
-          </Btn>
+        <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
+          <p className="text-[11.5px] text-dim-2">
+            {replacing > 0 &&
+              `${replacing} of these replace${replacing === 1 ? "s" : ""} a dividend the price-feed sync added earlier — that entry will be removed.`}
+          </p>
+          <div className="flex items-center gap-2">
+            <Btn onClick={onClose}>Cancel</Btn>
+            <Btn
+              variant="primary"
+              onClick={() => {
+                if (accountId && importable.length > 0) onImport(accountId, importable);
+              }}
+            >
+              Import {importable.length} transaction{importable.length === 1 ? "" : "s"}
+            </Btn>
+          </div>
         </div>
       </div>
     </div>
