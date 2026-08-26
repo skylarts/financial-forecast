@@ -466,6 +466,59 @@ describe("buildPerformanceSeries", () => {
   });
 });
 
+describe("a spinoff", () => {
+  it("moves value into the new symbol and retires the parent on a full exchange", () => {
+    const histories = new Map([["NEW", history([["2024-01-04", 5]])]]);
+
+    const { points, approximated } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 10, symbol: "OLD" }),
+        tx({
+          type: "spinoff",
+          date: "2024-01-03",
+          symbol: "OLD",
+          spinoffSymbol: "NEW",
+          spinoffShareRatio: 2,
+          spinoffBasisRetained: 0,
+        }),
+      ],
+      histories,
+      { from: "2024-01-04", to: "2024-01-04" },
+    );
+
+    // 10 OLD shares became 20 NEW shares; OLD holds nothing to value any more.
+    expect(points[0].value).toBeCloseTo(100, 6);
+    expect(approximated).not.toContain("OLD");
+  });
+
+  it("credits the new symbol without touching the parent's share count on a partial spinoff", () => {
+    const histories = new Map([
+      ["PARENT", history([["2024-01-04", 45]])],
+      ["CHILD", history([["2024-01-04", 20]])],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 50, symbol: "PARENT" }),
+        tx({
+          type: "spinoff",
+          date: "2024-01-03",
+          symbol: "PARENT",
+          spinoffSymbol: "CHILD",
+          spinoffShareRatio: 0.5,
+          spinoffBasisRetained: 0.8834,
+        }),
+      ],
+      histories,
+      { from: "2024-01-04", to: "2024-01-04" },
+    );
+
+    // 10 PARENT shares kept (real spinoff, basis moves but shares don't) plus
+    // 5 new CHILD shares: 10 * $45 + 5 * $20.
+    expect(points[0].value).toBeCloseTo(550, 6);
+  });
+});
+
 describe("annualizedReturn", () => {
   it("compounds a multi-year window down to a yearly rate", () => {
     const histories = new Map([
