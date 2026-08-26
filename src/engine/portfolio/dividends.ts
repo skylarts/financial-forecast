@@ -55,6 +55,24 @@ function shiftDate(date: ISODate, days: number): ISODate {
   return shifted.toISOString().slice(0, 10);
 }
 
+/**
+ * Whether `otherDate` falls in the pay-date window this engine would treat as
+ * the same payment as `exDate`. Shared with the statement importer, which
+ * needs the same window in the opposite direction: a statement dividend can
+ * land after a sync already proposed and wrote that payment under its ex-date,
+ * and nothing about the statement row's own hash would tell the importer that.
+ */
+export function isSameDividendWindow(exDate: ISODate, otherDate: ISODate): boolean {
+  const windowStart = shiftDate(exDate, -MATCH_BEFORE_DAYS);
+  const windowEnd = shiftDate(exDate, MATCH_AFTER_DAYS);
+  return otherDate >= windowStart && otherDate <= windowEnd;
+}
+
+/** Whether a sourceHash marks a transaction this engine generated from the feed. */
+export function isAutoDividendHash(hash: string | null): boolean {
+  return hash !== null && hash.startsWith("auto-div:");
+}
+
 /** Types that already represent a dividend having been received. */
 const INCOME_TYPES = new Set(["dividend", "reinvest"]);
 

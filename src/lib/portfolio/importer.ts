@@ -1,4 +1,4 @@
-import type { ISODate } from "@/domain";
+import type { ISODate, Id } from "@/domain";
 import {
   normalizeSymbol,
   transactionTypeSchema,
@@ -6,6 +6,7 @@ import {
   type Transaction,
   type TransactionType,
 } from "@/domain/portfolio";
+import { isAutoDividendHash, isSameDividendWindow } from "@/engine/portfolio/dividends";
 
 export interface ParsedTable {
   headers: string[];
@@ -61,6 +62,12 @@ export interface ImportRow {
   skip: boolean;
   /** True when an identical row is already in the ledger. */
   duplicate: boolean;
+  /**
+   * True when this dividend/reinvest row falls in the pay-date window of a
+   * dividend the price-feed sync already wrote under its ex-date. The two
+   * rows never hash the same, so this is the only thing that catches it.
+   */
+  syncMatch: boolean;
 }
 
 /** Splits one CSV line, honoring quoted fields and doubled escape quotes. */
@@ -340,8 +347,23 @@ export function buildImportRows(
   table: ParsedTable,
   mapping: ColumnMapping,
   existing: readonly Transaction[] = [],
+  accountId: Id | null = null,
 ): ImportRow[] {
   const seen = new Set(existing.map((tx) => tx.sourceHash).filter((h): h is string => h !== null));
+
+  // Ex-dates the sync already wrote as dividends into the target account, by
+  // symbol -- the only thing a statement's own pay-date row can collide with
+  // that its hash won't reveal.
+  const autoDivDates = new Map<string, ISODate[]>();
+  if (accountId !== null) {
+    for (const tx of existing) {
+      if (tx.accountId !== accountId || tx.symbol === null || !isAutoDividendHash(tx.sourceHash)) continue;
+      const symbol = normalizeSymbol(tx.symbol);
+      const dates = autoDivDates.get(symbol);
+      if (dates) dates.push(tx.date);
+      else autoDivDates.set(symbol, [tx.date]);
+    }
+  }
 
   return table.rows.map((raw) => {
     const issues: string[] = [];
@@ -419,12 +441,22 @@ export function buildImportRows(
       (!spinoffSymbolRaw || spinoffShareRatio === null || spinoffShareRatio <= 0 ||
         spinoffBasisRetained === null || spinoffBasisRetained < 0 || spinoffBasisRetained > 1);
 
+    const syncMatch =
+      date !== null &&
+      (type === "dividend" || type === "reinvest") &&
+      symbolRaw !== "" &&
+      (autoDivDates.get(normalizeSymbol(symbolRaw)) ?? []).some((exDate) =>
+        isSameDividendWindow(exDate, date),
+      );
+    if (syncMatch) issues.push("Matches a dividend the price-feed sync already added under its ex-date.");
+
     return {
       raw,
       draft,
       issues,
       skip: !date || !type || (needsSymbol && !symbolRaw) || spinoffIncomplete,
       duplicate: seen.has(sourceHash),
+      syncMatch,
     };
   });
 }

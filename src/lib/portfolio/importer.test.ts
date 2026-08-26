@@ -175,6 +175,40 @@ describe("buildImportRows", () => {
 
     expect(second[0].duplicate).toBe(true);
   });
+
+  it("flags a statement dividend that matches one the price-feed sync already wrote", () => {
+    const existing = [
+      {
+        id: "tx-1",
+        accountId: "acct-1",
+        date: "2024-04-01" as const,
+        type: "dividend" as const,
+        symbol: "VTI",
+        quantity: 0,
+        price: 0,
+        amount: 42,
+        fees: 0,
+        lotId: null,
+        acquiredDate: null,
+        spinoffSymbol: null,
+        spinoffShareRatio: null,
+        spinoffBasisRetained: null,
+        note: "from the price feed",
+        importBatchId: null,
+        sourceHash: "auto-div:VTI:2024-04-01",
+      },
+    ];
+
+    const table = parseDelimited(csv);
+    const [, dividend] = buildImportRows(table, guessMapping(table.headers), existing, "acct-1");
+
+    expect(dividend.duplicate).toBe(false);
+    expect(dividend.syncMatch).toBe(true);
+
+    // A different account's sync doesn't suppress this account's own statement row.
+    const [, otherAccount] = buildImportRows(table, guessMapping(table.headers), existing, "acct-2");
+    expect(otherAccount.syncMatch).toBe(false);
+  });
 });
 
 describe("buildImportRows: spinoff", () => {

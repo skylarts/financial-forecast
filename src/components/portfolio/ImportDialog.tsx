@@ -57,11 +57,13 @@ export function ImportDialog({
     [table.headers, mappingOverride],
   );
   const rows = useMemo(
-    () => buildImportRows(table, mapping, existingTransactions),
-    [table, mapping, existingTransactions],
+    () => buildImportRows(table, mapping, existingTransactions, accountId || null),
+    [table, mapping, existingTransactions, accountId],
   );
 
-  const importable = rows.filter((row) => !row.skip && !(skipDuplicates && row.duplicate));
+  const importable = rows.filter(
+    (row) => !row.skip && !(skipDuplicates && (row.duplicate || row.syncMatch)),
+  );
   const skipped = rows.length - importable.length;
   const flagged = importable.filter((row) => row.issues.length > 0).length;
 
@@ -189,7 +191,8 @@ export function ImportDialog({
                   </thead>
                   <tbody>
                     {rows.slice(0, 200).map((row, index) => {
-                      const dropped = row.skip || (skipDuplicates && row.duplicate);
+                      const dropped =
+                        row.skip || (skipDuplicates && (row.duplicate || row.syncMatch));
                       return (
                         <tr
                           key={index}
@@ -216,6 +219,8 @@ export function ImportDialog({
                               <span className="text-negative">{row.issues[0]}</span>
                             ) : row.duplicate ? (
                               <span className="text-dim-2">Already imported</span>
+                            ) : row.syncMatch ? (
+                              <span className="text-dim-2">Matches a synced dividend</span>
                             ) : row.issues.length > 0 ? (
                               <span className="text-accent">{row.issues[0]}</span>
                             ) : (
