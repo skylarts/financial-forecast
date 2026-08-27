@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { formatOptionSymbol, type Portfolio } from "@/domain/portfolio";
 import type { Holding, PortfolioSummary } from "@/engine/portfolio/metrics";
 import {
@@ -12,9 +12,23 @@ import {
 import { money, percent, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { useMarketIndexes } from "@/store/useMarketIndexes";
+import { Segmented } from "@/components/ui/controls";
 
 /** How many day movers the strip names before it runs out of room. */
 const MAX_MOVERS = 4;
+
+const MOVER_SORT_OPTIONS = [
+  { value: "best", label: "Best" },
+  { value: "worst", label: "Worst" },
+] as const;
+
+const MOVER_METRIC_OPTIONS = [
+  { value: "dollar", label: "$" },
+  { value: "percent", label: "%" },
+] as const;
+
+type MoverSort = (typeof MOVER_SORT_OPTIONS)[number]["value"];
+type MoverMetric = (typeof MOVER_METRIC_OPTIONS)[number]["value"];
 
 /**
  * The deepest range the feed still answers daily.
@@ -113,6 +127,8 @@ export function SummaryCards({
   loadingQuotes: boolean;
 }) {
   const { indexes } = useMarketIndexes();
+  const [moverSort, setMoverSort] = useState<MoverSort>("best");
+  const [moverMetric, setMoverMetric] = useState<MoverMetric>("dollar");
 
   const scopedTransactions = useMemo(
     () =>
@@ -198,10 +214,13 @@ export function SummaryCards({
   }, [series.points, histories, to]);
 
   /**
-   * The biggest day moves in the portfolio, by dollars rather than by percent.
+   * The day's biggest movers -- gainers or losers, ranked in dollars or in
+   * percent, per the two toggles above the list.
    *
-   * A 40% pop on a $200 position is not what moved the account today, and
-   * ranking by percentage puts it above the holding that actually did.
+   * A 40% pop on a $200 position isn't what moved the account today, so the
+   * dollar ranking (the default) puts it below the holding that actually did.
+   * Percent ranking exists for the opposite question -- which name itself had
+   * the wildest day -- and the two can order the same holdings differently.
    *
    * Rolled up by security first. Holdings are per-account, so the same ticker
    * held in a 401(k) and a brokerage is two rows -- and listing both spends two
@@ -230,12 +249,27 @@ export function SummaryCards({
         });
       }
     }
-    return [...bySymbol.values()]
+    const rows = [...bySymbol.values()]
       .filter((row) => row.change !== 0)
-      .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
-      .slice(0, MAX_MOVERS)
       .map((row) => ({ ...row, changePct: row.previous !== 0 ? row.change / row.previous : null }));
-  }, [holdings]);
+
+    const rankKey = (row: (typeof rows)[number]) => (moverMetric === "percent" ? row.changePct : row.change);
+
+    return rows
+      .filter((row) => {
+        const k = rankKey(row);
+        return k !== null && (moverSort === "best" ? k > 0 : k < 0);
+      })
+      .sort((a, b) => {
+        // Ranked by magnitude either way: "best" wants the largest gain
+        // first (descending), "worst" wants the largest loss first, which
+        // since every row here is negative means the most negative first
+        // (ascending).
+        const diff = (rankKey(b) ?? 0) - (rankKey(a) ?? 0);
+        return moverSort === "best" ? diff : -diff;
+      })
+      .slice(0, MAX_MOVERS);
+  }, [holdings, moverSort, moverMetric]);
 
   // A window that couldn't be measured and one still being fetched must not
   // read the same -- a dash says "there is no answer", which is a lie while the
@@ -286,24 +320,51 @@ export function SummaryCards({
         </div>
       </div>
 
-      <Card title="Top movers" hint="The largest dollar moves in your holdings since the previous close.">
+      <Card
+        title="Top movers"
+        hint={`${moverSort === "best" ? "Biggest gainers" : "Biggest losers"} in your holdings since the previous close, ranked by ${moverMetric === "percent" ? "percent" : "dollar"} move.`}
+      >
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <Segmented
+            options={MOVER_SORT_OPTIONS}
+            value={moverSort}
+            onChange={setMoverSort}
+            size="sm"
+            ariaLabel="Best or worst movers"
+          />
+          <Segmented
+            options={MOVER_METRIC_OPTIONS}
+            value={moverMetric}
+            onChange={setMoverMetric}
+            size="sm"
+            ariaLabel="Rank by dollar or percent"
+          />
+        </div>
         {movers.length === 0 ? (
           <p className="text-[12.5px] text-dim">
-            {loadingQuotes ? "Waiting on quotes…" : "No holding carries a day move yet."}
+            {loadingQuotes
+              ? "Waiting on quotes…"
+              : moverSort === "best"
+                ? "Nothing gained today."
+                : "Nothing lost today."}
           </p>
         ) : (
           <div className="space-y-1">
-            {movers.map((mover) => (
-              <div key={mover.symbol} className="flex items-baseline justify-between gap-3">
-                <span className="truncate text-[12.5px] text-dim" title={mover.name}>
-                  {formatOptionSymbol(mover.symbol)}
-                </span>
-                <span className={`shrink-0 text-[12.5px] tabular-nums ${toneFor(mover.change)}`}>
-                  {signedMoney(mover.change)}
-                  <span className="ml-2">{percent(mover.changePct, 2)}</span>
-                </span>
-              </div>
-            ))}
+            {movers.map((mover) => {
+              const primary = moverMetric === "percent" ? percent(mover.changePct, 2) : signedMoney(mover.change);
+              const secondary = moverMetric === "percent" ? signedMoney(mover.change) : percent(mover.changePct, 2);
+              return (
+                <div key={mover.symbol} className="flex items-baseline justify-between gap-3">
+                  <span className="truncate text-[12.5px] text-dim" title={mover.name}>
+                    {formatOptionSymbol(mover.symbol)}
+                  </span>
+                  <span className={`shrink-0 text-[12.5px] tabular-nums ${toneFor(mover.change)}`}>
+                    {primary}
+                    <span className="ml-2 text-dim-2">{secondary}</span>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>
