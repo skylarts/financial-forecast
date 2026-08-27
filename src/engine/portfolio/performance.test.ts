@@ -343,6 +343,33 @@ describe("buildPerformanceSeries", () => {
     expect(totalReturn(points)).toBeCloseTo(0.1, 6);
   });
 
+  it("narrows to a symbol subset, ignoring the rest of the ledger entirely", () => {
+    // A fully funded ledger -- basis would ordinarily be "account" -- but
+    // filtered down to just VTI, BND's deposit-funded purchase shouldn't
+    // count for or against it.
+    const histories = new Map([
+      ["VTI", history([["2024-01-02", 100], ["2024-01-03", 110]])],
+      ["BND", history([["2024-01-02", 50], ["2024-01-03", 25]])],
+    ]);
+
+    const { points, basis } = buildPerformanceSeries(
+      [
+        tx({ type: "cash_deposit", date: "2024-01-02", symbol: null, amount: 2000 }),
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 100, symbol: "VTI" }),
+        // BND crashes 50% -- if it leaked into this series, the return
+        // wouldn't be a clean 10%.
+        tx({ type: "buy", date: "2024-01-02", quantity: 10, price: 50, symbol: "BND" }),
+      ],
+      histories,
+      { from: "2024-01-02", to: "2024-01-03", symbols: new Set(["VTI"]) },
+    );
+
+    // A slice has no cash balance of its own to fall back on.
+    expect(basis).toBe("securities");
+    expect(points[0].value).toBe(1000);
+    expect(totalReturn(points)).toBeCloseTo(0.1, 6);
+  });
+
   it("reads a purchase made before its deposit as money already in the account", () => {
     // Settlement routinely dates a buy a day ahead of the transfer that cleared
     // for it. The money was demonstrably there, so the account opens holding it
@@ -628,6 +655,21 @@ describe("symbolsForWindow", () => {
     );
 
     // The contract is gone and the feed will never answer for it again.
+    expect(symbols).toEqual(["VTI"]);
+  });
+
+  it("narrows to a facet-filtered set of symbols", () => {
+    const symbols = symbolsForWindow(
+      [
+        tx({ type: "buy", date: "2023-01-02", quantity: 10, price: 100, symbol: "VTI" }),
+        tx({ type: "buy", date: "2023-01-02", quantity: 10, price: 100, symbol: "BND" }),
+      ],
+      "2024-01-01",
+      "2024-12-31",
+      undefined,
+      new Set(["VTI"]),
+    );
+
     expect(symbols).toEqual(["VTI"]);
   });
 });

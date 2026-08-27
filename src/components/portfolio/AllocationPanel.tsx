@@ -9,13 +9,20 @@ import {
   type PortfolioAccount,
 } from "@/domain/portfolio";
 import type { Person } from "@/domain/household";
-import { buildAllocation, type AllocationSlice, type Holding } from "@/engine/portfolio/metrics";
+import {
+  buildAllocation,
+  buildThemeAllocation,
+  explodeExposures,
+  type AllocationSlice,
+  type Holding,
+} from "@/engine/portfolio/metrics";
 import { money } from "@/lib/portfolio/format";
 import { ownerLabel } from "@/lib/people";
 import { Segmented } from "@/components/ui/controls";
 
 const DIMENSIONS = [
   { value: "assetClass", label: "Asset class" },
+  { value: "theme", label: "Theme" },
   { value: "account", label: "Account" },
   { value: "owner", label: "Person" },
   { value: "symbol", label: "Holding" },
@@ -153,10 +160,25 @@ export function AllocationPanel({
   );
 
   const slices = useMemo(() => {
+    // A fund that spans classes splits its dollars across each one it
+    // touches, so this dimension runs over exploded rows rather than picking
+    // one label per holding the way every other dimension does.
+    if (dimension === "assetClass") {
+      return buildAllocation(
+        explodeExposures(holdings),
+        (h) => ASSET_CLASS_LABELS[h.assetClass as AssetClass] ?? h.assetClass,
+        { includeCash },
+      );
+    }
+    // Theme tags overlap rather than partition, so this one skips `pick`
+    // entirely -- a holding tagged twice belongs in two slices at its full
+    // value, which `buildAllocation`'s one-label-per-row model can't express.
+    if (dimension === "theme") {
+      return buildThemeAllocation(holdings, { includeCash });
+    }
+
     const pick = (h: Holding): string => {
       switch (dimension) {
-        case "assetClass":
-          return ASSET_CLASS_LABELS[h.assetClass as AssetClass] ?? h.assetClass;
         case "account":
           return accountNames.get(h.accountId) ?? "Unknown account";
         case "owner":
@@ -215,7 +237,15 @@ export function AllocationPanel({
           </label>
         )}
         <span className="ml-auto text-[11.5px] tabular-nums text-dim-2">
-          {money(total)} across {slices.length} {slices.length === 1 ? "slice" : "slices"}
+          {dimension === "theme" ? (
+            <span title="A holding tagged more than once counts at full value in each of its tags, so these slices can add up to more than your total.">
+              {slices.length} theme{slices.length === 1 ? "" : "s"}, tags can overlap
+            </span>
+          ) : (
+            <>
+              {money(total)} across {slices.length} {slices.length === 1 ? "slice" : "slices"}
+            </>
+          )}
         </span>
       </div>
 
@@ -226,7 +256,12 @@ export function AllocationPanel({
       ) : (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
           <div className="h-[280px]">
-            {hasNegativeSlice ? (
+            {dimension === "theme" ? (
+              <div className="flex h-full items-center justify-center px-4 text-center text-[12.5px] text-dim">
+                Tags overlap, so a ring -- which only ever draws a whole circle --
+                can&apos;t represent them. The bars beside it read independently instead.
+              </div>
+            ) : hasNegativeSlice ? (
               <div className="flex h-full items-center justify-center px-4 text-center text-[12.5px] text-dim">
                 A short position makes this breakdown net negative, which a ring
                 can&apos;t draw. The figures beside it still add up.

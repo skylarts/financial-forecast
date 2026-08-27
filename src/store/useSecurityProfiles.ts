@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeSymbol, type AssetClass } from "@/domain/portfolio";
+import { normalizeSymbol, type AssetClass, type Exposure, type InstrumentType } from "@/domain/portfolio";
 import { usePortfolioStore } from "./usePortfolioStore";
 
 /**
@@ -24,6 +24,8 @@ export interface ResolvedProfile {
   assetClass: AssetClass;
   /** Why that class, in one phrase, e.g. "ETF in the Foreign Large Blend category". */
   basis: string;
+  exposures: Exposure[];
+  instrumentType: InstrumentType;
   found: boolean;
 }
 
@@ -111,6 +113,14 @@ export function useSecurityProfiles(symbols: readonly string[]): {
             name,
             assetClass: profile.assetClass,
             assetClassSource: "auto",
+            exposures: profile.exposures,
+            instrumentType:
+              existing?.instrumentTypeSource === "manual"
+                ? existing.instrumentType
+                : profile.instrumentType,
+            instrumentTypeSource:
+              existing?.instrumentTypeSource === "manual" ? "manual" : "auto",
+            themes: existing?.themes ?? [],
             manualPrice: existing?.manualPrice ?? null,
             manualPriceDate: existing?.manualPriceDate ?? null,
             lastKnownPrice: existing?.lastKnownPrice ?? null,

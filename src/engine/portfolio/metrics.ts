@@ -3,10 +3,14 @@ import {
   closesLotOn,
   contractMultiplier,
   formatOptionSymbol,
+  isOptionSymbol,
   normalizeSymbol,
   opensLotOn,
+  resolveExposures,
   signedCashFlow,
   type AssetClass,
+  type Exposure,
+  type InstrumentType,
   type Portfolio,
   type PositionSide,
   type Security,
@@ -30,6 +34,30 @@ export type PriceMap = Record<string, PriceQuote>;
  *  a real ticker, and so the quote feed is never asked to price it. */
 export const CASH_SYMBOL = "$CASH";
 
+/**
+ * A symbol's class split, instrument type, and theme tags, read off its
+ * security record. The one place this is worked out, so a holding and a
+ * historical performance series -- which has no holding to build, only a
+ * symbol out of the transaction ledger -- classify a symbol identically.
+ */
+export function classifySymbol(
+  symbol: string,
+  security: Security | undefined,
+): { assetClass: AssetClass; exposures: Exposure[]; instrumentType: InstrumentType; themes: string[] } {
+  return {
+    assetClass: security?.assetClass ?? "other",
+    exposures: resolveExposures({
+      assetClass: security?.assetClass ?? "other",
+      exposures: security?.exposures ?? [],
+    }),
+    // Syntactic, not read off the security record: an option contract is
+    // recognisable from its symbol alone, so it reads as an option even
+    // before the feed has ever classified it.
+    instrumentType: isOptionSymbol(symbol) ? "option" : (security?.instrumentType ?? "other"),
+    themes: security?.themes ?? [],
+  };
+}
+
 export interface Holding {
   key: string;
   accountId: Id;
@@ -41,7 +69,19 @@ export interface Holding {
   kind: "position" | "cash";
   symbol: string;
   name: string;
+  /** The primary class -- what filters, sorting, and every dimension besides
+   *  "by class" itself treat this holding as. */
   assetClass: AssetClass;
+  /** How the position's value actually splits across classes, renormalized to
+   *  sum to 1. A single-class holding (almost everything) carries one entry
+   *  identical to `assetClass`; a fund like VT carries one row per class it
+   *  spans. See `explodeExposures` for turning this into groupable rows. */
+  exposures: Exposure[];
+  instrumentType: InstrumentType;
+  /** Free-form tags, e.g. "AI", "Dividend growth". A holding can carry several
+   *  or none; grouping and filtering by theme treat these as independent, not
+   *  as a split of the holding's value the way `exposures` is. */
+  themes: string[];
   side: PositionSide;
   /** Shares owned (long) or owed (short). Always positive; read `side` for direction. */
   quantity: number;
@@ -114,6 +154,87 @@ export function buildAllocation(
   return [...grouped.entries()]
     .map(([label, value]) => ({ label, value, weight: total > 0 ? value / total : 0 }))
     .sort((a, b) => b.value - a.value);
+}
+
+/**
+ * Allocation by theme tag.
+ *
+ * Every other dimension partitions the portfolio: each holding lands in
+ * exactly one bucket, and the buckets sum to the total. Themes don't --
+ * VT could be tagged both "Core" and "Dividend growth", and a holding with no
+ * tags at all still needs somewhere to go. So these slices are allowed to
+ * overlap, `weight` still means "share of the portfolio", and the slices as a
+ * whole are not expected to sum to 1.
+ */
+export function buildThemeAllocation(
+  holdings: readonly Holding[],
+  options: { includeCash?: boolean } = {},
+): AllocationSlice[] {
+  const rows = options.includeCash === false ? holdings.filter((h) => h.kind !== "cash") : holdings;
+  const total = rows.reduce((sum, h) => sum + h.marketValue, 0);
+
+  const grouped = new Map<string, number>();
+  for (const holding of rows) {
+    const tags = holding.themes.length > 0 ? holding.themes : ["Untagged"];
+    for (const tag of tags) {
+      grouped.set(tag, (grouped.get(tag) ?? 0) + holding.marketValue);
+    }
+  }
+
+  return [...grouped.entries()]
+    .map(([label, value]) => ({ label, value, weight: total > 0 ? value / total : 0 }))
+    .sort((a, b) => b.value - a.value);
+}
+
+export interface ExposureRow extends Holding {
+  /** The class this row stands for, which may differ from the underlying
+   *  holding's own `assetClass` -- its primary class -- once split. */
+  exposureClass: AssetClass;
+  /** Share of the holding's own value this row carries, 0-1. 1 for a
+   *  single-class holding, since it isn't actually split. */
+  exposureWeight: number;
+  /** How many rows this holding exploded into. 1 means this row *is* the
+   *  holding; more means it's a partial slice of one. */
+  exposureCount: number;
+  /** The real, whole holding this row is a slice of -- what to open, select,
+   *  or match transactions against, since the row itself is a fraction that
+   *  exists only for this breakdown. */
+  source: Holding;
+}
+
+/**
+ * Explodes each holding into one row per asset class its value actually
+ * touches, so a table grouped by class can show VT once under US Equity at
+ * 60% of its value and once under International at the other 40%, rather than
+ * forcing the whole position into a single bucket.
+ *
+ * `marketValue`, `costBasis`, `unrealizedGain`, and `weight` scale down by
+ * each row's share, so the exploded rows still sum to the original holding's
+ * totals. Per-share figures (`price`, `avgCostPerShare`) and ratios
+ * (`unrealizedGainPct`, `irr`) pass through unchanged -- they describe the
+ * position as a whole, and splitting them would misstate both halves.
+ */
+export function explodeExposures(holdings: readonly Holding[]): ExposureRow[] {
+  const rows: ExposureRow[] = [];
+  for (const holding of holdings) {
+    const exposures = holding.exposures.length > 0 ? holding.exposures : [{ assetClass: holding.assetClass, weight: 1 }];
+    for (const exposure of exposures) {
+      rows.push({
+        ...holding,
+        key: exposures.length > 1 ? `${holding.key}::${exposure.assetClass}` : holding.key,
+        assetClass: exposure.assetClass,
+        exposureClass: exposure.assetClass,
+        exposureWeight: exposure.weight,
+        exposureCount: exposures.length,
+        marketValue: holding.marketValue * exposure.weight,
+        costBasis: holding.costBasis * exposure.weight,
+        unrealizedGain: holding.unrealizedGain * exposure.weight,
+        weight: holding.weight * exposure.weight,
+        source: holding,
+      });
+    }
+  }
+  return rows;
 }
 
 const DAYS_PER_YEAR = 365;
@@ -317,7 +438,7 @@ export function analyzePortfolio(
       kind: "position",
       symbol,
       name: security?.name || prices[symbol]?.name || formatOptionSymbol(symbol),
-      assetClass: security?.assetClass ?? "other",
+      ...classifySymbol(symbol, security),
       side,
       quantity,
       costBasis,
@@ -372,6 +493,9 @@ export function analyzePortfolio(
       symbol: CASH_SYMBOL,
       name: "Cash",
       assetClass: "cash",
+      exposures: [{ assetClass: "cash", weight: 1 }],
+      instrumentType: "cash",
+      themes: [],
       side: "long",
       quantity: 0,
       costBasis: 0,
@@ -435,7 +559,7 @@ export function analyzePortfolio(
       prices,
       asOf,
     ),
-    byAssetClass: buildAllocation(holdings, (h) => h.assetClass),
+    byAssetClass: buildAllocation(explodeExposures(holdings), (h) => h.assetClass),
     byAccount: buildAllocation(holdings, (h) => accountNames.get(h.accountId) ?? "Unknown account"),
     bySymbol: buildAllocation(holdings, (h) => h.symbol),
   };

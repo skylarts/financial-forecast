@@ -473,10 +473,13 @@ export function symbolsForWindow(
   from: ISODate,
   to: ISODate,
   accountIds?: readonly Id[],
+  /** Narrows to a facet-filtered subset of symbols -- everything else is
+   *  treated as though it were never traded, so it's never fetched or priced. */
+  symbols?: ReadonlySet<string>,
 ): string[] {
-  const scoped = accountIds
-    ? transactions.filter((tx) => accountIds.includes(tx.accountId))
-    : transactions;
+  const scoped = (accountIds ? transactions.filter((tx) => accountIds.includes(tx.accountId)) : transactions).filter(
+    (tx) => symbols === undefined || (tx.symbol !== null && symbols.has(normalizeSymbol(tx.symbol))),
+  );
   const ordered = [...scoped].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   const needed = new Set<string>();
@@ -532,6 +535,13 @@ export interface SeriesOptions {
    * Accounts tab's balance are built on the same footing rather than drifting.
    */
   openingCash?: number;
+  /**
+   * Narrows the series to only these symbols' own trades and price action --
+   * a facet-filtered slice of the portfolio (only ETFs, only a theme) rather
+   * than the whole account. Forces the "securities" basis unconditionally: a
+   * slice has no cash balance of its own to replay.
+   */
+  symbols?: ReadonlySet<string>;
 }
 
 /**
@@ -560,16 +570,20 @@ export function buildPerformanceSeries(
   histories: ReadonlyMap<string, readonly PricePoint[]>,
   options: SeriesOptions,
 ): PerformanceSeries {
-  const { from, to, accountIds, splits, openingCash = 0 } = options;
-  const scoped = accountIds
-    ? transactions.filter((tx) => accountIds.includes(tx.accountId))
-    : [...transactions];
+  const { from, to, accountIds, splits, openingCash = 0, symbols } = options;
+  const scoped = (accountIds ? transactions.filter((tx) => accountIds.includes(tx.accountId)) : [...transactions]).filter(
+    (tx) => symbols === undefined || (tx.symbol !== null && symbols.has(normalizeSymbol(tx.symbol))),
+  );
   const ordered = [...scoped].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   const days = tradingDays(histories, from, to);
   const relevant = ordered.filter((tx) => tx.date <= to);
   const funding = replayableCash(relevant, openingCash);
-  const basis: "account" | "securities" = funding.solvent ? "account" : "securities";
+  // A filtered slice has no cash balance of its own -- forcing "securities"
+  // is what makes a buy of an included symbol count as money entering the
+  // slice rather than as a transfer the (irrelevant, whole-account) cash
+  // floor is expected to explain.
+  const basis: "account" | "securities" = symbols !== undefined ? "securities" : funding.solvent ? "account" : "securities";
   if (days.length === 0) return { points: [], approximated: [], basis };
 
   /**

@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { Portfolio } from "@/domain/portfolio";
+import { normalizeSymbol, type Portfolio } from "@/domain/portfolio";
 import {
   annualizedReturn,
   buildPerformanceSeries,
@@ -21,10 +21,22 @@ import {
   type PricePoint,
   type SplitEvent,
 } from "@/engine/portfolio/performance";
+import { classifySymbol } from "@/engine/portfolio/metrics";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import { chunkSymbols } from "@/lib/portfolio/historyBatch";
 import { coversRequest, getCachedHistories, putCachedHistories } from "@/lib/portfolio/priceHistoryCache";
 import { Segmented } from "@/components/ui/controls";
+import { FacetMenu } from "@/components/ui/FacetMenu";
+import {
+  assetClassFacetOptions,
+  emptyHoldingFacets,
+  holdingFacetsActive,
+  instrumentTypeFacetOptions,
+  matchesHoldingFacets,
+  themeFacetOptions,
+  type Classifiable,
+  type HoldingFacets,
+} from "./filters";
 import { BenchmarkPicker } from "./BenchmarkPicker";
 
 const MAX_BENCHMARKS = 5;
@@ -213,6 +225,7 @@ export function PerformancePanel({
   const [draftFrom, setDraftFrom] = useState("");
   const [draftTo, setDraftTo] = useState("");
   const [benchmarks, setBenchmarks] = useState<string[]>(["SPY"]);
+  const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
   const [loaded, setLoaded] = useState<{
     key: string;
     histories: Map<string, PricePoint[]>;
@@ -241,6 +254,42 @@ export function PerformancePanel({
         : portfolio.transactions.filter((tx) => scopeAccountIds.includes(tx.accountId)),
     [portfolio.transactions, scopeAccountIds],
   );
+
+  const securityBySymbol = useMemo(
+    () => new Map(portfolio.securities.map((s) => [normalizeSymbol(s.symbol), s])),
+    [portfolio.securities],
+  );
+
+  // Every symbol this scope has ever traded, classified the same way a
+  // holding is -- the universe the facet menus offer and filter against, not
+  // just what's still open today.
+  const symbolClassifications = useMemo(() => {
+    const symbols = new Set<string>();
+    for (const tx of scopedTransactions) if (tx.symbol !== null) symbols.add(normalizeSymbol(tx.symbol));
+    const map = new Map<string, Classifiable>();
+    for (const symbol of symbols) map.set(symbol, classifySymbol(symbol, securityBySymbol.get(symbol)));
+    return map;
+  }, [scopedTransactions, securityBySymbol]);
+
+  const facetRows = useMemo(() => [...symbolClassifications.values()], [symbolClassifications]);
+  const assetClassOptions = useMemo(() => assetClassFacetOptions(facetRows, facets), [facetRows, facets]);
+  const themeOptions = useMemo(() => themeFacetOptions(facetRows, facets), [facetRows, facets]);
+  const instrumentTypeOptions = useMemo(
+    () => instrumentTypeFacetOptions(facetRows, facets),
+    [facetRows, facets],
+  );
+  const filtersActive = holdingFacetsActive(facets);
+
+  // undefined means "no filter" -- passed straight through to the engine,
+  // which then behaves exactly as it did before facets existed.
+  const includedSymbols = useMemo(() => {
+    if (!filtersActive) return undefined;
+    const set = new Set<string>();
+    for (const [symbol, classification] of symbolClassifications) {
+      if (matchesHoldingFacets(classification, facets)) set.add(symbol);
+    }
+    return set;
+  }, [filtersActive, symbolClassifications, facets]);
 
   // What the accounts in scope opened holding, before their ledgers begin. The
   // series replays from the same seed the Accounts tab's balance does, so the
@@ -281,10 +330,10 @@ export function PerformancePanel({
   const neededSymbols = useMemo(() => {
     const ordered = [
       ...benchmarks,
-      ...symbolsForWindow(scopedTransactions, from, to, scopeAccountIds ?? undefined),
+      ...symbolsForWindow(scopedTransactions, from, to, scopeAccountIds ?? undefined, includedSymbols),
     ];
     return [...new Set(ordered)];
-  }, [scopedTransactions, benchmarks, from, to, scopeAccountIds]);
+  }, [scopedTransactions, benchmarks, from, to, scopeAccountIds, includedSymbols]);
 
   const fetchRange = fetchRangeFor(period);
   const requestKey = `${fetchRange}::${from}::${neededSymbols.join(",")}`;
@@ -412,8 +461,9 @@ export function PerformancePanel({
         accountIds: scopeAccountIds ?? undefined,
         splits,
         openingCash,
+        symbols: includedSymbols,
       }),
-    [scopedTransactions, histories, splits, from, to, scopeAccountIds, openingCash],
+    [scopedTransactions, histories, splits, from, to, scopeAccountIds, openingCash, includedSymbols],
   );
 
   const benchmarkSeries = useMemo(
@@ -467,8 +517,9 @@ export function PerformancePanel({
         accountIds: scopeAccountIds ?? undefined,
         splits,
         openingCash,
+        symbols: includedSymbols,
       }),
-    [scopedTransactions, histories, splits, earliest, scopeAccountIds, openingCash],
+    [scopedTransactions, histories, splits, earliest, scopeAccountIds, openingCash, includedSymbols],
   );
 
   /**
@@ -605,6 +656,39 @@ export function PerformancePanel({
           >
             Reset
           </button>
+        )}
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <FacetMenu
+          label="Class"
+          options={assetClassOptions}
+          state={facets.assetClass}
+          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
+        />
+        <FacetMenu
+          label="Theme"
+          options={themeOptions}
+          state={facets.theme}
+          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
+        />
+        <FacetMenu
+          label="Type"
+          options={instrumentTypeOptions}
+          state={facets.instrumentType}
+          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
+        />
+        {filtersActive && (
+          <span className="text-[11.5px] text-dim-2">
+            {includedSymbols?.size ?? 0} of {symbolClassifications.size} names
+            <button
+              type="button"
+              onClick={() => setFacets(emptyHoldingFacets())}
+              className="ml-2 underline hover:text-foreground"
+            >
+              Clear filters
+            </button>
+          </span>
         )}
       </div>
 
@@ -774,14 +858,20 @@ export function PerformancePanel({
             </p>
           )}
 
-          {series.basis === "securities" && (
-            <p className="mt-2 text-[11.5px] text-dim-2">
-              These figures cover the investments only, not the cash beside them — this
-              ledger records purchases it has no deposits for, so there is no saying what
-              its cash balance was on any past day. Importing the account&apos;s cash
-              activity would let the return cover the whole account.
-            </p>
-          )}
+          {series.basis === "securities" &&
+            (filtersActive ? (
+              <p className="mt-2 text-[11.5px] text-dim-2">
+                These figures cover only the filtered names — a slice like this has no cash
+                balance of its own, so a buy or sell counts as money entering or leaving it.
+              </p>
+            ) : (
+              <p className="mt-2 text-[11.5px] text-dim-2">
+                These figures cover the investments only, not the cash beside them — this
+                ledger records purchases it has no deposits for, so there is no saying what
+                its cash balance was on any past day. Importing the account&apos;s cash
+                activity would let the return cover the whole account.
+              </p>
+            ))}
 
           {series.approximated.length > 0 && (
             <p className="mt-2 text-[11.5px] text-dim-2">

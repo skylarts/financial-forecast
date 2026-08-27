@@ -3,6 +3,8 @@ import {
   parseOptionSymbol,
   toOccSymbol,
   type AssetClass,
+  type Exposure,
+  type InstrumentType,
   type SecurityProfile,
 } from "@/domain/portfolio";
 
@@ -197,6 +199,8 @@ export interface ResolvedProfile {
   name: string;
   assetClass: AssetClass;
   basis: string;
+  exposures: Exposure[];
+  instrumentType: InstrumentType;
   /** False when the feed has never heard of the symbol. */
   found: boolean;
 }
@@ -246,6 +250,8 @@ export async function resolveProfile(symbol: string): Promise<ResolvedProfile> {
       name: underlying.name ? `${underlying.name} option` : "",
       assetClass: underlying.assetClass,
       basis: `an option on ${contract.underlying}, which is ${underlying.basis}`,
+      exposures: underlying.exposures,
+      instrumentType: "option",
       found: underlying.found,
     };
     profileCache.set(key, { value: resolved, fetchedAt: Date.now() });
@@ -268,6 +274,8 @@ export async function resolveProfile(symbol: string): Promise<ResolvedProfile> {
       name: "",
       assetClass: "other",
       basis: "not found in the feed",
+      exposures: [{ assetClass: "other", weight: 1 }],
+      instrumentType: "other",
       found: false,
     };
     return missing;
@@ -277,13 +285,15 @@ export async function resolveProfile(symbol: string): Promise<ResolvedProfile> {
   const category =
     quoteType === "ETF" || quoteType === "MUTUALFUND" ? await fundCategory(key) : "";
   const profile = profileFromQuote(quote, category);
-  const { assetClass, basis } = classifySecurity(profile);
+  const { assetClass, basis, exposures, instrumentType } = classifySecurity(profile);
 
   const resolved: ResolvedProfile = {
     symbol: key,
     name: profile.name,
     assetClass,
     basis,
+    exposures,
+    instrumentType,
     found: true,
   };
   profileCache.set(key, { value: resolved, fetchedAt: Date.now() });

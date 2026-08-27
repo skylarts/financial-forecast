@@ -1,5 +1,5 @@
 import type { ISODate, Id } from "@/domain";
-import type { AssetClass } from "@/domain/portfolio";
+import type { AssetClass, Exposure, InstrumentType } from "@/domain/portfolio";
 import type { ClosedLot } from "./lots";
 import type { Holding } from "./metrics";
 
@@ -17,6 +17,9 @@ export interface SymbolRollup {
   symbol: string;
   name: string;
   assetClass: AssetClass;
+  exposures: Exposure[];
+  instrumentType: InstrumentType;
+  themes: string[];
   /** How many accounts hold or have held it, for the "spread across" hint. */
   accountCount: number;
 
@@ -147,6 +150,9 @@ export function rollUpBySymbol(
       // it falls back to the ticker rather than rendering blank.
       name: open[0]?.name ?? symbol,
       assetClass: open[0]?.assetClass ?? "other",
+      exposures: open[0]?.exposures ?? [],
+      instrumentType: open[0]?.instrumentType ?? "other",
+      themes: open[0]?.themes ?? [],
       accountCount: accounts.size,
 
       isOpen: open.length > 0,
