@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { Holding } from "@/engine/portfolio/metrics";
 import {
@@ -148,11 +148,15 @@ export function BySymbolPanel({
   holdings,
   closedLots,
   onSelectSymbol,
+  viewToggle,
 }: {
   holdings: Holding[];
   closedLots: ClosedLot[];
   /** Jumps to the holdings view filtered to this ticker. */
   onSelectSymbol: (symbol: string) => void;
+  /** The over-time / by-stock switch, handed down so it sits in this panel's
+   *  own first control row rather than in a second bar above it. */
+  viewToggle?: ReactNode;
 }) {
   const [scope, setScope] = useState<RollupScope>("both");
   const [outcome, setOutcome] = useState<Outcome>("all");
@@ -217,31 +221,21 @@ export function BySymbolPanel({
 
   if (all.length === 0) {
     return (
-      <p className="p-8 text-center text-[13px] text-dim">
-        Nothing to rank yet. Import a transaction history or add a buy.
-      </p>
+      <div className="p-5">
+        {/* The switch stays even with nothing to rank -- without it there is
+            no way back to the other view from an empty portfolio. */}
+        {viewToggle}
+        <p className="p-8 text-center text-[13px] text-dim">
+          Nothing to rank yet. Import a transaction history or add a buy.
+        </p>
+      </div>
     );
   }
 
   return (
     <div className="p-5">
-      <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat
-          label={scope === "trades" ? "Realized" : scope === "positions" ? "Unrealized" : "Total gain"}
-          value={money(totalGain)}
-          tone={toneFor(totalGain)}
-          hint={SCOPE_HINT[scope]}
-        />
-        <Stat
-          label="Winners / losers"
-          value={`${winnerCount} / ${loserCount}`}
-          hint="How many names are up versus down, on this scope."
-        />
-        <Leaders title="Best" rows={winners} scope={scope} tone="text-positive" />
-        <Leaders title="Worst" rows={losers} scope={scope} tone="text-negative" />
-      </div>
-
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {viewToggle}
         <Segmented
           options={SCOPES}
           value={scope}
@@ -296,6 +290,22 @@ export function BySymbolPanel({
             </button>
           )}
         </span>
+      </div>
+
+      <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat
+          label={scope === "trades" ? "Realized" : scope === "positions" ? "Unrealized" : "Total gain"}
+          value={money(totalGain)}
+          tone={toneFor(totalGain)}
+          hint={SCOPE_HINT[scope]}
+        />
+        <Stat
+          label="Winners / losers"
+          value={`${winnerCount} / ${loserCount}`}
+          hint="How many names are up versus down, on this scope."
+        />
+        <Leaders title="Best" rows={winners} scope={scope} tone="text-positive" />
+        <Leaders title="Worst" rows={losers} scope={scope} tone="text-negative" />
       </div>
 
       {sorted.length === 0 ? (

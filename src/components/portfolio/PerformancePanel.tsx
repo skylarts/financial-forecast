@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CartesianGrid,
   Line,
@@ -166,11 +166,15 @@ function GrowthTooltip({
 export function PerformancePanel({
   portfolio,
   scopeAccountIds,
+  viewToggle,
 }: {
   portfolio: Portfolio;
   /** null = every account (the "all" scope); otherwise the account ids the
    *  header's person-or-account picker currently covers. */
   scopeAccountIds: readonly string[] | null;
+  /** The over-time / by-stock switch, handed down so it sits in this panel's
+   *  own first control row rather than in a second bar above it. */
+  viewToggle?: ReactNode;
 }) {
   const [period, setPeriod] = useState<Period>("1y");
   // What the chart is drawn from, and separately what the boxes are showing.
@@ -427,15 +431,21 @@ export function PerformancePanel({
 
   if (portfolio.transactions.length === 0) {
     return (
-      <p className="p-8 text-center text-[13px] text-dim">
-        Nothing to measure yet. Import a transaction history or add a buy.
-      </p>
+      <div className="p-5">
+        {/* The switch stays even with nothing to measure -- without it there
+            is no way back to the other view from an empty portfolio. */}
+        {viewToggle}
+        <p className="p-8 text-center text-[13px] text-dim">
+          Nothing to measure yet. Import a transaction history or add a buy.
+        </p>
+      </div>
     );
   }
 
   return (
     <div className="p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {viewToggle}
         <Segmented
           options={PERIODS}
           value={period === "custom" ? ("" as Period) : period}

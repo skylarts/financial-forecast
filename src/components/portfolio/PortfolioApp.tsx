@@ -67,7 +67,6 @@ function TabSkeleton() {
 
 const TABS = [
   { value: "holdings", label: "Holdings" },
-  { value: "bySymbol", label: "By stock" },
   { value: "allocation", label: "Allocation" },
   { value: "performance", label: "Performance" },
   { value: "realized", label: "Realized" },
@@ -76,6 +75,19 @@ const TABS = [
 ] as const;
 
 type Tab = (typeof TABS)[number]["value"];
+
+/**
+ * Performance splits two ways over the same question -- how the whole
+ * portfolio moved through time, and which names drove it. They used to be
+ * separate tabs, which made comparing them a trip across the tab bar; the
+ * switch below keeps both a click apart inside one tab.
+ */
+const PERFORMANCE_VIEWS = [
+  { value: "overTime", label: "Over time" },
+  { value: "bySymbol", label: "By stock" },
+] as const;
+
+type PerformanceView = (typeof PERFORMANCE_VIEWS)[number]["value"];
 
 const GROUPINGS = [
   { value: "none", label: "No grouping" },
@@ -154,6 +166,7 @@ export function PortfolioApp() {
   const people = scenario.household.people;
 
   const [tab, setTab] = useState<Tab>("holdings");
+  const [performanceView, setPerformanceView] = useState<PerformanceView>("overTime");
   const [scope, setScope] = useState<string>(ALL_ACCOUNTS_SCOPE);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [importing, setImporting] = useState(false);
@@ -444,6 +457,19 @@ export function PortfolioApp() {
     setFlash(`Pushed ${money(value)} into "${target.name}" in the forecast.`);
   };
 
+  // Handed to whichever performance view is showing so the switch renders in
+  // that panel's own control row -- a second bar under the tabs would read as
+  // a competing set of tabs.
+  const performanceToggle = (
+    <Segmented
+      options={PERFORMANCE_VIEWS}
+      value={performanceView}
+      onChange={setPerformanceView}
+      size="sm"
+      ariaLabel="Performance view"
+    />
+  );
+
   return (
     <>
       <ThemeSync />
@@ -617,17 +643,6 @@ export function PortfolioApp() {
           </div>
         )}
 
-        {tab === "bySymbol" && (
-          <BySymbolPanel
-            holdings={analysis.holdings}
-            closedLots={analysis.closedLots}
-            onSelectSymbol={(symbol) => {
-              setSearch(symbol);
-              setTab("holdings");
-            }}
-          />
-        )}
-
         {tab === "allocation" && (
           <AllocationPanel
             holdings={analysis.holdings}
@@ -669,9 +684,24 @@ export function PortfolioApp() {
           </AllocationPanel>
         )}
 
-        {tab === "performance" && (
-          <PerformancePanel portfolio={portfolio} scopeAccountIds={scopeAccountIds} />
-        )}
+        {tab === "performance" &&
+          (performanceView === "overTime" ? (
+            <PerformancePanel
+              portfolio={portfolio}
+              scopeAccountIds={scopeAccountIds}
+              viewToggle={performanceToggle}
+            />
+          ) : (
+            <BySymbolPanel
+              holdings={analysis.holdings}
+              closedLots={analysis.closedLots}
+              onSelectSymbol={(symbol) => {
+                setSearch(symbol);
+                setTab("holdings");
+              }}
+              viewToggle={performanceToggle}
+            />
+          ))}
 
         {tab === "realized" && (
           <RealizedPanel
