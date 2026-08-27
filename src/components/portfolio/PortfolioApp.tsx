@@ -34,7 +34,7 @@ import { buildDemoPortfolio } from "@/lib/portfolio/demoPortfolio";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
-import { GroupToggles, useCollapsedGroups } from "./grouping";
+import { useCollapsedGroups } from "./grouping";
 import { HoldingDetail } from "./HoldingDetail";
 import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
@@ -90,14 +90,6 @@ const PERFORMANCE_VIEWS = [
 ] as const;
 
 type PerformanceView = (typeof PERFORMANCE_VIEWS)[number]["value"];
-
-const GROUPINGS = [
-  { value: "none", label: "No grouping" },
-  { value: "account", label: "By account" },
-  { value: "assetClass", label: "By class" },
-  { value: "theme", label: "By theme" },
-  { value: "side", label: "By side" },
-] as const;
 
 const SIDE_FILTERS = [
   { value: "all", label: "All" },
@@ -614,19 +606,6 @@ export function PortfolioApp() {
                   ariaLabel="Filter by position side"
                 />
               )}
-              <select
-                value={grouping}
-                onChange={(e) => setGrouping(e.target.value as HoldingGrouping)}
-                aria-label="Group holdings"
-                className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
-              >
-                {GROUPINGS.map((g) => (
-                  <option key={g.value} value={g.value}>
-                    {g.label}
-                  </option>
-                ))}
-              </select>
-              {grouping !== "none" && <GroupToggles collapse={holdingCollapse} />}
               <FilterStatus
                 shown={visibleHoldings.length}
                 total={analysis.holdings.length}
@@ -643,6 +622,7 @@ export function PortfolioApp() {
               accountNames={accountNames}
               showAccount={soleAccountId === null}
               grouping={grouping}
+              onGroupingChange={setGrouping}
               collapse={holdingCollapse}
               onSelect={setSelected}
             />

@@ -22,57 +22,35 @@ import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { money, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Btn } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
-import { sortMarker, useSort, type SortAccessors } from "./useSort";
-import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
+import { useSort, type SortAccessors } from "./useSort";
+import { HEAD, SortHeader } from "./SortHeader";
+import {
+  buildGroups,
+  GroupHeaderRow,
+  GroupMenu,
+  groupedColumnMarker,
+  useCollapsedGroups,
+  type GroupingOption,
+} from "./grouping";
 import { FilterStatus } from "./FilterStatus";
 
-const TX_GROUPINGS = [
-  { value: "none", label: "No grouping" },
-  { value: "symbol", label: "By stock" },
-  { value: "account", label: "By account" },
-  { value: "type", label: "By type" },
-  { value: "month", label: "By month" },
-] as const;
+type TxGrouping = "none" | "symbol" | "account" | "type" | "month";
 
-type TxGrouping = (typeof TX_GROUPINGS)[number]["value"];
+/** Every dimension names a column, month being the Date column read coarsely. */
+const TX_GROUPINGS: readonly GroupingOption<TxGrouping>[] = [
+  { value: "none", label: "No grouping" },
+  { value: "symbol", label: "By stock", column: "symbol" },
+  { value: "account", label: "By account", column: "account" },
+  { value: "type", label: "By type", column: "type" },
+  { value: "month", label: "By month", column: "date" },
+];
 
 const INPUT =
   "rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none focus:border-accent";
-const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
 type TxColumn = "date" | "account" | "type" | "symbol" | "quantity" | "price" | "amount" | "lot";
 
-function TxSortHeader({
-  label,
-  column,
-  align,
-  sort,
-  onToggle,
-}: {
-  label: string;
-  column: TxColumn;
-  align: "left" | "right";
-  sort: { key: TxColumn; direction: "asc" | "desc" };
-  onToggle: (column: TxColumn) => void;
-}) {
-  const alignClass = align === "left" ? "text-left" : "text-right";
-  return (
-    <th className={`${HEAD} ${alignClass}`}>
-      <button
-        type="button"
-        onClick={() => onToggle(column)}
-        title={`Sort by ${label.toLowerCase()}`}
-        className={`w-full ${alignClass} uppercase tracking-wide transition-colors hover:text-foreground ${
-          sort.key === column ? "text-foreground" : ""
-        }`}
-      >
-        {label}
-        {sortMarker(sort, column)}
-      </button>
-    </th>
-  );
-}
 
 interface TxFormState {
   accountId: string;
@@ -490,6 +468,7 @@ export function TransactionsPanel({
   // Opens collapsed: picking a grouping here is asking for the subtotals --
   // the hundreds of underlying rows are what the grouping was meant to fold away.
   const collapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
+  const groupedColumn = TX_GROUPINGS.find((g) => g.value === grouping)?.column;
 
   // A scope naming exactly one account (a single-account person, or the
   // account picker itself) is the obvious default; anything broader -- "all",
@@ -549,19 +528,6 @@ export function TransactionsPanel({
             To
             <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={INPUT} />
           </label>
-          <select
-            value={grouping}
-            onChange={(e) => setGrouping(e.target.value as TxGrouping)}
-            aria-label="Group transactions"
-            className={INPUT}
-          >
-            {TX_GROUPINGS.map((g) => (
-              <option key={g.value} value={g.value}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-          {grouping !== "none" && <GroupToggles collapse={collapse} />}
           <FilterStatus
             shown={rows.length}
             total={portfolio.transactions.length}
@@ -657,14 +623,46 @@ export function TransactionsPanel({
           <table className="w-full border-collapse">
             <thead>
               <tr className="sticky top-0 z-10 border-b border-border bg-panel">
-                <TxSortHeader label="Date" column="date" align="left" sort={sort} onToggle={toggle} />
-                <TxSortHeader label="Account" column="account" align="left" sort={sort} onToggle={toggle} />
-                <TxSortHeader label="Type" column="type" align="left" sort={sort} onToggle={toggle} />
-                <TxSortHeader label="Symbol" column="symbol" align="left" sort={sort} onToggle={toggle} />
-                <TxSortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
-                <TxSortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
-                <TxSortHeader label="Amount" column="amount" align="right" sort={sort} onToggle={toggle} />
-                <TxSortHeader label="Lot" column="lot" align="left" sort={sort} onToggle={toggle} />
+                <SortHeader
+                  label={`Date${groupedColumnMarker(groupedColumn, "date")}`}
+                  column="date"
+                  align="left"
+                  sort={sort}
+                  onToggle={toggle}
+                  after={
+                    <GroupMenu
+                      options={TX_GROUPINGS}
+                      value={grouping}
+                      onChange={setGrouping}
+                      collapse={collapse}
+                    />
+                  }
+                />
+                <SortHeader
+                  label={`Account${groupedColumnMarker(groupedColumn, "account")}`}
+                  column="account"
+                  align="left"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+                <SortHeader
+                  label={`Type${groupedColumnMarker(groupedColumn, "type")}`}
+                  column="type"
+                  align="left"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+                <SortHeader
+                  label={`Symbol${groupedColumnMarker(groupedColumn, "symbol")}`}
+                  column="symbol"
+                  align="left"
+                  sort={sort}
+                  onToggle={toggle}
+                />
+                <SortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
+                <SortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
+                <SortHeader label="Amount" column="amount" align="right" sort={sort} onToggle={toggle} />
+                <SortHeader label="Lot" column="lot" align="left" sort={sort} onToggle={toggle} />
                 <th className={`${HEAD} text-right`}></th>
               </tr>
             </thead>

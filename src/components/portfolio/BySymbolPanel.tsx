@@ -16,7 +16,8 @@ import { Segmented } from "@/components/ui/controls";
 import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { FacetMenu } from "@/components/ui/FacetMenu";
-import { sortMarker, useSort, type SortAccessors } from "./useSort";
+import { useSort, type SortAccessors } from "./useSort";
+import { SortHeader } from "./SortHeader";
 import {
   assetClassFacetOptions,
   emptyHoldingFacets,
@@ -27,7 +28,6 @@ import {
   type HoldingFacets,
 } from "./filters";
 
-const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
 const SCOPES = [
@@ -99,37 +99,6 @@ function Leaders({
   );
 }
 
-function SortHeader({
-  label,
-  column,
-  align,
-  sort,
-  onToggle,
-  title,
-}: {
-  label: string;
-  column: Column;
-  align: "left" | "right";
-  sort: { key: Column; direction: "asc" | "desc" };
-  onToggle: (column: Column) => void;
-  title?: string;
-}) {
-  const alignClass = align === "left" ? "text-left" : "text-right";
-  return (
-    <th className={`${HEAD} ${alignClass}`} title={title}>
-      <button
-        type="button"
-        onClick={() => onToggle(column)}
-        className={`w-full ${alignClass} uppercase tracking-wide transition-colors hover:text-foreground ${
-          sort.key === column ? "text-foreground" : ""
-        }`}
-      >
-        {label}
-        {sortMarker(sort, column)}
-      </button>
-    </th>
-  );
-}
 
 /**
  * One row per stock, across every account and both halves of the ledger.
