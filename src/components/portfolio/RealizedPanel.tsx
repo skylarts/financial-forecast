@@ -4,23 +4,32 @@ import { Fragment, useMemo, useState } from "react";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { PortfolioSummary } from "@/engine/portfolio/metrics";
 import { lotTermLabel, money, percent, shares, shortDate, toneFor } from "@/lib/portfolio/format";
-import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
+import {
+  buildGroups,
+  GroupHeaderRow,
+  GroupMenu,
+  groupedColumnMarker,
+  useCollapsedGroups,
+  type GroupingOption,
+} from "./grouping";
 import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
-import { sortMarker, useSort, type SortAccessors } from "./useSort";
+import { useSort, type SortAccessors } from "./useSort";
+import { SortHeader } from "./SortHeader";
 
-const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
-const GROUPINGS = [
-  { value: "none", label: "No grouping" },
-  { value: "symbol", label: "By stock" },
-  { value: "account", label: "By account" },
-  { value: "term", label: "By term" },
-  { value: "year", label: "By tax year" },
-] as const;
+type RealizedGrouping = "none" | "symbol" | "account" | "term" | "year";
 
-type RealizedGrouping = (typeof GROUPINGS)[number]["value"];
+/** Every dimension names a column here, including tax year -- which is the
+ *  Sold date read at a coarser grain. */
+const GROUPINGS: readonly GroupingOption<RealizedGrouping>[] = [
+  { value: "none", label: "No grouping" },
+  { value: "symbol", label: "By stock", column: "symbol" },
+  { value: "account", label: "By account", column: "account" },
+  { value: "term", label: "By term", column: "term" },
+  { value: "year", label: "By tax year", column: "disposed" },
+];
 
 type Column =
   | "symbol"
@@ -44,36 +53,6 @@ function Stat({ label, value, tone, hint }: { label: string; value: string; tone
   );
 }
 
-function SortHeader({
-  label,
-  column,
-  align,
-  sort,
-  onToggle,
-}: {
-  label: string;
-  column: Column;
-  align: "left" | "right";
-  sort: { key: Column; direction: "asc" | "desc" };
-  onToggle: (column: Column) => void;
-}) {
-  const alignClass = align === "left" ? "text-left" : "text-right";
-  return (
-    <th className={`${HEAD} ${alignClass}`}>
-      <button
-        type="button"
-        onClick={() => onToggle(column)}
-        title={`Sort by ${label.toLowerCase()}`}
-        className={`w-full ${alignClass} uppercase tracking-wide transition-colors hover:text-foreground ${
-          sort.key === column ? "text-foreground" : ""
-        }`}
-      >
-        {label}
-        {sortMarker(sort, column)}
-      </button>
-    </th>
-  );
-}
 
 /**
  * Realized gains, lot by lot.
@@ -145,6 +124,7 @@ export function RealizedPanel({
   // Opens collapsed: picking a grouping here is asking for the subtotals --
   // the hundreds of underlying rows are what the grouping was meant to fold away.
   const collapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
+  const groupedColumn = GROUPINGS.find((g) => g.value === grouping)?.column;
 
   // Symbol, Account, Acquired, Sold, Shares -- none of which sums meaningfully
   // across lots of different securities bought on different days.
@@ -185,19 +165,6 @@ export function RealizedPanel({
               className="w-44 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
             />
             <OutcomeFilter value={outcome} onChange={setOutcome} />
-            <select
-              value={grouping}
-              onChange={(e) => setGrouping(e.target.value as RealizedGrouping)}
-              aria-label="Group realized gains"
-              className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
-            >
-              {GROUPINGS.map((g) => (
-                <option key={g.value} value={g.value}>
-                  {g.label}
-                </option>
-              ))}
-            </select>
-            {grouping !== "none" && <GroupToggles collapse={collapse} />}
             <FilterStatus
               shown={sorted.length}
               total={closedLots.length}
@@ -220,15 +187,47 @@ export function RealizedPanel({
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="sticky top-0 z-10 border-b border-border bg-panel">
-                    <SortHeader label="Symbol" column="symbol" align="left" sort={sort} onToggle={toggle} />
-                    <SortHeader label="Account" column="account" align="left" sort={sort} onToggle={toggle} />
+                    <SortHeader
+                      label={`Symbol${groupedColumnMarker(groupedColumn, "symbol")}`}
+                      column="symbol"
+                      align="left"
+                      sort={sort}
+                      onToggle={toggle}
+                      after={
+                        <GroupMenu
+                          options={GROUPINGS}
+                          value={grouping}
+                          onChange={setGrouping}
+                          collapse={collapse}
+                        />
+                      }
+                    />
+                    <SortHeader
+                      label={`Account${groupedColumnMarker(groupedColumn, "account")}`}
+                      column="account"
+                      align="left"
+                      sort={sort}
+                      onToggle={toggle}
+                    />
                     <SortHeader label="Acquired" column="acquired" align="left" sort={sort} onToggle={toggle} />
-                    <SortHeader label="Sold" column="disposed" align="left" sort={sort} onToggle={toggle} />
+                    <SortHeader
+                      label={`Sold${groupedColumnMarker(groupedColumn, "disposed")}`}
+                      column="disposed"
+                      align="left"
+                      sort={sort}
+                      onToggle={toggle}
+                    />
                     <SortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
                     <SortHeader label="Cost basis" column="costBasis" align="right" sort={sort} onToggle={toggle} />
                     <SortHeader label="Proceeds" column="proceeds" align="right" sort={sort} onToggle={toggle} />
                     <SortHeader label="Gain" column="gain" align="right" sort={sort} onToggle={toggle} />
-                    <SortHeader label="Term" column="term" align="right" sort={sort} onToggle={toggle} />
+                    <SortHeader
+                      label={`Term${groupedColumnMarker(groupedColumn, "term")}`}
+                      column="term"
+                      align="right"
+                      sort={sort}
+                      onToggle={toggle}
+                    />
                   </tr>
                 </thead>
                 <tbody>

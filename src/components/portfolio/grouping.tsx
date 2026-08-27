@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * Shared grouping machinery for the portfolio tables.
@@ -221,4 +222,143 @@ export function GroupToggles({ collapse }: { collapse: CollapseState }) {
       </button>
     </span>
   );
+}
+
+export interface GroupingOption<K extends string> {
+  value: K;
+  /** How it reads in the menu: "By account". The "By " is part of the label so
+   *  the "no grouping" entry can opt out of it. */
+  label: string;
+  /** The column this dimension corresponds to, where one exists. Used to mark
+   *  that column's header while it's the active grouping. */
+  column?: string;
+}
+
+/**
+ * The grouping control, anchored in the table's leading column header.
+ *
+ * It used to be a select in the toolbar, on all three tables, with a separate
+ * expand-all/collapse-all pair beside it -- six controls above the tables for
+ * something that only acts on the table. Both live here now, in the header row
+ * of the thing they reshape.
+ *
+ * Not one menu per groupable column, which is where this started: three of
+ * Holdings' four dimensions (class, theme, side) aren't columns at all, so a
+ * strictly per-column affordance could only ever offer a quarter of them.
+ * Instead every dimension is listed in one place, and the column matching the
+ * active one is marked -- see `groupedColumnMarker`.
+ */
+export function GroupMenu<K extends string>({
+  options,
+  value,
+  onChange,
+  collapse,
+}: {
+  options: readonly GroupingOption<K>[];
+  value: K;
+  onChange: (next: K) => void;
+  /** Omitted when nothing is grouped, which is when there is nothing to fold. */
+  collapse?: CollapseState;
+}) {
+  const [open, setOpen] = useState(false);
+  // Where to paint the menu, in viewport coordinates. The tables scroll inside
+  // a `max-h` container, so an absolutely-positioned menu is clipped by it --
+  // the last option and the expand/collapse row simply weren't reachable.
+  // Portalled to the body and placed against the button's own rect instead.
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null);
+  const wrap = useRef<HTMLSpanElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const rect = wrap.current?.getBoundingClientRect();
+      if (rect) setAt({ top: rect.bottom + 4, left: rect.left });
+    };
+    place();
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (wrap.current?.contains(target) || menu.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    // A menu anchored to a header inside a scrolling table has to follow it,
+    // and `true` catches the table's own scroll as well as the window's.
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+
+  const current = options.find((o) => o.value === value);
+  const grouped = value !== "none";
+
+  return (
+    <span ref={wrap} className="relative inline-block normal-case">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={grouped ? `Grouped ${current?.label.toLowerCase()}` : "Group this table"}
+        className={`rounded border px-1.5 py-0.5 text-[10.5px] font-medium tracking-normal transition-colors ${
+          grouped
+            ? "border-accent text-accent"
+            : "border-transparent text-dim-2 hover:border-border hover:text-foreground"
+        }`}
+      >
+        {grouped ? current?.label : "Group"} ▾
+      </button>
+      {open &&
+        at &&
+        createPortal(
+          <div
+            ref={menu}
+            role="menu"
+            style={{ top: at.top, left: at.left }}
+            className="fixed z-50 w-48 overflow-hidden rounded-md border border-border bg-panel text-left shadow-lg"
+          >
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={option.value === value}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] normal-case tracking-normal transition-colors hover:bg-panel-2 ${
+                  option.value === value ? "text-accent" : "text-foreground"
+                }`}
+              >
+                <span aria-hidden className="w-2.5 text-[10px]">
+                  {option.value === value ? "●" : ""}
+                </span>
+                {option.label}
+              </button>
+            ))}
+            {collapse && grouped && (
+              <div className="flex items-center gap-2 border-t border-border px-3 py-1.5">
+                <GroupToggles collapse={collapse} />
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
+    </span>
+  );
+}
+
+/** Marks a column header as the one the table is currently grouped by. */
+export function groupedColumnMarker(activeColumn: string | undefined, column: string): string {
+  return activeColumn === column ? " ⌄" : "";
 }

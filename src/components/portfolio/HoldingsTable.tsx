@@ -4,11 +4,34 @@ import { Fragment, useMemo } from "react";
 import { ASSET_CLASS_LABELS } from "@/domain/portfolio";
 import { explodeExposures, type Holding } from "@/engine/portfolio/metrics";
 import { money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
-import { sortMarker, useSort, type SortAccessors, type SortState } from "./useSort";
-import { buildGroups, GroupHeaderRow, orderGroupsBy, type CollapseState, type Group } from "./grouping";
+import { useSort, type SortAccessors, type SortState } from "./useSort";
+import { SortHeader } from "./SortHeader";
+import {
+  buildGroups,
+  GroupHeaderRow,
+  GroupMenu,
+  groupedColumnMarker,
+  orderGroupsBy,
+  type CollapseState,
+  type Group,
+  type GroupingOption,
+} from "./grouping";
 import { UNTAGGED } from "./filters";
 
 export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "side";
+
+/**
+ * Only `account` names a column here. Class, theme and side describe a holding
+ * without appearing in the table, which is why the grouping menu lists every
+ * dimension in one place instead of hanging off the columns individually.
+ */
+export const HOLDING_GROUPINGS: readonly GroupingOption<HoldingGrouping>[] = [
+  { value: "none", label: "No grouping" },
+  { value: "account", label: "By account", column: "account" },
+  { value: "assetClass", label: "By class" },
+  { value: "theme", label: "By theme" },
+  { value: "side", label: "By side" },
+];
 
 /** A row as actually rendered. Grouping by class or theme can turn one
  *  holding into several of these -- `source` is always the real, whole
@@ -42,42 +65,8 @@ const GROUP_TOTALS: Partial<Record<Column, (row: Row) => number>> = {
   unrealized: (row) => row.unrealizedGain,
 };
 
-const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
-function SortHeader({
-  label,
-  column,
-  align,
-  sort,
-  onToggle,
-}: {
-  label: string;
-  column: Column;
-  align: "left" | "right";
-  sort: { key: Column; direction: "asc" | "desc" };
-  onToggle: (column: Column) => void;
-}) {
-  const active = sort.key === column;
-  // Written out rather than interpolated: Tailwind only ships classes it can
-  // see as complete strings in the source.
-  const alignClass = align === "left" ? "text-left" : "text-right";
-  return (
-    <th className={`${HEAD} ${alignClass}`}>
-      <button
-        type="button"
-        onClick={() => onToggle(column)}
-        title={`Sort by ${label.toLowerCase()}`}
-        className={`w-full ${alignClass} uppercase tracking-wide transition-colors hover:text-foreground ${
-          active ? "text-foreground" : ""
-        }`}
-      >
-        {label}
-        {sortMarker(sort, column)}
-      </button>
-    </th>
-  );
-}
 
 interface GroupTotals {
   marketValue: number;
@@ -187,6 +176,7 @@ export function HoldingsTable({
   accountNames,
   showAccount,
   grouping,
+  onGroupingChange,
   collapse,
   onSelect,
 }: {
@@ -194,8 +184,9 @@ export function HoldingsTable({
   accountNames: Map<string, string>;
   showAccount: boolean;
   grouping: HoldingGrouping;
-  /** Owned by the parent so its expand/collapse controls can sit beside the
-   *  grouping dropdown rather than floating above the table. */
+  onGroupingChange: (next: HoldingGrouping) => void;
+  /** Owned by the parent because switching it resets which groups are folded,
+   *  and the parent is what knows the grouping changed. */
   collapse: CollapseState;
   onSelect: (holding: Holding) => void;
 }) {
@@ -241,6 +232,7 @@ export function HoldingsTable({
   // a group hides its rows, not its money. Off the holdings rather than the
   // rows, so a class split or a second theme tag can't count one position twice.
   const grandTotals = totalsFor(holdings);
+  const groupedColumn = HOLDING_GROUPINGS.find((g) => g.value === grouping)?.column;
 
   return (
     <div className="overflow-x-auto">
@@ -248,9 +240,29 @@ export function HoldingsTable({
       <table className="w-full border-collapse">
         <thead>
           <tr className="sticky top-0 z-10 border-b border-border bg-panel">
-            <SortHeader label="Holding" column="symbol" align="left" sort={sort} onToggle={toggle} />
+            <SortHeader
+              label="Holding"
+              column="symbol"
+              align="left"
+              sort={sort}
+              onToggle={toggle}
+              after={
+                <GroupMenu
+                  options={HOLDING_GROUPINGS}
+                  value={grouping}
+                  onChange={onGroupingChange}
+                  collapse={collapse}
+                />
+              }
+            />
             {showAccount && (
-              <SortHeader label="Account" column="account" align="left" sort={sort} onToggle={toggle} />
+              <SortHeader
+                label={`Account${groupedColumnMarker(groupedColumn, "account")}`}
+                column="account"
+                align="left"
+                sort={sort}
+                onToggle={toggle}
+              />
             )}
             <SortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
             <SortHeader label="Avg cost" column="avgCost" align="right" sort={sort} onToggle={toggle} />
