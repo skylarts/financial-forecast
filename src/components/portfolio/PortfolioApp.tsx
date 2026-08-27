@@ -437,15 +437,16 @@ export function PortfolioApp() {
    * dropping the label into the search box and hoping it matches: an account
    * name isn't a ticker, and a class isn't either.
    *
-   * Class and theme are the exception: Allocation owns those facets itself
-   * now, and narrows a slice's own click without ever calling this, so those
-   * two cases never actually fire -- they're here only because the dimension
-   * type still has to name every value.
+   * Class, theme, and type are the exception: Allocation owns those facets
+   * itself now, and narrows a slice's own click without ever calling this, so
+   * those cases never actually fire -- they're here only because the
+   * dimension type still has to name every value.
    */
   const handleDrillDown = (dimension: AllocationDimension, label: string) => {
     switch (dimension) {
       case "assetClass":
       case "theme":
+      case "instrumentType":
         return;
       case "account": {
         setTab("holdings");

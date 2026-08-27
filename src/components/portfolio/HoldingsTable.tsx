@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo } from "react";
-import { ASSET_CLASS_LABELS } from "@/domain/portfolio";
+import { ASSET_CLASS_LABELS, INSTRUMENT_TYPE_LABELS } from "@/domain/portfolio";
 import { explodeExposures, type Holding } from "@/engine/portfolio/metrics";
 import { money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { useSort, type SortAccessors, type SortState } from "./useSort";
@@ -18,12 +18,13 @@ import {
 } from "./grouping";
 import { UNTAGGED } from "./filters";
 
-export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "side";
+export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "side" | "instrumentType";
 
 /**
- * Only `account` names a column here. Class, theme and side describe a holding
- * without appearing in the table, which is why the grouping menu lists every
- * dimension in one place instead of hanging off the columns individually.
+ * Only `account` names a column here. Class, theme, side and type describe a
+ * holding without appearing in the table, which is why the grouping menu
+ * lists every dimension in one place instead of hanging off the columns
+ * individually.
  */
 export const HOLDING_GROUPINGS: readonly GroupingOption<HoldingGrouping>[] = [
   { value: "none", label: "No grouping" },
@@ -31,6 +32,7 @@ export const HOLDING_GROUPINGS: readonly GroupingOption<HoldingGrouping>[] = [
   { value: "assetClass", label: "By class" },
   { value: "theme", label: "By theme" },
   { value: "side", label: "By side" },
+  { value: "instrumentType", label: "By type" },
 ];
 
 /** A row as actually rendered. Grouping by class or theme can turn one
@@ -161,9 +163,11 @@ export function groupsFor(
     row.groupLabel ??
     (grouping === "account"
       ? accountNames.get(row.accountId) ?? "Unknown account"
-      : row.side === "short"
-        ? "Short positions"
-        : "Long positions");
+      : grouping === "instrumentType"
+        ? INSTRUMENT_TYPE_LABELS[row.instrumentType] ?? row.instrumentType
+        : row.side === "short"
+          ? "Short positions"
+          : "Long positions");
 
   const built = buildGroups(rows, labelFor);
   const total = GROUP_TOTALS[sort.key];
