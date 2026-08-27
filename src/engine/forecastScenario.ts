@@ -12,6 +12,7 @@ import type {
   LedgerEvent,
   SplitStop,
   DrainStop,
+  FlowLimitPeriod,
 } from "@/domain";
 import {
   addMonths,
@@ -248,12 +249,6 @@ function effectiveAnnualRate(account: EngineAccount, month: string, inflationRat
   return account.growthRatePct ?? inflationRatePct;
 }
 
-/**
- * The surplus-routing ceiling for a fill-order stop in a given year. Uncapped
- * stops return Infinity (they absorb everything). Capped stops grow their
- * ceiling yearly by maxBalanceGrowthRatePct, defaulting to inflation, so the
- * cap keeps pace in real terms over a long horizon.
- */
 /** Whether a drain stop's optional date window covers this month (both bounds inclusive; null = unbounded). */
 function isDrainStopActive(stop: DrainStop, month: ISODate): boolean {
   if (stop.startDate && compareDates(month, stop.startDate) < 0) return false;
@@ -268,17 +263,56 @@ function isSplitStopActive(stop: SplitStop, month: ISODate): boolean {
   return true;
 }
 
-function effectiveMaxBalance(stop: SplitStop, yearsSinceStart: number, inflationRatePct: number): number {
-  if (stop.maxBalance == null) return Infinity;
-  const rate = stop.maxBalanceGrowthRatePct ?? inflationRatePct;
-  return stop.maxBalance * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
+/**
+ * The most this account should hold in a given year. Uncapped accounts return
+ * Infinity (they absorb everything). Capped ones grow their ceiling yearly by
+ * balanceCeilingGrowthRatePct, defaulting to inflation, so the bound keeps
+ * pace in real terms over a long horizon.
+ *
+ * Reads the ACCOUNT, not the routing stop: the ceiling holds however the money
+ * arrived -- routed surplus, a direct transfer, income deposited straight in,
+ * or the account's own growth (see the cap-overflow step).
+ */
+function effectiveBalanceCeiling(account: EngineAccount, yearsSinceStart: number, inflationRatePct: number): number {
+  if (account.balanceCeiling == null) return Infinity;
+  const rate = account.balanceCeilingGrowthRatePct ?? inflationRatePct;
+  return account.balanceCeiling * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
 }
 
-/** Mirrors effectiveMaxBalance's inflation handling, so a drain floor stays a "today's dollars" amount. */
-function effectiveDrainFloor(stop: DrainStop, yearsSinceStart: number, inflationRatePct: number): number {
-  if (stop.minBalance == null) return 0;
-  const rate = stop.minBalanceGrowthRatePct ?? inflationRatePct;
-  return stop.minBalance * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
+/** Mirrors effectiveBalanceCeiling, so a drain floor stays a "today's dollars" amount. */
+function effectiveBalanceFloor(account: EngineAccount, yearsSinceStart: number, inflationRatePct: number): number {
+  if (account.balanceFloor == null) return 0;
+  const rate = account.balanceFloorGrowthRatePct ?? inflationRatePct;
+  return account.balanceFloor * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
+}
+
+/** An unset limitPeriod means annual -- the common case (a yearly contribution room). */
+function limitPeriodOf(stop: { limitPeriod?: FlowLimitPeriod }): FlowLimitPeriod {
+  return stop.limitPeriod ?? "annual";
+}
+
+/**
+ * The bucket a month falls into for a stop's rate limit. Every period is a
+ * whole number of months (see flowLimitPeriodSchema), so the key is derivable
+ * from the month cursor alone -- no separate calendar state to keep in sync.
+ */
+function flowLimitPeriodKey(period: FlowLimitPeriod, month: ISODate): string {
+  const year = month.slice(0, 4);
+  if (period === "annual") return year;
+  if (period === "monthly") return month.slice(0, 7);
+  const quarter = Math.floor((Number(month.slice(5, 7)) - 1) / 3) + 1;
+  return `${year}-Q${quarter}`;
+}
+
+/** A stop's rate limit for the current period, in that year's dollars; Infinity when unset. */
+function effectiveFlowLimit(
+  stop: { limitAmount?: number | null; limitGrowthRatePct?: number | null },
+  yearsSinceStart: number,
+  inflationRatePct: number
+): number {
+  if (stop.limitAmount == null) return Infinity;
+  const rate = stop.limitGrowthRatePct ?? inflationRatePct;
+  return stop.limitAmount * Math.pow(1 + rate, Math.max(0, yearsSinceStart));
 }
 
 /**
@@ -381,6 +415,42 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       return account && account.category === "asset" && !account.isExcluded ? { account, stop } : null;
     })
     .filter((x): x is { account: EngineAccount; stop: DrainStop } => x !== null);
+
+  // ---------------------------------------------------------------------
+  // Per-stop rate limits. A stop's limitAmount bounds how much may move
+  // THROUGH THAT RULE per limitPeriod -- distinct from the target/source
+  // account's balanceCeiling/balanceFloor, which bound the resulting balance.
+  // Both are enforced, whichever binds first: a rate limit can't see the
+  // balance (left alone it would drain straight through a floor), and a bound
+  // can't see the speed.
+  //
+  // Keyed by stop id, not account id, so the same account appearing in two
+  // stops with different windows gets an independent allowance for each --
+  // the phased-drawdown pattern drainStopSchema is built around. Usage resets
+  // whenever the period key changes rather than on an explicit calendar
+  // boundary, so a mid-plan gap in months can't strand a stale allowance.
+  // ---------------------------------------------------------------------
+  const flowLimitUsage = new Map<Id, { periodKey: string; used: number }>();
+  const remainingFlowLimit = (
+    stop: SplitStop | DrainStop,
+    month: ISODate,
+    yearsSinceStart: number
+  ): number => {
+    const limit = effectiveFlowLimit(stop, yearsSinceStart, settings.inflationRatePct);
+    if (limit === Infinity) return Infinity;
+    const periodKey = flowLimitPeriodKey(limitPeriodOf(stop), month);
+    const usage = flowLimitUsage.get(stop.id);
+    const used = usage && usage.periodKey === periodKey ? usage.used : 0;
+    return Math.max(0, limit - used);
+  };
+  const recordFlowUse = (stop: SplitStop | DrainStop, month: ISODate, amount: number): void => {
+    if (stop.limitAmount == null || amount <= 0) return;
+    const periodKey = flowLimitPeriodKey(limitPeriodOf(stop), month);
+    const usage = flowLimitUsage.get(stop.id);
+    const used = usage && usage.periodKey === periodKey ? usage.used : 0;
+    flowLimitUsage.set(stop.id, { periodKey, used: used + amount });
+  };
+
   // Outflows from Extra Savings are ordinary expenses; outflows from any
   // OTHER asset account (checking, savings, an investment) are "withdrawals"
   // for the Cash Flow tab's Withdrawals section -- checking is no longer a
@@ -1322,12 +1392,18 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       for (const { account: target, stop } of activeSplitStops) {
         if (remaining <= 0.005) break;
         if (target.id === extraSavingsAccount.id) continue;
-        const cap = effectiveMaxBalance(stop, yearsSinceStart, settings.inflationRatePct);
+        const cap = effectiveBalanceCeiling(target, yearsSinceStart, settings.inflationRatePct);
         const room = cap - (balances.get(target.id) ?? 0);
         if (room <= 0) continue; // target already at/over its ceiling -- spill onward
+        // The stop's own allowance for this period. Exhausted (e.g. the year's
+        // contribution room is used up) it spills onward exactly like a full
+        // target does, rather than stalling the rest of the split.
+        const allowance = remainingFlowLimit(stop, month, yearsSinceStart);
+        if (allowance <= 0) continue;
         const offered = stop.kind === "flat" ? (stop.amount ?? 0) * inflationFactor : remaining * (stop.pct ?? 0);
-        const take = Math.min(offered, room, remaining);
+        const take = Math.min(offered, room, remaining, allowance);
         if (take <= 0) continue;
+        recordFlowUse(stop, month, take);
         balances.set(extraSavingsAccount.id, (balances.get(extraSavingsAccount.id) ?? 0) - take);
         balances.set(target.id, (balances.get(target.id) ?? 0) + take);
         acc.rollforward.get(extraSavingsAccount.id)!.withdrawals += take;
@@ -1352,30 +1428,40 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     }
 
     // 5b. Cap overflow. The split above only catches money entering a target
-    //     from Extra Savings. A target can also exceed its cap via a custom
+    //     from Extra Savings. A target can also exceed its ceiling via a custom
     //     transfer landing on it directly, income deposited straight into it,
-    //     or its own organic growth. So: for every split stop currently above
-    //     its cap, walk later stops in list order and push the excess down
-    //     the chain, landing wherever there's room. This is a rebalance
-    //     between the user's own accounts, so it's recorded in rollforwards
-    //     (balances must still reconcile) but explicitly NOT counted in the
-    //     surplusRouted headline, which tracks routed income only. Uses the
-    //     same active (date-window) subset as the split above.
+    //     or its own organic growth -- which is exactly why the ceiling lives
+    //     on the account rather than on the routing stop. So: for every split
+    //     stop currently above its ceiling, walk later stops in list order and
+    //     push the excess down the chain, landing wherever there's room. This
+    //     is a rebalance between the user's own accounts, so it's recorded in
+    //     rollforwards (balances must still reconcile) but explicitly NOT
+    //     counted in the surplusRouted headline, which tracks routed income
+    //     only. Uses the same active (date-window) subset as the split above.
+    //
+    //     Overflow still consumes the DESTINATION stop's rate limit: money
+    //     landing in, say, a Roth IRA is a contribution against that year's
+    //     room no matter which account it came from, so exempting overflow
+    //     would leave an obvious way around the limit. An excess that has
+    //     nowhere left to go stays put, same as when every target is full.
     for (let ti = 0; ti < activeSplitStops.length; ti++) {
       const over = activeSplitStops[ti];
-      const overCap = effectiveMaxBalance(over.stop, yearsSinceStart, settings.inflationRatePct);
+      const overCap = effectiveBalanceCeiling(over.account, yearsSinceStart, settings.inflationRatePct);
       let excess = (balances.get(over.account.id) ?? 0) - overCap;
       if (excess <= 0.005) continue;
       for (let tj = ti + 1; tj < activeSplitStops.length && excess > 0.005; tj++) {
         const dest = activeSplitStops[tj];
-        const destCap = effectiveMaxBalance(dest.stop, yearsSinceStart, settings.inflationRatePct);
+        const destCap = effectiveBalanceCeiling(dest.account, yearsSinceStart, settings.inflationRatePct);
         const room = destCap - (balances.get(dest.account.id) ?? 0);
         if (room <= 0) continue; // next target also full -- keep spilling onward
+        const destAllowance = remainingFlowLimit(dest.stop, month, yearsSinceStart);
+        if (destAllowance <= 0) continue; // period allowance used up -- keep spilling onward
         // Capped by what the over-cap account can actually part with once the
         // sale's tax is realized -- otherwise a cap of $0 would move the whole
         // balance out and the tax on top would leave it negative.
-        const move = Math.min(room, affordableOutflow(over.account, excess));
+        const move = Math.min(room, destAllowance, affordableOutflow(over.account, excess));
         if (move <= 0.005) continue;
+        recordFlowUse(dest.stop, month, move);
         balances.set(over.account.id, (balances.get(over.account.id) ?? 0) - move);
         balances.set(dest.account.id, (balances.get(dest.account.id) ?? 0) + move);
         acc.rollforward.get(over.account.id)!.withdrawals += move;
@@ -1419,9 +1505,21 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         const active = drainStops.filter(({ stop }) => isDrainStopActive(stop, month));
         for (const { account: source, stop } of active) {
           if (shortfall <= 0.005) break;
-          const floor = effectiveDrainFloor(stop, yearsSinceStart, settings.inflationRatePct);
+          const floor = effectiveBalanceFloor(source, yearsSinceStart, settings.inflationRatePct);
+          // This stop's remaining allowance for the period -- e.g. "no more
+          // than $40k a year out of the brokerage", to keep realized gains
+          // inside a bracket. Exhausted, the stop simply contributes nothing
+          // this month and the shortfall spills to the next source, exactly
+          // as when the floor blocks it.
+          const allowance = remainingFlowLimit(stop, month, yearsSinceStart);
+          if (allowance <= 0) continue;
           const offered = stop.kind === "flat" ? (stop.amount ?? 0) * inflationFactor : shortfall * (stop.pct ?? 0);
-          shortfall -= drawFromSource(source, spender, offered, month, floor);
+          // drawFromSource returns the NET amount that reached the hub; the
+          // allowance is measured on that same net figure, so a limit reads as
+          // "how much this account may send", not "how much it may liquidate".
+          const drawn = drawFromSource(source, spender, Math.min(offered, allowance), month, floor);
+          recordFlowUse(stop, month, drawn);
+          shortfall -= drawn;
         }
       }
     }

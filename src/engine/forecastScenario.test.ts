@@ -2100,6 +2100,9 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       taxTreatment: "taxable",
       startingBalance: 110_000,
       growthRatePct: 0,
+      // The floor is a property of the account now, not of the drain stop.
+      balanceFloor: 100_000,
+      balanceFloorGrowthRatePct: null,
     });
     const ira = makeAccount({
       class: "tax_deferred",
@@ -2117,7 +2120,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         drainOrder: [
-          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: 100_000, minBalanceGrowthRatePct: null },
+          { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: null, minBalanceGrowthRatePct: null },
           { id: nanoid(), accountId: ira.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: null, minBalanceGrowthRatePct: null },
         ],
       },
@@ -2139,6 +2142,8 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       taxTreatment: "taxable",
       startingBalance: 110_000,
       growthRatePct: 0,
+      balanceFloor: 100_000,
+      balanceFloorGrowthRatePct: null,
     });
     const scenario = makeScenario({
       accounts: [checking, brokerage],
@@ -2149,7 +2154,7 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       moneyFlow: {
         splitOrder: [],
         // Only source, floored at $100k -- can only ever cover $10k of the $60k shortfall.
-        drainOrder: [{ id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: 100_000, minBalanceGrowthRatePct: null }],
+        drainOrder: [{ id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: null, minBalanceGrowthRatePct: null }],
       },
     });
     const result = forecastScenario(scenario);
@@ -2188,8 +2193,8 @@ describe("forecastScenario -- split order date windows and floor growth override
     expect(y2027.accountBalances[checking.id]).toBeCloseTo(60_000, 0);
   });
 
-  it("uses the drain floor's own growth rate instead of inflation when one is set", () => {
-    const runWith = (minBalanceGrowthRatePct: number | null) => {
+  it("uses the balance floor's own growth rate instead of inflation when one is set", () => {
+    const runWith = (balanceFloorGrowthRatePct: number | null) => {
       const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 0, growthRatePct: 0 });
       const brokerage = makeAccount({
         class: "taxable_investment",
@@ -2197,6 +2202,8 @@ describe("forecastScenario -- split order date windows and floor growth override
         taxTreatment: "taxable",
         startingBalance: 200_000,
         growthRatePct: 0,
+        balanceFloor: 100_000,
+        balanceFloorGrowthRatePct,
       });
       const scenario = makeScenario({
         accounts: [checking, brokerage],
@@ -2207,7 +2214,7 @@ describe("forecastScenario -- split order date windows and floor growth override
         moneyFlow: {
           splitOrder: [],
           drainOrder: [
-            { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: 100_000, minBalanceGrowthRatePct },
+            { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: null, minBalanceGrowthRatePct: null },
           ],
         },
       });

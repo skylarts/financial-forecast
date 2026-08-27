@@ -103,12 +103,15 @@ export type ContributionScheduleSegment = z.infer<typeof contributionScheduleSeg
 // that need a sub-shape (e.g. a create-account form omitting `id`) should
 // build off this raw object schema instead.
 //
-// Cash-flow ROLE (spending hub / surplus target / drain order / buffers /
-// caps) deliberately does NOT live here -- it lives in
-// ForecastSettings.moneyFlow as two ordered lists (fill order, drain order),
-// edited from the Routing tab rather than scattered across every account's
-// form. An account only needs to exist and be selectable there; nothing
-// about *this* object's shape encodes its routing role.
+// The split of concerns with ForecastSettings.moneyFlow is BALANCE vs FLOW:
+// this schema owns an account's balance bounds (`balanceCeiling` /
+// `balanceFloor` -- how much it may hold), while moneyFlow's two ordered
+// lists own the flow rules (priority, share, date window, and how fast money
+// may move per period). A bound is one number about an ACCOUNT and applies no
+// matter how money arrives or leaves, so it belongs here; a rate is a
+// property of a particular routing rule, so it belongs there. Ordering and
+// eligibility for routing are still purely moneyFlow's business -- nothing
+// about *this* object's shape encodes an account's routing role.
 export const accountObjectSchema = z
   .object({
     id: idSchema,
@@ -169,6 +172,27 @@ export const accountObjectSchema = z
     homeInsuranceRatePct: z.number().nonnegative().optional(),
     /** Present only for real_estate. Annual maintenance as a fraction of the home's (growing) value -- the "1% rule". */
     maintenanceRatePct: z.number().nonnegative().optional(),
+    /**
+     * Balance ceiling: the most this account should ever hold. Surplus routing
+     * stops filling it here, and anything that pushes it over -- a direct
+     * transfer, income deposited straight in, or its own growth -- spills down
+     * the surplus split to the next stop with room. null = uncapped.
+     *
+     * Lives on the account rather than on a routing stop because it governs
+     * the BALANCE however the money got there, not just the routed share.
+     */
+    balanceCeiling: z.number().nonnegative().nullable().optional(),
+    /** Annual growth of the ceiling; null/omitted = follow settings.inflationRatePct, so it stays a "today's dollars" amount. */
+    balanceCeilingGrowthRatePct: z.number().nullable().optional(),
+    /**
+     * Balance floor: the shortfall cascade will not draw this account below
+     * this amount -- whatever it can't cover spills to the next drain stop.
+     * null = no floor (drainable to zero). Same today's-dollars treatment as
+     * the ceiling above.
+     */
+    balanceFloor: z.number().nonnegative().nullable().optional(),
+    /** Annual growth of the floor; null/omitted = follow settings.inflationRatePct. */
+    balanceFloorGrowthRatePct: z.number().nullable().optional(),
     /** Optional recurring contribution into this account. Ignored when contributionSchedule is set. */
     contribution: contributionSchema.nullable().optional(),
     /** Optional date-ranged growth-rate schedule; growthRatePct above is the rate before the first entry starts. See resolveEvents.ts. */

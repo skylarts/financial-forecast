@@ -3,6 +3,17 @@ import { nanoid } from "nanoid";
 import { idSchema, isoDateSchema } from "./common";
 
 /**
+ * The window a routing stop's `limitAmount` is measured over. Deliberately
+ * limited to whole multiples of a month: the engine simulates month by month
+ * (see forecastScenario's monthly loop), so a daily or weekly limit could not
+ * be honored and would be a setting that silently lies. Monthly and annual
+ * cover the real cases -- a steady per-paycheck sweep, or an IRS-style yearly
+ * contribution room -- and quarterly is free since it's a multiple of months.
+ */
+export const flowLimitPeriodSchema = z.enum(["monthly", "quarterly", "annual"]);
+export type FlowLimitPeriod = z.infer<typeof flowLimitPeriodSchema>;
+
+/**
  * A stop in the "Extra Savings" surplus split -- an account that can receive
  * a share of that month's FRESH surplus, in list order. Each stop is either
  * a flat dollar amount ("kind: flat") or a percentage of whatever's left
@@ -10,11 +21,11 @@ import { idSchema, isoDateSchema } from "./common";
  * cascading -- not a percentage of the original total). Whatever the whole
  * list doesn't claim simply stays in Extra Savings.
  *
- * `maxBalance` is the one thing carried over unchanged from the old fill
- * order: a balance ceiling on the TARGET account, independent of the flat/%
- * allocation above -- if a stop's offered share would push its account over
- * this ceiling, only the room up to the ceiling is taken and the rest
- * cascades to the next stop, same spillover behavior as before.
+ * `limitAmount` caps how much this stop may route over `limitPeriod`,
+ * resetting each period -- the natural way to express an annual contribution
+ * room ("$7,000/yr into the Roth IRA, then spill onward"). It bounds the FLOW
+ * through this rule; the target account's own `balanceCeiling` bounds the
+ * resulting BALANCE, and both apply, whichever binds first.
  *
  * The optional date window mirrors drainStopSchema's: it lets a stop only
  * receive surplus for part of the plan -- e.g. an account that shouldn't
@@ -28,14 +39,25 @@ export const splitStopSchema = z.object({
   amount: z.number().nonnegative().nullable().default(null),
   /** Used when kind = "percent_of_remainder": this stop's share (0..1) of what's left after stops above it. */
   pct: z.number().min(0).max(1).nullable().default(null),
-  /** Balance ceiling on the target account; null = uncapped (a catch-all). */
-  maxBalance: z.number().nonnegative().nullable().default(null),
-  /** Annual growth of the cap; null = follow settings.inflationRatePct. */
-  maxBalanceGrowthRatePct: z.number().nullable().default(null),
+  /** Most this stop may route per `limitPeriod` (today's dollars, grown by `limitGrowthRatePct`); null = unlimited. */
+  limitAmount: z.number().nonnegative().nullable().optional(),
+  /** The window `limitAmount` is measured over; omitted = "annual". Ignored when limitAmount is null. */
+  limitPeriod: flowLimitPeriodSchema.optional(),
+  /** Annual growth of the limit; null/omitted = follow settings.inflationRatePct. */
+  limitGrowthRatePct: z.number().nullable().optional(),
   /** null = active from the plan's start. */
   startDate: isoDateSchema.nullable().default(null),
   /** null = active through the plan's end. */
   endDate: isoDateSchema.nullable().default(null),
+  /**
+   * DEPRECATED -- the target account's `balanceCeiling` replaced this. Still
+   * parsed so plans saved before the move keep loading; scenarioSchema's
+   * transform lifts any value found here onto the account and clears it, and
+   * the engine reads only the account field. Do not write to these.
+   */
+  maxBalance: z.number().nonnegative().nullable().default(null),
+  /** DEPRECATED -- see maxBalance. */
+  maxBalanceGrowthRatePct: z.number().nullable().default(null),
 });
 export type SplitStop = z.infer<typeof splitStopSchema>;
 
@@ -43,8 +65,17 @@ export type SplitStop = z.infer<typeof splitStopSchema>;
  * A stop in the shortfall "drain order" -- an account that can cover a cash
  * shortfall, in list order. Mirrors splitStopSchema's cascading model: each
  * stop is either a flat $ amount or a percentage of what's left after the
- * stops above it (cascading, not a share of the original shortfall), capped
- * by its own floor -- whatever a stop can't cover spills to the next stop.
+ * stops above it (cascading, not a share of the original shortfall) --
+ * whatever a stop can't cover spills to the next stop.
+ *
+ * `limitAmount` caps how much this stop may draw over `limitPeriod`,
+ * resetting each period. That's a bound on the SPEED of the drawdown ("no
+ * more than $40k out of the brokerage a year", to keep realized gains inside
+ * a bracket); the source account's own `balanceFloor` bounds how far down it
+ * may go. The two are not interchangeable -- a rate limit can't see the
+ * balance, so on its own it will happily drain straight through a floor --
+ * and both apply, whichever binds first.
+ *
  * The optional date window lets a stop participate only for part of the
  * plan -- e.g. an account that funds a shortfall for a few years until
  * another one becomes available.
@@ -68,13 +99,24 @@ export const drainStopSchema = z.object({
    * moving to the next.
    */
   pct: z.number().min(0).max(1).nullable().default(1),
+  /** Most this stop may draw per `limitPeriod` (today's dollars, grown by `limitGrowthRatePct`); null = unlimited. */
+  limitAmount: z.number().nonnegative().nullable().optional(),
+  /** The window `limitAmount` is measured over; omitted = "annual". Ignored when limitAmount is null. */
+  limitPeriod: flowLimitPeriodSchema.optional(),
+  /** Annual growth of the limit; null/omitted = follow settings.inflationRatePct. */
+  limitGrowthRatePct: z.number().nullable().optional(),
   /** null = active from the plan's start. */
   startDate: isoDateSchema.nullable().default(null),
   /** null = active through the plan's end. */
   endDate: isoDateSchema.nullable().default(null),
-  /** Minimum balance (today's dollars, grown by inflation) this stop won't be drained below; null = no floor. */
+  /**
+   * DEPRECATED -- the source account's `balanceFloor` replaced this. Still
+   * parsed so plans saved before the move keep loading; scenarioSchema's
+   * transform lifts any value found here onto the account and clears it, and
+   * the engine reads only the account field. Do not write to these.
+   */
   minBalance: z.number().nonnegative().nullable().default(null),
-  /** Annual growth of the floor; null = follow settings.inflationRatePct. */
+  /** DEPRECATED -- see minBalance. */
   minBalanceGrowthRatePct: z.number().nullable().default(null),
 });
 export type DrainStop = z.infer<typeof drainStopSchema>;
@@ -101,6 +143,11 @@ const drainOrderSchema = z.preprocess((val) => {
  * $0 floor, `splitOrder` decides where that surplus goes, and `drainOrder`
  * decides what covers a shortfall using the same cascading kind/amount/pct
  * model. Edited from the Routing tab, not per-account forms.
+ *
+ * These lists own FLOW only -- priority, share, date window, and how much may
+ * move per period. An account's balance bounds (`balanceCeiling` /
+ * `balanceFloor`) live on the account itself, since they hold regardless of
+ * which rule moved the money. See accountObjectSchema.
  */
 export const moneyFlowSchema = z.object({
   /** Ordered surplus split; first stop offered first, cascading remainder spills onward. */

@@ -83,6 +83,14 @@ interface FormValues {
   subjectToRMD: boolean;
   noEarlyWithdrawalPenalty: boolean;
   isExcluded: boolean;
+  /** Money string; blank = uncapped. The most this account should ever hold. */
+  balanceCeiling: string;
+  /** Percent string; blank = matches inflation. */
+  balanceCeilingGrowthRatePct: string;
+  /** Money string; blank = drainable to zero. */
+  balanceFloor: string;
+  /** Percent string; blank = matches inflation. */
+  balanceFloorGrowthRatePct: string;
 }
 
 /** Loan terms for amortized classes (loan, credit card, unlinked mortgage).
@@ -148,6 +156,10 @@ function toFormValues(account?: Account): FormValues {
     subjectToRMD: account?.subjectToRMD ?? false,
     noEarlyWithdrawalPenalty: account?.noEarlyWithdrawalPenalty ?? false,
     isExcluded: account?.isExcluded ?? false,
+    balanceCeiling: account?.balanceCeiling != null ? moneyToStr(account.balanceCeiling) : "",
+    balanceCeilingGrowthRatePct: fractionToPercentStr(account?.balanceCeilingGrowthRatePct ?? null),
+    balanceFloor: account?.balanceFloor != null ? moneyToStr(account.balanceFloor) : "",
+    balanceFloorGrowthRatePct: fractionToPercentStr(account?.balanceFloorGrowthRatePct ?? null),
   };
 }
 
@@ -406,6 +418,10 @@ export function AccountDrawer({
         : undefined,
       growthRatePct: isAmortized ? 0 : percentStrToFraction(values.growthRatePct),
       isExcluded: values.isExcluded,
+      balanceCeiling: moneyStrToNumber(values.balanceCeiling),
+      balanceCeilingGrowthRatePct: percentStrToFraction(values.balanceCeilingGrowthRatePct),
+      balanceFloor: moneyStrToNumber(values.balanceFloor),
+      balanceFloorGrowthRatePct: percentStrToFraction(values.balanceFloorGrowthRatePct),
       taxTreatment: values.taxTreatment,
       // A Roth account (class or explicit taxTreatment) can never be subject
       // to RMDs -- clear a stale checked box left over from before the
@@ -698,6 +714,42 @@ export function AccountDrawer({
             )}
 
             {!showContributions && !isAmortized && contributionsBlock}
+
+            {/* Balance bounds live here, not on the Routing tab, because they
+                hold however the money arrives or leaves -- routed surplus, a
+                direct transfer, or the account's own growth. Routing owns the
+                complementary FLOW rules (priority, share, per-period limits).
+                Extra Savings is excluded: its deficit floor is hardcoded at $0
+                and it's the hub every other bound is measured against. */}
+            {!isAmortized && !account?.isExtraSavings && (
+              <div className="flex flex-col gap-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-dim">Balance limits</div>
+                <Field
+                  label="Balance Cap (optional)"
+                  hint="The most this account should ever hold. Surplus routing stops filling it here, and anything that pushes it over -- a transfer, income paid straight in, or its own growth -- spills to the next stop in your surplus split. Leave blank for no cap."
+                >
+                  <MoneyInput reg={register("balanceCeiling")} placeholder="blank = no cap" />
+                </Field>
+                <Field
+                  label="Cap Grows"
+                  hint="Annual growth of the cap, so it stays a today's-dollars amount. Leave blank to match inflation."
+                >
+                  <PercentInput reg={register("balanceCeilingGrowthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
+                </Field>
+                <Field
+                  label="Balance Floor (optional)"
+                  hint="The shortfall routing won't draw this account below this amount -- whatever it can't cover spills to the next source. Leave blank to allow draining it to zero."
+                >
+                  <MoneyInput reg={register("balanceFloor")} placeholder="blank = drain to zero" />
+                </Field>
+                <Field
+                  label="Floor Grows"
+                  hint="Annual growth of the floor, so it stays a today's-dollars amount. Leave blank to match inflation."
+                >
+                  <PercentInput reg={register("balanceFloorGrowthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
+                </Field>
+              </div>
+            )}
 
             <CheckboxInput
               reg={register("isExcluded")}
