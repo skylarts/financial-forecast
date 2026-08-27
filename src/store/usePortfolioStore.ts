@@ -17,6 +17,7 @@ import type { DraftTransaction } from "@/lib/portfolio/importer";
 import { withAssignedLotIds } from "@/lib/portfolio/lotAssignment";
 import { withCanonicalSymbols } from "@/lib/portfolio/canonicalSymbols";
 import { accountFamilyIds, hasSleeves } from "@/lib/portfolio/accountTree";
+import { splitTransactionByFraction } from "@/lib/portfolio/splitTransaction";
 import { sleeveTypeFor, TAX_SOURCE_SLEEVES } from "@/lib/portfolio/taxSource";
 import { buildLotLedger } from "@/engine/portfolio/lots";
 
@@ -144,6 +145,36 @@ interface PortfolioState {
    * They show up as "unassigned" until they are moved.
    */
   splitByTaxSource: (id: string) => void;
+
+  /**
+   * Files existing rows under a different account -- how transactions already
+   * in the ledger reach the sleeve they belong to once an account is split.
+   *
+   * Lot ids are cleared on the way, so each row re-derives its lot inside the
+   * account it now lives in. A lot id names a purchase in one account's ledger;
+   * carrying it across would point a sale at a lot that is not there.
+   */
+  moveTransactions: (ids: readonly string[], accountId: string) => number;
+
+  /**
+   * Divides each named row in two along `fraction`, leaving one part where it
+   * is and filing the other under `toAccountId`.
+   *
+   * For the statements that report a quarter's fund activity combined and its
+   * pre-tax/Roth split only as a summary: the two halves are real rows in real
+   * accounts, and they add back to the original exactly. The moved part is
+   * rounded and the remainder is what stays, so no cent is invented or lost
+   * however the fraction divides.
+   *
+   * Rows whose quantity is a ratio rather than a share count -- splits and
+   * spinoffs -- are left alone and not counted in the return: halving a 2:1
+   * split into two 1:1 splits would quietly change what it does.
+   */
+  splitTransactions: (
+    ids: readonly string[],
+    toAccountId: string,
+    fraction: number,
+  ) => number;
 
   loadPortfolio: (portfolio: Portfolio) => void;
   importJson: (raw: unknown) => { ok: true } | { ok: false; error: string };
@@ -281,6 +312,43 @@ export const usePortfolioStore = create<PortfolioState>()(
                 : a,
             ),
           })),
+
+        moveTransactions: (ids, accountId) => {
+          const wanted = new Set(ids);
+          let moved = 0;
+          mutate((p) => ({
+            ...p,
+            transactions: p.transactions.map((tx) => {
+              if (!wanted.has(tx.id) || tx.accountId === accountId) return tx;
+              moved += 1;
+              return { ...tx, accountId, lotId: null };
+            }),
+          }));
+          return moved;
+        },
+
+        splitTransactions: (ids, toAccountId, fraction) => {
+          const wanted = new Set(ids);
+          let split = 0;
+
+          mutate((p) => {
+            const next: Transaction[] = [];
+            for (const tx of p.transactions) {
+              const halves = wanted.has(tx.id)
+                ? splitTransactionByFraction(tx, toAccountId, fraction, nanoid())
+                : null;
+              if (!halves) {
+                next.push(tx);
+                continue;
+              }
+              split += 1;
+              next.push(halves.kept, halves.moved);
+            }
+            return { ...p, transactions: next };
+          });
+
+          return split;
+        },
 
         splitByTaxSource: (id) =>
           mutate((p) => {
