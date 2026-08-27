@@ -19,17 +19,7 @@ import {
 } from "@/engine/portfolio/metrics";
 import { money } from "@/lib/portfolio/format";
 import { ownerLabel } from "@/lib/people";
-import { FacetMenu } from "@/components/ui/FacetMenu";
-import { FilterStatus } from "./FilterStatus";
-import {
-  assetClassFacetOptions,
-  emptyHoldingFacets,
-  holdingFacetsActive,
-  instrumentTypeFacetOptions,
-  matchesHoldingFacets,
-  themeFacetOptions,
-  type HoldingFacets,
-} from "./filters";
+import { holdingFacetsActive, matchesHoldingFacets, type HoldingFacets } from "./filters";
 
 const DIMENSIONS = [
   { value: "assetClass", label: "Asset class" },
@@ -150,6 +140,8 @@ export function AllocationPanel({
   accounts,
   accountNames,
   people,
+  facets,
+  onFacetsChange,
   onDrillDown,
   children,
 }: {
@@ -157,6 +149,10 @@ export function AllocationPanel({
   accounts: PortfolioAccount[];
   accountNames: Map<string, string>;
   people: readonly Person[];
+  /** Owned by the shared filter bar above the tabs, so a class picked here
+   *  is still picked on Performance and Holdings. */
+  facets: HoldingFacets;
+  onFacetsChange: (update: (current: HoldingFacets) => HoldingFacets) => void;
   /** Sends a slice through to the holdings view as a filter. */
   onDrillDown: (dimension: AllocationDimension, label: string) => void;
   /** The classify-holdings controls, which live below the charts. */
@@ -164,7 +160,6 @@ export function AllocationPanel({
 }) {
   const [dimension, setDimension] = useState<AllocationDimension>("assetClass");
   const [includeCash, setIncludeCash] = useState(true);
-  const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
 
   const accountTypes = useMemo(
     () => new Map(accounts.map((a) => [a.id, PORTFOLIO_ACCOUNT_TYPE_LABELS[a.type]])),
@@ -176,12 +171,6 @@ export function AllocationPanel({
   );
 
   const filtersActive = holdingFacetsActive(facets);
-  const assetClassOptions = useMemo(() => assetClassFacetOptions(holdings, facets), [holdings, facets]);
-  const themeOptions = useMemo(() => themeFacetOptions(holdings, facets), [holdings, facets]);
-  const instrumentTypeOptions = useMemo(
-    () => instrumentTypeFacetOptions(holdings, facets),
-    [holdings, facets],
-  );
   const filteredHoldings = useMemo(
     () => (filtersActive ? holdings.filter((h) => matchesHoldingFacets(h, facets)) : holdings),
     [holdings, facets, filtersActive],
@@ -244,11 +233,11 @@ export function AllocationPanel({
     if (label === "Cash") return;
     if (dimension === "assetClass") {
       const match = assetClassSchema.options.find((cls) => ASSET_CLASS_LABELS[cls] === label);
-      if (match) setFacets((f) => ({ ...f, assetClass: { mode: "include", selected: new Set([match]) } }));
+      if (match) onFacetsChange((f) => ({ ...f, assetClass: { mode: "include", selected: new Set([match]) } }));
       return;
     }
     if (dimension === "theme") {
-      setFacets((f) => ({ ...f, theme: { mode: "include", selected: new Set([label]) } }));
+      onFacetsChange((f) => ({ ...f, theme: { mode: "include", selected: new Set([label]) } }));
       return;
     }
     onDrillDown(dimension, label);
@@ -272,33 +261,6 @@ export function AllocationPanel({
             </option>
           ))}
         </select>
-        <FacetMenu
-          label="Class"
-          options={assetClassOptions}
-          state={facets.assetClass}
-          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
-        />
-        <FacetMenu
-          label="Theme"
-          options={themeOptions}
-          state={facets.theme}
-          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
-        />
-        <FacetMenu
-          label="Type"
-          options={instrumentTypeOptions}
-          state={facets.instrumentType}
-          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
-        />
-        {filtersActive && (
-          <FilterStatus
-            shown={filteredHoldings.length}
-            total={holdings.length}
-            noun="holdings"
-            active
-            onClear={() => setFacets(emptyHoldingFacets())}
-          />
-        )}
         {hasCash && (
           <label className="flex items-center gap-1.5 text-[12px] text-dim">
             <input
