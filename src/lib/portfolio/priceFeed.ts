@@ -129,16 +129,18 @@ function isoFromEpochSeconds(seconds: number): ISODate {
 interface ChartMeta {
   regularMarketPrice?: number;
   regularMarketTime?: number;
-  /** The feed's own prior-session close. `chartPreviousClose` is the one that
-   *  tracks the requested range; `previousClose` is the plain quote field. */
+  /** Not the prior session's close -- see `priorSessionClose`. This is the
+   *  close before the *requested range* begins. */
   chartPreviousClose?: number;
+  /** The plain quote field. Absent from the chart endpoint's meta in
+   *  practice, kept as a fallback for when the feed does send it. */
   previousClose?: number;
   longName?: string;
   shortName?: string;
   instrumentType?: string;
 }
 
-interface ChartResult {
+export interface ChartResult {
   meta?: ChartMeta;
   timestamp?: number[];
   indicators?: { quote?: { close?: (number | null)[] }[] };
@@ -146,6 +148,41 @@ interface ChartResult {
     dividends?: Record<string, { amount?: number; date?: number }>;
     splits?: Record<string, { numerator?: number; denominator?: number; date?: number }>;
   };
+}
+
+/**
+ * The prior session's close, read off the daily series.
+ *
+ * `chartPreviousClose` is named as though it were this and is not: it is the
+ * close before the *requested range* starts. A quote asks for five days, so
+ * reading that field reported a five-day move under a "Today" label -- ORR
+ * showed +3.06% on a day it fell 0.33%. The series carries the real answer.
+ *
+ * The last bar is the current session (while the market is open its close is
+ * the live price), so the comparison is against the last bar dated strictly
+ * before it. Before the open that resolves to the previous session's move,
+ * which is what a broker shows at that hour too.
+ */
+export function priorSessionClose(result: ChartResult): number | null {
+  const timestamps = result.timestamp ?? [];
+  const closes = result.indicators?.quote?.[0]?.close ?? [];
+  const marketTime = result.meta?.regularMarketTime;
+
+  if (typeof marketTime === "number" && timestamps.length === closes.length) {
+    const asOf = isoFromEpochSeconds(marketTime);
+    for (let i = timestamps.length - 1; i >= 0; i--) {
+      const close = closes[i];
+      if (typeof close !== "number" || close <= 0) continue;
+      if (isoFromEpochSeconds(timestamps[i]) >= asOf) continue;
+      return close;
+    }
+  }
+
+  // A symbol listed inside the window has no prior session in the series. The
+  // plain quote field is right when the feed sends it; otherwise say nothing
+  // rather than print a move measured against the wrong day.
+  const previous = result.meta?.previousClose;
+  return typeof previous === "number" && previous > 0 ? previous : null;
 }
 
 /** Splits out of a chart response, oldest first and ignoring malformed rows. */
@@ -272,13 +309,12 @@ export async function fetchQuoteResult(symbol: string): Promise<QuoteResult> {
     const price = outcome.result.meta?.regularMarketPrice;
     if (typeof price === "number") {
       const meta = outcome.result.meta;
-      const previous = meta?.chartPreviousClose ?? meta?.previousClose;
       const quote: Quote = {
         symbol: key,
         price,
         date: isoFromEpochSeconds(meta?.regularMarketTime ?? Date.now() / 1000),
         name: meta?.longName ?? meta?.shortName ?? "",
-        previousClose: typeof previous === "number" && previous > 0 ? previous : null,
+        previousClose: priorSessionClose(outcome.result),
       };
       quoteCache.set(key, { value: quote, fetchedAt: Date.now() });
       return { quote, failure: null };
