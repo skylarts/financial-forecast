@@ -33,6 +33,42 @@ const MAX_BENCHMARKS = 5;
 const EMPTY_HISTORIES: Map<string, PricePoint[]> = new Map();
 const EMPTY_SPLITS: Map<string, SplitEvent[]> = new Map();
 
+interface FetchedPrices {
+  histories: Map<string, PricePoint[]>;
+  splits: Map<string, SplitEvent[]>;
+  skipped: string[];
+}
+
+/**
+ * What the last few requests came back with, held at module scope so it
+ * survives the panel unmounting.
+ *
+ * The portfolio's tabs are siblings that mount and unmount rather than hide,
+ * so switching to Holdings and back used to throw away years of daily closes
+ * and refetch every one of them -- the same cost as the very first visit,
+ * every time. Component state can't survive that unmount; a module-level map
+ * can, because the module itself stays loaded for the life of the page.
+ *
+ * Bounded and evicted oldest-write-first rather than unbounded: a session
+ * that tries a lot of different account scopes or benchmark combinations
+ * makes a lot of distinct request keys, and this is a cache, not a ledger of
+ * everything ever fetched. Reads deliberately don't bump recency -- that
+ * would be a mutation during render, which a pure lookup should not be doing
+ * -- so eviction is by write order. Close enough for a handful of keys in one
+ * person's session.
+ */
+const CACHE_LIMIT = 20;
+const priceRequestCache = new Map<string, FetchedPrices>();
+
+function cachePut(key: string, value: FetchedPrices): void {
+  priceRequestCache.delete(key);
+  priceRequestCache.set(key, value);
+  if (priceRequestCache.size > CACHE_LIMIT) {
+    const oldest = priceRequestCache.keys().next().value;
+    if (oldest !== undefined) priceRequestCache.delete(oldest);
+  }
+}
+
 /** Where a benchmark's colour comes from. Fixed by slot, so removing one
  *  doesn't repaint the rest. */
 const BENCHMARK_COLORS = [
@@ -255,6 +291,9 @@ export function PerformancePanel({
   useEffect(() => {
     const [range, windowStart, symbolList] = requestKey.split("::");
     if (!symbolList) return;
+    // Already have it -- rendered straight from the cache below, nothing to
+    // fetch.
+    if (priceRequestCache.has(requestKey)) return;
 
     let cancelled = false;
 
@@ -289,7 +328,13 @@ export function PerformancePanel({
           }
           skipped.push(...(body.skipped ?? []));
         }
-        if (!cancelled) setLoaded({ key: requestKey, histories, splits, skipped, failed: false });
+        if (!cancelled) {
+          // Not cached until the whole chunked fetch succeeds -- a partial
+          // result cached mid-failure would be indistinguishable from a
+          // complete one on the next visit.
+          cachePut(requestKey, { histories, splits, skipped });
+          setLoaded({ key: requestKey, histories, splits, skipped, failed: false });
+        }
       } catch {
         if (!cancelled) {
           setLoaded({
@@ -308,18 +353,29 @@ export function PerformancePanel({
     };
   }, [requestKey]);
 
+  // A cached hit for this exact request wins over whatever `loaded` still
+  // holds from state -- state only lags one render behind the cache anyway
+  // (the fetch effect writes both together), and reading the cache directly
+  // is what makes a remounted panel render already-fetched data on its very
+  // first paint instead of an empty chart while the effect re-fires.
+  const cachedForKey = priceRequestCache.get(requestKey);
+
   // Derived from what arrived rather than tracked separately, so a slow request
   // for the previous period can't land after a newer one and leave the panel
   // showing one window's prices under another window's label.
-  const settled = loaded?.key === requestKey;
+  const stateForKey = loaded?.key === requestKey ? loaded : undefined;
+  const settled = cachedForKey !== undefined || stateForKey !== undefined;
   const loading = neededSymbols.length > 0 && !settled;
-  const failed = settled && loaded.failed;
-  const skipped = settled ? loaded.skipped : [];
+  const failed = cachedForKey === undefined && (stateForKey?.failed ?? false);
+  const skipped = cachedForKey?.skipped ?? stateForKey?.skipped ?? [];
   const histories = useMemo(
-    () => (settled ? loaded.histories : EMPTY_HISTORIES),
-    [settled, loaded],
+    () => cachedForKey?.histories ?? stateForKey?.histories ?? EMPTY_HISTORIES,
+    [cachedForKey, stateForKey],
   );
-  const splits = useMemo(() => (settled ? loaded.splits : EMPTY_SPLITS), [settled, loaded]);
+  const splits = useMemo(
+    () => cachedForKey?.splits ?? stateForKey?.splits ?? EMPTY_SPLITS,
+    [cachedForKey, stateForKey],
+  );
 
   const series = useMemo(
     () =>
@@ -363,6 +419,32 @@ export function PerformancePanel({
   }, [series.points, benchmarkSeries]);
 
   /**
+   * One series spanning every window the table can possibly need -- from the
+   * first transaction through today, which is a superset of "max" and of
+   * every shorter period below it.
+   *
+   * A time-weighted index is a running product of daily factors that each
+   * depend only on that day's own value and the day before it, never on where
+   * the series happened to start accumulating. So the ratio between any two of
+   * its points reproduces exactly what building a fresh series for that
+   * narrower window would report, and the eight rows below can be read off one
+   * build instead of costing one apiece -- the difference between a table that
+   * redraws instantly and one that freezes the tab for seconds on a ledger
+   * with real history behind it.
+   */
+  const fullSeries = useMemo(
+    () =>
+      buildPerformanceSeries(scopedTransactions, histories, {
+        from: earliest,
+        to: todayIso(),
+        accountIds: scopeAccountIds ?? undefined,
+        splits,
+        openingCash,
+      }),
+    [scopedTransactions, histories, splits, earliest, scopeAccountIds, openingCash],
+  );
+
+  /**
    * Returns across every window the loaded history can actually cover.
    *
    * A period longer than what was fetched reports nothing rather than a figure
@@ -394,24 +476,18 @@ export function PerformancePanel({
             ? `${end.slice(0, 4)}-01-01`
             : isoDaysAgo(MONTHS_BACK[definition.value] ?? 12);
 
-      const windowed = buildPerformanceSeries(scopedTransactions, histories, {
-        from: start,
-        to: end,
-        accountIds: scopeAccountIds ?? undefined,
-        splits,
-        openingCash,
-      });
+      const windowedPoints = fullSeries.points.filter((p) => p.date >= start && p.date <= end);
 
       // The fetch only went back so far. A window starting before the data does
       // would silently measure a shorter span than its own label claims.
       const covered =
-        windowed.points.length > 1 &&
+        windowedPoints.length > 1 &&
         portfolioHistoryStart !== undefined &&
         (definition.value === "max" || start >= portfolioHistoryStart);
 
       return {
         label: definition.label,
-        portfolio: covered ? totalReturn(windowed.points) : null,
+        portfolio: covered ? totalReturn(windowedPoints) : null,
         benchmarks: benchmarks.map((symbol) => {
           // Checked per benchmark: one added today may have less history than
           // the rest, and rebasing it to a later start would understate the
@@ -423,7 +499,7 @@ export function PerformancePanel({
         }),
       };
     });
-  }, [scopedTransactions, histories, splits, benchmarks, earliest, scopeAccountIds, openingCash]);
+  }, [fullSeries, histories, benchmarks, earliest]);
 
   const portfolioReturn = totalReturn(series.points);
   const portfolioAnnualized = annualizedReturn(series.points);
