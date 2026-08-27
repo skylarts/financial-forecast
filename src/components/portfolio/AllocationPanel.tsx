@@ -25,17 +25,6 @@ const DIMENSIONS = [
 
 export type AllocationDimension = (typeof DIMENSIONS)[number]["value"];
 
-/**
- * Slots in the ring before the tail folds into "Other".
- *
- * Eight is where the categorical palette stops: past it a chart would have to
- * invent hues, and two hues that close together stop encoding anything. A
- * portfolio of forty positions has a shape worth seeing, and it isn't forty
- * indistinguishable slivers.
- */
-const MAX_SLICES = 8;
-const OTHER_LABEL = "Other";
-
 const SERIES_COLORS = [
   "var(--series-1)",
   "var(--series-2)",
@@ -50,25 +39,11 @@ const SERIES_COLORS = [
 /**
  * Colour follows the slice's identity, fixed by its rank in the *unfiltered*
  * ordering, so toggling cash off doesn't repaint every slice that survives.
+ * Past the eight-hue palette, colours repeat -- with a portfolio's worth of
+ * holdings on screen, identity mostly reads from the label anyway.
  */
-function colorFor(index: number, label: string): string {
-  if (label === OTHER_LABEL) return "var(--series-other)";
+function colorFor(index: number): string {
   return SERIES_COLORS[index % SERIES_COLORS.length];
-}
-
-/** Folds everything past the palette into one honest remainder. */
-function withOther(slices: AllocationSlice[]): AllocationSlice[] {
-  if (slices.length <= MAX_SLICES) return slices;
-  const head = slices.slice(0, MAX_SLICES);
-  const tail = slices.slice(MAX_SLICES);
-  return [
-    ...head,
-    {
-      label: OTHER_LABEL,
-      value: tail.reduce((sum, s) => sum + s.value, 0),
-      weight: tail.reduce((sum, s) => sum + s.weight, 0),
-    },
-  ];
 }
 
 function SliceTooltip({
@@ -110,7 +85,7 @@ function AllocationBars({
   return (
     <div className="space-y-1.5">
       {slices.map((slice, i) => {
-        const clickable = onSelect && slice.label !== OTHER_LABEL;
+        const clickable = onSelect;
         return (
           <div
             key={slice.label}
@@ -123,7 +98,7 @@ function AllocationBars({
             <span
               aria-hidden
               className="h-2.5 w-2.5 shrink-0 rounded-sm"
-              style={{ backgroundColor: colorFor(i, slice.label) }}
+              style={{ backgroundColor: colorFor(i) }}
             />
             <div className="w-40 shrink-0 truncate text-[12px] text-dim">{slice.label}</div>
             <div className="h-3 flex-1 overflow-hidden rounded-sm bg-panel-2">
@@ -131,7 +106,7 @@ function AllocationBars({
                 className="h-full rounded-sm"
                 style={{
                   width: `${Math.max(slice.weight * 100, 0.5)}%`,
-                  backgroundColor: colorFor(i, slice.label),
+                  backgroundColor: colorFor(i),
                 }}
               />
             </div>
@@ -196,7 +171,7 @@ export function AllocationPanel({
           return h.kind === "cash" ? "Cash" : h.side === "short" ? "Short" : "Long";
       }
     };
-    return withOther(buildAllocation(holdings, pick, { includeCash }));
+    return buildAllocation(holdings, pick, { includeCash });
   }, [holdings, dimension, includeCash, accountNames, accountTypes, accountOwners]);
 
   const hasCash = useMemo(() => holdings.some((h) => h.kind === "cash"), [holdings]);
@@ -209,7 +184,7 @@ export function AllocationPanel({
   const hasNegativeSlice = slices.some((s) => s.value < 0);
 
   const drillLabel = (label: string) => {
-    if (label === OTHER_LABEL || label === "Cash") return;
+    if (label === "Cash") return;
     onDrillDown(dimension, label);
   };
 
@@ -277,11 +252,7 @@ export function AllocationPanel({
                     }}
                   >
                     {slices.map((slice, i) => (
-                      <Cell
-                        key={slice.label}
-                        fill={colorFor(i, slice.label)}
-                        className={slice.label === OTHER_LABEL ? "" : "cursor-pointer"}
-                      />
+                      <Cell key={slice.label} fill={colorFor(i)} className="cursor-pointer" />
                     ))}
                   </Pie>
                   <Tooltip content={<SliceTooltip />} />
@@ -290,7 +261,9 @@ export function AllocationPanel({
             )}
           </div>
 
-          <AllocationBars slices={slices} onSelect={drillLabel} />
+          <div className="h-[280px] overflow-y-auto pr-1">
+            <AllocationBars slices={slices} onSelect={drillLabel} />
+          </div>
         </div>
       )}
 
