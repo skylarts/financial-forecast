@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   ASSET_CLASS_LABELS,
   assetClassSchema,
@@ -39,12 +40,30 @@ import { AccountsPanel } from "./AccountsPanel";
 import { ExportMenu } from "./ExportMenu";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
-import { AllocationPanel, type AllocationDimension } from "./AllocationPanel";
+import type { AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
-import { PerformancePanel } from "./PerformancePanel";
 import { DividendSyncDialog } from "./DividendSyncDialog";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
+
+/**
+ * Both panels pull in Recharts, and only one tab is ever showing at a time --
+ * loading it into the bundle every other tab has to download too would be
+ * paying for a chart nobody asked to see yet. Split out here instead, so
+ * visiting Holdings for the first time never touches this code at all.
+ */
+const AllocationPanel = dynamic(
+  () => import("./AllocationPanel").then((m) => m.AllocationPanel),
+  { ssr: false, loading: () => <TabSkeleton /> },
+);
+const PerformancePanel = dynamic(
+  () => import("./PerformancePanel").then((m) => m.PerformancePanel),
+  { ssr: false, loading: () => <TabSkeleton /> },
+);
+
+function TabSkeleton() {
+  return <div className="m-5 h-[400px] animate-pulse rounded-md bg-panel-2" />;
+}
 
 const TABS = [
   { value: "holdings", label: "Holdings" },
