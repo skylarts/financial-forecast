@@ -1,4 +1,4 @@
-import { fetchHistory } from "@/lib/portfolio/priceFeed";
+import { fetchHistory, HISTORY_CACHE_CONTROL } from "@/lib/portfolio/priceFeed";
 
 /**
  * Ranges the upstream feed understands. Anything outside this list is an
@@ -13,6 +13,13 @@ export async function GET(request: Request) {
   const requested = params.get("range") ?? DEFAULT_RANGE;
   const range = ALLOWED_RANGES.has(requested) ? requested : DEFAULT_RANGE;
 
-  if (!symbol) return Response.json({ symbol: "", points: [] });
-  return Response.json(await fetchHistory(symbol, range));
+  if (!symbol) {
+    return Response.json(
+      { symbol: "", points: [] },
+      { headers: { "Cache-Control": HISTORY_CACHE_CONTROL } },
+    );
+  }
+  return Response.json(await fetchHistory(symbol, range), {
+    headers: { "Cache-Control": HISTORY_CACHE_CONTROL },
+  });
 }

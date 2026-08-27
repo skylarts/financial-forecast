@@ -1,4 +1,4 @@
-import { fetchDividendsFor } from "@/lib/portfolio/priceFeed";
+import { fetchDividendsFor, HISTORY_CACHE_CONTROL } from "@/lib/portfolio/priceFeed";
 
 const ALLOWED_RANGES = new Set(["1y", "2y", "5y", "10y", "max"]);
 
@@ -29,7 +29,12 @@ export async function GET(request: Request) {
   const symbols = requested.slice(0, MAX_SYMBOLS);
   const skipped = requested.slice(MAX_SYMBOLS);
 
-  if (symbols.length === 0) return Response.json({ dividends: {}, skipped });
+  if (symbols.length === 0) {
+    return Response.json(
+      { dividends: {}, skipped },
+      { headers: { "Cache-Control": HISTORY_CACHE_CONTROL } },
+    );
+  }
 
   const results = await fetchDividendsFor(symbols, range);
 
@@ -38,5 +43,8 @@ export async function GET(request: Request) {
     if (events.length > 0) dividends[symbol] = events;
   }
 
-  return Response.json({ dividends, skipped });
+  return Response.json(
+    { dividends, skipped },
+    { headers: { "Cache-Control": HISTORY_CACHE_CONTROL } },
+  );
 }

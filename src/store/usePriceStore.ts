@@ -55,7 +55,15 @@ export const usePriceStore = create<PriceState>((set, get) => ({
 
     set({ loading: true });
     try {
-      const response = await fetch(`/api/prices/quotes?symbols=${encodeURIComponent(needed.join(","))}`);
+      // A forced refresh (the "Refetch quotes now" button) has to reach the
+      // feed, not the browser's own HTTP cache -- the route now sends a
+      // Cache-Control header so ordinary polling can be served from it, but a
+      // press of that button asking to bypass staleness would otherwise get
+      // handed back the very quote it's trying to get past.
+      const response = await fetch(
+        `/api/prices/quotes?symbols=${encodeURIComponent(needed.join(","))}`,
+        force ? { cache: "no-store" } : undefined,
+      );
       if (!response.ok) throw new Error(`Quote request failed: ${response.status}`);
       const body = (await response.json()) as {
         quotes: Record<string, FeedQuote>;
