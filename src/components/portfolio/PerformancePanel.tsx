@@ -25,6 +25,7 @@ import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
 import { FacetMenu } from "@/components/ui/FacetMenu";
+import { FilterStatus } from "./FilterStatus";
 import {
   assetClassFacetOptions,
   emptyHoldingFacets,
@@ -61,6 +62,15 @@ const PERIODS = [
 ] as const;
 
 type Period = (typeof PERIODS)[number]["value"] | "custom";
+
+/**
+ * The strip as it's actually offered, with a custom window on the end.
+ *
+ * The two date fields used to sit beside the presets permanently, taking most
+ * of a row to serve the one case in eight the presets don't already cover.
+ * Behind a segment they cost a click when wanted and nothing when not.
+ */
+const PERIOD_OPTIONS = [...PERIODS, { value: "custom", label: "Custom…" }] as const;
 
 const MONTHS_BACK: Partial<Record<Period, number>> = {
   "1mo": 1,
@@ -429,6 +439,11 @@ export function PerformancePanel({
     );
   };
 
+  // A chart drew, as opposed to a message standing in for one. Named because
+  // the legend below now sits between the chart and the commentary about it,
+  // and both halves have to agree on when there is something to talk about.
+  const chartReady = !failed && !loading && rows.length >= 2;
+
   if (portfolio.transactions.length === 0) {
     return (
       <div className="p-5">
@@ -444,69 +459,60 @@ export function PerformancePanel({
 
   return (
     <div className="p-5">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         {viewToggle}
         <Segmented
-          options={PERIODS}
-          value={period === "custom" ? ("" as Period) : period}
-          onChange={setPeriod}
+          options={PERIOD_OPTIONS}
+          value={period}
+          onChange={(next) => {
+            // Arriving at the custom window with both fields blank would swing
+            // the chart out to the whole history. Seeding them with the window
+            // already on screen makes "Custom…" the start of an edit instead.
+            if (next === "custom" && !draftFrom && !draftTo) {
+              setDraftFrom(from);
+              setDraftTo(to);
+              setCustomFrom(from);
+              setCustomTo(to);
+            }
+            setPeriod(next);
+          }}
           size="sm"
           ariaLabel="Performance period"
         />
-        <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-          From
-          <input
-            type="date"
-            value={period === "custom" ? draftFrom : from}
-            max={draftTo || undefined}
-            onChange={(e) => {
-              setDraftFrom(e.target.value);
-              setPeriod("custom");
-            }}
-            // Leaving the field or pressing enter means it is finished, so
-            // there is nothing left to wait for.
-            onBlur={() => setCustomFrom(draftFrom)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") setCustomFrom(draftFrom);
-            }}
-            className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
-          />
-        </label>
-        <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-          To
-          <input
-            type="date"
-            value={period === "custom" ? draftTo : to}
-            min={draftFrom || undefined}
-            onChange={(e) => {
-              setDraftTo(e.target.value);
-              setPeriod("custom");
-            }}
-            onBlur={() => setCustomTo(draftTo)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") setCustomTo(draftTo);
-            }}
-            className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
-          />
-        </label>
         {period === "custom" && (
-          <button
-            type="button"
-            onClick={() => {
-              setCustomFrom("");
-              setCustomTo("");
-              setDraftFrom("");
-              setDraftTo("");
-              setPeriod("1y");
-            }}
-            className="text-[11.5px] text-dim-2 underline hover:text-foreground"
-          >
-            Reset
-          </button>
+          <>
+            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+              From
+              <input
+                type="date"
+                value={draftFrom}
+                max={draftTo || undefined}
+                onChange={(e) => setDraftFrom(e.target.value)}
+                // Leaving the field or pressing enter means it is finished, so
+                // there is nothing left to wait for.
+                onBlur={() => setCustomFrom(draftFrom)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") setCustomFrom(draftFrom);
+                }}
+                className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
+              />
+            </label>
+            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+              To
+              <input
+                type="date"
+                value={draftTo}
+                min={draftFrom || undefined}
+                onChange={(e) => setDraftTo(e.target.value)}
+                onBlur={() => setCustomTo(draftTo)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") setCustomTo(draftTo);
+                }}
+                className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
+              />
+            </label>
+          </>
         )}
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
         <FacetMenu
           label="Class"
           options={assetClassOptions}
@@ -525,52 +531,13 @@ export function PerformancePanel({
           state={facets.instrumentType}
           onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
         />
-        {filtersActive && (
-          <span className="text-[11.5px] text-dim-2">
-            {includedSymbols?.size ?? 0} of {symbolClassifications.size} names
-            <button
-              type="button"
-              onClick={() => setFacets(emptyHoldingFacets())}
-              className="ml-2 underline hover:text-foreground"
-            >
-              Clear filters
-            </button>
-          </span>
-        )}
-      </div>
-
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <BenchmarkPicker
-          onAdd={addBenchmark}
-          disabled={benchmarks.length >= MAX_BENCHMARKS}
-          disabledReason={`Remove one to add another — ${MAX_BENCHMARKS} is the limit.`}
+        <FilterStatus
+          shown={includedSymbols?.size ?? 0}
+          total={symbolClassifications.size}
+          noun="names"
+          active={filtersActive}
+          onClear={() => setFacets(emptyHoldingFacets())}
         />
-        {benchmarkSeries.map((benchmark) => (
-          <span
-            key={benchmark.symbol}
-            className="flex items-center gap-1.5 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px]"
-          >
-            <span
-              aria-hidden
-              className="inline-block h-0.5 w-3 rounded"
-              style={{ backgroundColor: benchmark.color }}
-            />
-            <span className="font-semibold text-foreground">{benchmark.symbol}</span>
-            {benchmark.points.length === 0 && !loading && (
-              <span title="No price history for this window." className="text-dim-2">
-                no data
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => setBenchmarks((c) => c.filter((s) => s !== benchmark.symbol))}
-              title={`Remove ${benchmark.symbol}`}
-              className="text-dim-2 hover:text-negative"
-            >
-              ✕
-            </button>
-          </span>
-        ))}
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -616,7 +583,7 @@ export function PerformancePanel({
         <div className="flex h-72 items-center justify-center text-[13px] text-dim">
           Loading price history…
         </div>
-      ) : rows.length < 2 ? (
+      ) : !chartReady ? (
         <p className="py-8 text-center text-[13px] text-dim">
           Not enough price history in this window to plot a return.
         </p>
@@ -670,33 +637,58 @@ export function PerformancePanel({
               </LineChart>
             </ResponsiveContainer>
           </div>
+        </>
+      )}
 
-          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11.5px] text-dim-2">
-              Growth of {money(BASE)} invested on {shortDate(rows[0].date)}, time-weighted so
-              deposits and withdrawals don&apos;t count as performance.
-            </span>
-            <span className="flex flex-wrap items-center gap-3 text-[11.5px] text-dim">
-              <span className="flex items-center gap-1.5">
-                <span
-                  aria-hidden
-                  className="inline-block h-0.5 w-4 rounded"
-                  style={{ backgroundColor: "var(--accent-line)" }}
-                />
-                Your portfolio
+      {/* The legend and the benchmark control are the same thing: every row
+          here is a line on the chart, so reading one and removing one belong
+          together. Outside the branch above so a failed or empty chart still
+          lets you change what it would have compared against. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-[11.5px] text-dim">
+        <span className="flex items-center gap-1.5">
+          <span
+            aria-hidden
+            className="inline-block h-0.5 w-4 rounded"
+            style={{ backgroundColor: "var(--accent-line)" }}
+          />
+          Your portfolio
+        </span>
+        {benchmarkSeries.map((benchmark) => (
+          <span key={benchmark.symbol} className="flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className="inline-block h-0.5 w-4 rounded"
+              style={{ backgroundColor: benchmark.color }}
+            />
+            {benchmark.symbol}
+            {benchmark.points.length === 0 && !loading && (
+              <span title="No price history for this window." className="text-dim-2">
+                (no data)
               </span>
-              {benchmarkSeries.map((benchmark) => (
-                <span key={benchmark.symbol} className="flex items-center gap-1.5">
-                  <span
-                    aria-hidden
-                    className="inline-block h-0.5 w-4 rounded"
-                    style={{ backgroundColor: benchmark.color }}
-                  />
-                  {benchmark.symbol}
-                </span>
-              ))}
-            </span>
-          </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setBenchmarks((c) => c.filter((s) => s !== benchmark.symbol))}
+              title={`Remove ${benchmark.symbol}`}
+              className="text-dim-2 hover:text-negative"
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+        <BenchmarkPicker
+          onAdd={addBenchmark}
+          disabled={benchmarks.length >= MAX_BENCHMARKS}
+          disabledReason={`Remove one to add another — ${MAX_BENCHMARKS} is the limit.`}
+        />
+      </div>
+
+      {chartReady && (
+        <>
+          <p className="mt-2 text-[11.5px] text-dim-2">
+            Growth of {money(BASE)} invested on {shortDate(rows[0].date)}, time-weighted so
+            deposits and withdrawals don&apos;t count as performance.
+          </p>
 
           {skipped.length > 0 && (
             <p className="mt-2 text-[11.5px] text-negative">

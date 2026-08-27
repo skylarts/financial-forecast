@@ -45,6 +45,7 @@ import type { AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
+import { FilterStatus } from "./FilterStatus";
 import { useMarketIndexStore } from "@/store/useMarketIndexes";
 
 /**
@@ -626,21 +627,16 @@ export function PortfolioApp() {
                 ))}
               </select>
               {grouping !== "none" && <GroupToggles collapse={holdingCollapse} />}
-              {visibleHoldings.length !== analysis.holdings.length && (
-                <span className="text-[11.5px] text-dim-2">
-                  Showing {visibleHoldings.length} of {analysis.holdings.length}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearch("");
-                      setSideFilter("all");
-                    }}
-                    className="ml-2 underline hover:text-foreground"
-                  >
-                    Clear filters
-                  </button>
-                </span>
-              )}
+              <FilterStatus
+                shown={visibleHoldings.length}
+                total={analysis.holdings.length}
+                noun="holdings"
+                active={search !== "" || sideFilter !== "all"}
+                onClear={() => {
+                  setSearch("");
+                  setSideFilter("all");
+                }}
+              />
             </div>
             <HoldingsTable
               holdings={visibleHoldings}

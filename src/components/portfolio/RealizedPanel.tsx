@@ -4,8 +4,9 @@ import { Fragment, useMemo, useState } from "react";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { PortfolioSummary } from "@/engine/portfolio/metrics";
 import { lotTermLabel, money, percent, shares, shortDate, toneFor } from "@/lib/portfolio/format";
-import { Segmented } from "@/components/ui/controls";
 import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
+import { FilterStatus } from "./FilterStatus";
+import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
 
 const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
@@ -93,7 +94,7 @@ export function RealizedPanel({
 }) {
   const [grouping, setGrouping] = useState<RealizedGrouping>("none");
   const [search, setSearch] = useState("");
-  const [outcome, setOutcome] = useState<"all" | "winners" | "losers">("all");
+  const [outcome, setOutcome] = useState<Outcome>("all");
 
   const accessors = useMemo<SortAccessors<ClosedLot, Column>>(
     () => ({
@@ -120,8 +121,7 @@ export function RealizedPanel({
       // which is exactly the mismatch that makes this table look wrong.
       if (!lot.taxable) return false;
       if (query && !lot.symbol.includes(query)) return false;
-      if (outcome === "winners" && lot.gain <= 0) return false;
-      if (outcome === "losers" && lot.gain >= 0) return false;
+      if (!matchesOutcome(outcome, lot.gain)) return false;
       return true;
     });
   }, [closedLots, search, outcome]);
@@ -184,17 +184,7 @@ export function RealizedPanel({
               placeholder="Search symbol"
               className="w-44 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
             />
-            <Segmented
-              options={[
-                { value: "all", label: "All" },
-                { value: "winners", label: "Winners" },
-                { value: "losers", label: "Losers" },
-              ]}
-              value={outcome}
-              onChange={setOutcome}
-              size="sm"
-              ariaLabel="Filter by outcome"
-            />
+            <OutcomeFilter value={outcome} onChange={setOutcome} />
             <select
               value={grouping}
               onChange={(e) => setGrouping(e.target.value as RealizedGrouping)}
@@ -208,21 +198,16 @@ export function RealizedPanel({
               ))}
             </select>
             {grouping !== "none" && <GroupToggles collapse={collapse} />}
-            {sorted.length !== closedLots.length && (
-              <span className="text-[11.5px] text-dim-2">
-                Showing {sorted.length} of {closedLots.length}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearch("");
-                    setOutcome("all");
-                  }}
-                  className="ml-2 underline hover:text-foreground"
-                >
-                  Clear filters
-                </button>
-              </span>
-            )}
+            <FilterStatus
+              shown={sorted.length}
+              total={closedLots.length}
+              noun="lots"
+              active={search !== "" || outcome !== "all"}
+              onClear={() => {
+                setSearch("");
+                setOutcome("all");
+              }}
+            />
           </div>
 
           {sorted.length === 0 ? (
