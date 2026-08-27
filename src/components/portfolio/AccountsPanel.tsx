@@ -119,17 +119,17 @@ function ParentPicker({
           if (problem) return;
           updateAccount(account.id, { parentAccountId });
         }}
-        className="mt-1 w-40 rounded border border-border bg-panel-2 px-1.5 py-1 text-[11px] text-dim outline-none focus:border-accent"
+        className="mt-0.5 max-w-[10rem] cursor-pointer rounded border border-transparent bg-transparent py-0.5 text-[11px] text-dim-2 outline-none hover:text-foreground focus:border-accent focus:text-foreground"
         title="Make this account a sleeve of another — how a 401(k) or 457 holding both pre-tax and Roth money is split, so each half can carry its own tax treatment into the forecast."
       >
-        <option value="">— its own account —</option>
+        <option value="">Its own account</option>
         {candidates.map((a) => (
           <option key={a.id} value={a.id}>
-            ↳ part of {a.name}
+            Part of {a.name}
           </option>
         ))}
       </select>
-      {error && <p className="mt-1 w-40 text-[11px] text-negative">{error}</p>}
+      {error && <p className="mt-1 max-w-[10rem] text-[11px] text-negative">{error}</p>}
     </>
   );
 }
@@ -171,35 +171,39 @@ function AccountRow({
   // Splitting only makes sense for an account that is neither already split
   // nor itself a sleeve.
   const canSplit = !isParent && account.parentAccountId === null;
+  const sleeveCount = isParent ? sleevesOf(accounts, account.id).length : 0;
 
   return (
-    <tr className={`border-b border-border-soft ${depth > 0 ? "bg-panel-2/30" : ""}`}>
-      <td className="px-3 py-2" style={{ paddingLeft: depth > 0 ? 30 : undefined }}>
-        <div className="flex items-start gap-1.5">
-          {depth > 0 && <span className="mt-2 text-dim-2">↳</span>}
-          <div>
-            <input
-              value={account.name}
-              onChange={(e) => updateAccount(account.id, { name: e.target.value })}
-              className={`${INPUT} w-40`}
-            />
+    <tr className="border-b border-border-soft align-middle">
+      <td className={`sticky left-0 z-10 border-r border-border-soft bg-panel py-2 pr-2 ${depth > 0 ? "pl-6" : "pl-2"}`}>
+        <div className={depth > 0 ? "border-l-2 border-accent/40 pl-3" : ""}>
+          <input
+            value={account.name}
+            onChange={(e) => updateAccount(account.id, { name: e.target.value })}
+            className={`${INPUT} w-36`}
+          />
+          {isParent ? (
+            <p className="mt-0.5 text-[11px] text-dim-2">
+              {sleeveCount} sleeve{sleeveCount === 1 ? "" : "s"}
+            </p>
+          ) : (
             <ParentPicker account={account} accounts={accounts} />
-          </div>
+          )}
         </div>
       </td>
-      <td className="px-3 py-2">
+      <td className="px-2 py-2">
         <input
           value={account.institution}
           placeholder="Institution"
           onChange={(e) => updateAccount(account.id, { institution: e.target.value })}
-          className={`${INPUT} w-36`}
+          className={`${INPUT} w-28`}
         />
       </td>
-      <td className="px-3 py-2">
+      <td className="px-2 py-2">
         <select
           value={account.type}
           onChange={(e) => updateAccount(account.id, { type: e.target.value as PortfolioAccountType })}
-          className={`${INPUT} w-44`}
+          className={`${INPUT} w-36`}
         >
           {portfolioAccountTypeSchema.options.map((type) => (
             <option key={type} value={type}>
@@ -208,11 +212,11 @@ function AccountRow({
           ))}
         </select>
       </td>
-      <td className="px-3 py-2">
+      <td className="px-2 py-2">
         <select
           value={account.ownerId ?? ""}
           onChange={(e) => updateAccount(account.id, { ownerId: e.target.value || null })}
-          className={`${INPUT} w-32`}
+          className={`${INPUT} w-24`}
         >
           {ownerOptions(people).map((o) => (
             <option key={o.value || "joint"} value={o.value}>
@@ -221,18 +225,18 @@ function AccountRow({
           ))}
         </select>
       </td>
-      <td className="px-3 py-2 text-right">
+      <td className="px-2 py-2 text-right">
         <input
           type="number"
           value={account.openingCashBalance}
           onChange={(e) =>
             updateAccount(account.id, { openingCashBalance: Number(e.target.value) || 0 })
           }
-          className={`${INPUT} w-24 text-right tabular-nums`}
+          className={`${INPUT} w-20 text-right tabular-nums`}
           title="Cash the account held before its first recorded transaction. Leave at 0 when the ledger runs from the account's opening."
         />
       </td>
-      <td className="px-3 py-2 text-right text-[12.5px] tabular-nums text-foreground">
+      <td className="px-2 py-2 text-right text-[12.5px] tabular-nums text-foreground">
         <span title={cashTitle(cash)}>{money(cash.balance)}</span>
         {cash.implied !== 0 && (
           <span className="ml-1 text-dim-2" title={cashTitle(cash)}>
@@ -240,14 +244,14 @@ function AccountRow({
           </span>
         )}
       </td>
-      <td className="px-3 py-2 text-right text-[12.5px] font-semibold tabular-nums text-foreground">
+      <td className="px-2 py-2 text-right text-[12.5px] font-semibold tabular-nums text-foreground">
         {money(value)}
-        {isParent && <div className="text-[11px] font-normal text-dim">incl. sleeves</div>}
+        {isParent && <div className="text-[11px] font-normal text-dim-2">incl. sleeves</div>}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-2 py-2">
         {isParent ? (
           <p
-            className="w-40 text-[11px] text-dim"
+            className="w-36 text-[11px] italic text-dim-2"
             title="A split account's sleeves each carry their own tax treatment, so each one links to its own forecast account. Linking the parent as well would push the same dollars a second time."
           >
             Linked per sleeve
@@ -282,70 +286,65 @@ function AccountRow({
                 </option>
               ))}
             </select>
-            <label
-              className="flex items-center gap-1 text-[11px] text-dim"
+            <input
+              type="checkbox"
+              checked={account.syncToForecast}
+              disabled={!account.forecastAccountId}
+              onChange={(e) => updateAccount(account.id, { syncToForecast: e.target.checked })}
+              aria-label="Sync this account's value into the forecast automatically"
               title="Automatically write this account's value into the forecast whenever it changes. Uncheck to keep the link without the automatic write."
-            >
-              <input
-                type="checkbox"
-                checked={account.syncToForecast}
-                disabled={!account.forecastAccountId}
-                onChange={(e) => updateAccount(account.id, { syncToForecast: e.target.checked })}
-              />
-              Sync
-            </label>
+            />
           </div>
         )}
         {unassigned !== 0 && (
           <p
-            className="mt-1 w-44 text-[11px] text-negative"
+            className="mt-1 w-36 text-[11px] text-negative"
             title="These rows sit on the account itself rather than on one of its sleeves, so nothing says whether they are pre-tax or Roth — and the forecast is not told about them at all. Move them onto a sleeve from the Transactions tab."
           >
             {money(unassigned)} unassigned
           </p>
         )}
       </td>
-      <td className="px-3 py-2 text-right">
+      <td className="whitespace-nowrap px-2 py-2 text-right">
         <div className="flex items-center justify-end gap-1.5">
           {canSplit && (
             <Btn
               onClick={() => splitByTaxSource(account.id)}
-              title="Split this account into a pre-tax and a Roth sleeve. Existing transactions stay on the account until you assign them, so nothing is guessed at."
+              className="px-2"
+              title="Split this account into a pre-tax and a Roth sleeve, so each half can carry its own tax treatment into the forecast. Existing transactions stay on the account until you assign them, so nothing is guessed at."
             >
-              Split pre-tax / Roth
+              Split
             </Btn>
           )}
-          {isParent ? (
-            <span
-              className="text-[11px] text-dim"
-              title="Push each sleeve separately — each one carries its own tax treatment into its own forecast account."
-            >
-              —
-            </span>
-          ) : (
+          {!isParent && (
             <Btn
               onClick={() => onPush(account, value, costBasis)}
+              className={`px-2 ${linked ? "" : "pointer-events-none opacity-40"}`}
               title={
                 linked
                   ? `Set "${linked.name}" starting balance to ${money(value)}`
                   : "Link a forecast account first"
               }
-              className={linked ? "" : "pointer-events-none opacity-40"}
             >
-              Push to forecast
+              Push
             </Btn>
           )}
           {confirmingDelete ? (
             <>
-              <Btn onClick={() => removeAccount(account.id)}>Delete</Btn>
-              <Btn onClick={() => setConfirmingDelete(false)}>Keep</Btn>
+              <Btn onClick={() => removeAccount(account.id)} className="px-2">
+                Delete
+              </Btn>
+              <Btn onClick={() => setConfirmingDelete(false)} className="px-2">
+                Keep
+              </Btn>
             </>
           ) : (
             <Btn
               onClick={() => setConfirmingDelete(true)}
+              className="px-2"
               title={
                 isParent
-                  ? `Remove this account, its ${sleevesOf(accounts, account.id).length} sleeves, and all their transactions`
+                  ? `Remove this account, its ${sleeveCount} sleeve${sleeveCount === 1 ? "" : "s"}, and all their transactions`
                   : "Remove this account and its transactions"
               }
             >
@@ -415,7 +414,7 @@ export function AccountsPanel({
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-border">
+              <tr className="sticky top-0 z-10 border-b border-border bg-panel">
                 {[
                   "Name",
                   "Institution",
@@ -429,9 +428,9 @@ export function AccountsPanel({
                 ].map((h, i) => (
                   <th
                     key={h || i}
-                    className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2 ${
+                    className={`px-2 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2 ${
                       (i >= 4 && i <= 6) || i === 8 ? "text-right" : "text-left"
-                    }`}
+                    } ${i === 0 ? "sticky left-0 z-20 border-r border-border-soft bg-panel" : ""}`}
                     title={
                       i === 4
                         ? "Cash held before the ledger's first row. Leave at 0 when the ledger runs from the account's opening."
