@@ -13,7 +13,7 @@ import { DetailTabs } from "@/components/tables/DetailTabs";
 import { WarningsBanner } from "@/components/layout/WarningsBanner";
 import { StalePlanBanner } from "@/components/layout/StalePlanBanner";
 import { usePlanStore } from "@/store/usePlanStore";
-import { useProjection } from "@/store/useProjection";
+import { useProjection, useCompareProjection } from "@/store/useProjection";
 import { useCloudSync } from "@/store/useCloudSync";
 import { useUiStore } from "@/store/useUiStore";
 import { SetupWizardHost } from "@/components/wizard/SetupWizardHost";
@@ -33,7 +33,7 @@ function HomeContent() {
   const compareScenarioId = usePlanStore((s) => s.compareScenarioId);
   const setCompareScenarioId = usePlanStore((s) => s.setCompareScenarioId);
   const compareScenarioRaw = allScenarios.find((s) => s.id === compareScenarioId) ?? null;
-  const compareProjection = useProjection(compareScenarioRaw ?? scenario);
+  const compareProjection = useCompareProjection(compareScenarioRaw, projection);
   const hasCompare = compareScenarioRaw !== null;
 
   const minYear = projection.years[0]?.year ?? new Date().getFullYear();
