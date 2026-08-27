@@ -46,7 +46,8 @@ import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 import { FilterStatus } from "./FilterStatus";
-import { FacetMenu } from "@/components/ui/FacetMenu";
+import { FilterChips, FilterMenu, type FilterSection } from "./FilterMenu";
+import type { FacetState } from "@/components/ui/facets";
 import {
   assetClassFacetOptions,
   emptyHoldingFacets,
@@ -344,6 +345,19 @@ export function PortfolioApp() {
   );
   const sharedFiltersActive = search !== "" || holdingFacetsActive(facets);
 
+  // One shape for all three, so the panel and the chips can walk them without
+  // knowing which facet is which.
+  const filterSections = useMemo<FilterSection<keyof HoldingFacets & string>[]>(
+    () => [
+      { key: "assetClass", label: "Class", options: assetClassOptions, state: facets.assetClass },
+      { key: "theme", label: "Theme", options: themeOptions, state: facets.theme },
+      { key: "instrumentType", label: "Type", options: instrumentTypeOptions, state: facets.instrumentType },
+    ],
+    [assetClassOptions, themeOptions, instrumentTypeOptions, facets],
+  );
+  const setFacet = (key: keyof HoldingFacets, next: FacetState) =>
+    setFacets((f) => ({ ...f, [key]: next }));
+
   const knownThemes = useMemo(() => allThemes(portfolio.securities.map((s) => s.themes)), [portfolio.securities]);
   const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
 
@@ -631,24 +645,12 @@ export function PortfolioApp() {
           aria-label="Search the portfolio"
           className="w-56 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
         />
-        <FacetMenu
-          label="Class"
-          options={assetClassOptions}
-          state={facets.assetClass}
-          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
+        <FilterMenu
+          sections={filterSections}
+          onChange={setFacet}
+          onClearAll={() => setFacets(emptyHoldingFacets())}
         />
-        <FacetMenu
-          label="Theme"
-          options={themeOptions}
-          state={facets.theme}
-          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
-        />
-        <FacetMenu
-          label="Type"
-          options={instrumentTypeOptions}
-          state={facets.instrumentType}
-          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
-        />
+        <FilterChips sections={filterSections} onChange={setFacet} />
         <FilterStatus
           shown={scopedHoldings.length}
           total={analysis.holdings.length}
