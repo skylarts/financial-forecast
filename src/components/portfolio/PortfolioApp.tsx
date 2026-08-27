@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { Id } from "@/domain";
 import dynamic from "next/dynamic";
 import {
   allThemes,
@@ -9,7 +10,7 @@ import {
   type PortfolioAccount,
   type TransactionType,
 } from "@/domain/portfolio";
-import { analyzePortfolio, type Holding, type PriceMap } from "@/engine/portfolio/metrics";
+import { analyzePortfolio, type PriceMap } from "@/engine/portfolio/metrics";
 import { SecurityEditorRow } from "./SecurityEditor";
 import { SummaryCards } from "./SummaryCards";
 import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
@@ -35,7 +36,7 @@ import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
 import { useCollapsedGroups } from "./grouping";
-import { HoldingDetail } from "./HoldingDetail";
+import { PositionDetail, type PositionSelection } from "./PositionDetail";
 import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
 import { ExportMenu } from "./ExportMenu";
@@ -173,7 +174,7 @@ export function PortfolioApp() {
   const [tab, setTab] = useState<Tab>("holdings");
   const [performanceView, setPerformanceView] = useState<PerformanceView>("overTime");
   const [scope, setScope] = useState<string>(ALL_ACCOUNTS_SCOPE);
-  const [selected, setSelected] = useState<Holding | null>(null);
+  const [selected, setSelected] = useState<PositionSelection | null>(null);
   const [importing, setImporting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -308,6 +309,30 @@ export function PortfolioApp() {
     () => new Map(portfolio.accounts.map((a) => [a.id, a.name])),
     [portfolio.accounts],
   );
+
+  /**
+   * Every transaction the current account scope can see. The detail drawer
+   * narrows this to one name itself, so a position opened from Realized or
+   * Allocation -- neither of which carries a holding -- still lists its own
+   * ledger without either panel having to hand one over.
+   */
+  const scopedTransactions = useMemo(
+    () =>
+      scopeAccountIds === null
+        ? portfolio.transactions
+        : portfolio.transactions.filter((tx) => scopeAccountIds.includes(tx.accountId)),
+    [portfolio.transactions, scopeAccountIds],
+  );
+
+  /**
+   * Opens the detail drawer on a name, from wherever it was clicked.
+   *
+   * Holdings clicks name an account, because a row there is one account's side
+   * of a position. Everywhere else -- a realized lot, an allocation slice, a
+   * by-stock row -- means the name itself, across the whole scope.
+   */
+  const openPosition = (symbol: string, accountId: Id | null = null) =>
+    setSelected({ symbol, accountId });
 
   /**
    * Filters narrow which rows are listed, never how they're valued. Weights and
@@ -468,9 +493,9 @@ export function PortfolioApp() {
         break;
       }
       case "symbol":
-        setTab("holdings");
-        setSearch(label);
-        break;
+        // Handled by the panel itself, which opens the detail drawer rather
+        // than leaving for Holdings.
+        return;
       case "side":
         setTab("holdings");
         setSideFilter(label === "Short" ? "short" : "long");
@@ -691,7 +716,7 @@ export function PortfolioApp() {
               grouping={grouping}
               onGroupingChange={setGrouping}
               collapse={holdingCollapse}
-              onSelect={setSelected}
+              onSelect={(holding) => openPosition(holding.symbol, holding.accountId)}
             />
           </div>
         )}
@@ -705,6 +730,7 @@ export function PortfolioApp() {
             facets={facets}
             onFacetsChange={setFacets}
             onDrillDown={handleDrillDown}
+            onSelectSymbol={(symbol) => openPosition(symbol)}
           >
             <div>
               <div className="mb-2 flex items-baseline justify-between">
@@ -753,10 +779,7 @@ export function PortfolioApp() {
               closedLots={analysis.closedLots}
               search={search}
               facets={facets}
-              onSelectSymbol={(symbol) => {
-                setSearch(symbol);
-                setTab("holdings");
-              }}
+              onSelectSymbol={(symbol) => openPosition(symbol)}
               viewToggle={performanceToggle}
             />
           ))}
@@ -767,6 +790,7 @@ export function PortfolioApp() {
             summary={summary}
             accountNames={accountNames}
             search={search}
+            onSelectSymbol={(symbol) => openPosition(symbol)}
           />
         )}
 
@@ -791,19 +815,15 @@ export function PortfolioApp() {
       </main>
 
       {selected && (
-        <HoldingDetail
-          holding={selected}
-          transactions={portfolio.transactions
-            .filter(
-              (tx) =>
-                tx.accountId === selected.accountId &&
-                tx.symbol !== null &&
-                normalizeSymbol(tx.symbol) === selected.symbol,
-            )
-            .sort((a, b) => (a.date < b.date ? 1 : -1))}
-          closedLots={analysis.closedLots.filter(
-            (lot) => lot.accountId === selected.accountId && lot.symbol === selected.symbol,
-          )}
+        <PositionDetail
+          // Remounted per position, so one name's chart range and custom dates
+          // never carry over onto the next one opened.
+          key={`${selected.symbol}:${selected.accountId ?? "all"}`}
+          selection={selected}
+          holdings={analysis.holdings}
+          closedLots={analysis.closedLots}
+          transactions={scopedTransactions}
+          accountNames={accountNames}
           onClose={() => setSelected(null)}
         />
       )}

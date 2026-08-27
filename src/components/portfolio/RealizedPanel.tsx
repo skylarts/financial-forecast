@@ -67,12 +67,15 @@ export function RealizedPanel({
   summary,
   accountNames,
   search,
+  onSelectSymbol,
 }: {
   closedLots: ClosedLot[];
   summary: PortfolioSummary;
   accountNames: Map<string, string>;
   /** Owned by the shared filter bar above the tabs. */
   search: string;
+  /** Opens the detail drawer on the name a lot belongs to. */
+  onSelectSymbol: (symbol: string) => void;
 }) {
   const [grouping, setGrouping] = useState<RealizedGrouping>("none");
   const [outcome, setOutcome] = useState<Outcome>("all");
@@ -257,7 +260,12 @@ export function RealizedPanel({
                         )}
                         {!collapsed &&
                           group.rows.map((lot, i) => (
-                            <tr key={`${lot.closeTxId}-${i}`} className="border-b border-border-soft">
+                            <tr
+                              key={`${lot.closeTxId}-${i}`}
+                              onClick={() => onSelectSymbol(lot.symbol)}
+                              title={`Open ${lot.symbol}`}
+                              className="cursor-pointer border-b border-border-soft transition-colors hover:bg-panel-2"
+                            >
                               <td className={`${CELL} text-left font-semibold text-foreground`}>
                                 {lot.symbol}
                               </td>

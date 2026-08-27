@@ -146,6 +146,7 @@ export function AllocationPanel({
   facets,
   onFacetsChange,
   onDrillDown,
+  onSelectSymbol,
   children,
 }: {
   holdings: Holding[];
@@ -158,6 +159,8 @@ export function AllocationPanel({
   onFacetsChange: (update: (current: HoldingFacets) => HoldingFacets) => void;
   /** Sends a slice through to the holdings view as a filter. */
   onDrillDown: (dimension: AllocationDimension, label: string) => void;
+  /** Opens the detail drawer on one name, for a slice of the by-holding ring. */
+  onSelectSymbol: (symbol: string) => void;
   /** The classify-holdings controls, which live below the charts. */
   children?: React.ReactNode;
 }) {
@@ -243,6 +246,12 @@ export function AllocationPanel({
     }
     if (dimension === "theme") {
       onFacetsChange((f) => ({ ...f, theme: { mode: "include", selected: new Set([label]) } }));
+      return;
+    }
+    // A holding slice is a name, and a name has a detail panel -- no reason to
+    // send it to Holdings and make the reader find the row.
+    if (dimension === "symbol") {
+      onSelectSymbol(label);
       return;
     }
     if (dimension === "instrumentType") {
@@ -356,7 +365,9 @@ export function AllocationPanel({
               titleFor={(label) =>
                 dimension === "assetClass" || dimension === "theme" || dimension === "instrumentType"
                   ? `Filter this breakdown to ${label}`
-                  : `Show ${label} in Holdings`
+                  : dimension === "symbol"
+                    ? `Open ${label}`
+                    : `Show ${label} in Holdings`
               }
             />
           </div>
