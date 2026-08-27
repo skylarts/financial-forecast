@@ -45,6 +45,7 @@ import type { AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
+import { useMarketIndexStore } from "@/store/useMarketIndexes";
 
 /**
  * Both panels pull in Recharts, and only one tab is ever showing at a time --
@@ -186,6 +187,15 @@ export function PortfolioApp() {
     stale: liveStaleSymbols,
     refresh,
   } = usePrices(symbols);
+
+  // The index strip keeps its own quotes, so "Refresh prices" has to ask it
+  // too -- otherwise the button leaves the row of index moves sitting on
+  // numbers up to that store's own refresh window old.
+  const fetchIndexes = useMarketIndexStore((s) => s.fetchIndexes);
+  const refreshPrices = () => {
+    refresh();
+    void fetchIndexes(true);
+  };
 
   const securityBySymbol = useMemo(
     () => new Map(portfolio.securities.map((s) => [normalizeSymbol(s.symbol), s])),
@@ -499,7 +509,7 @@ export function PortfolioApp() {
               ))}
             </optgroup>
           </select>
-          <Btn onClick={refresh} title="Refetch quotes now">
+          <Btn onClick={refreshPrices} title="Refetch quotes now">
             {pricesLoading ? "Refreshing…" : "Refresh prices"}
           </Btn>
           {portfolio.transactions.length === 0 && (
