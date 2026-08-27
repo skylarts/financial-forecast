@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CartesianGrid,
   ComposedChart,
@@ -27,6 +27,8 @@ interface Marker {
 }
 
 interface ChartRow {
+  /** Position in the series, so the tooltip can reach nearby days. */
+  index: number;
   date: string;
   close: number;
   buy: Marker["y"];
@@ -62,7 +64,8 @@ function tradeValue(tx: Transaction): number {
  * original price, well off the scale of the prices around it.
  */
 function buildRows(points: readonly PricePoint[], transactions: readonly Transaction[]): ChartRow[] {
-  const rows: ChartRow[] = points.map((point) => ({
+  const rows: ChartRow[] = points.map((point, index) => ({
+    index,
     date: point.date,
     close: point.close,
     buy: null,
@@ -117,6 +120,18 @@ function markerSizes(values: readonly number[]): (value: number) => number {
     MIN_AREA + (MAX_AREA - MIN_AREA) * Math.min(Math.sqrt(value / largest), 1);
 }
 
+/** Chart geometry, needed to turn a pixel hit radius into a number of days. */
+const Y_AXIS_WIDTH = 56;
+const RIGHT_MARGIN = 12;
+
+/**
+ * How far from a marker a hover still counts, in pixels.
+ *
+ * Sized to the markers themselves -- a large one is about 11px to either side
+ * of its centre -- plus a little slack, so pointing at a triangle hits it.
+ */
+const HIT_RADIUS_PX = 14;
+
 interface MarkerShapeProps {
   cx?: number;
   cy?: number;
@@ -157,9 +172,67 @@ function triangleMarker(up: boolean, sizeKey: "buySize" | "sellSize", color: str
 const BuyMarker = triangleMarker(true, "buySize", "var(--buy)");
 const SellMarker = triangleMarker(false, "sellSize", "var(--sell)");
 
-function ChartTooltip({ active, payload }: { active?: boolean; payload?: { payload: ChartRow }[] }) {
+/**
+ * The nearest trading day carrying a trade, or null if none is close enough.
+ *
+ * `tradeIndices` is sorted, so this walks in from a binary-search insertion
+ * point rather than scanning every day.
+ */
+export function nearestTradeIndex(
+  tradeIndices: readonly number[],
+  index: number,
+  radius: number,
+): number | null {
+  if (tradeIndices.length === 0) return null;
+  let lo = 0;
+  let hi = tradeIndices.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (tradeIndices[mid] < index) lo = mid + 1;
+    else hi = mid;
+  }
+  const after = tradeIndices[lo];
+  const before = tradeIndices[lo - 1];
+  const best =
+    after === undefined
+      ? before
+      : before === undefined || after - index <= index - before
+        ? after
+        : before;
+  return Math.abs(best - index) <= radius ? best : null;
+}
+
+/**
+ * Trade details on hover, snapping to a trade a few pixels away.
+ *
+ * Recharts picks the tooltip's row by x-axis category, not by what the cursor
+ * is actually over, so on a five-year chart each day is a ~1px target and most
+ * trades are unreachable -- the marker is drawn far wider than the day it sits
+ * on. Widening the polygon wouldn't help, since the polygons take no part in
+ * hovering. So when the hovered day has no trade, we hand back the closest one
+ * within roughly a marker's width instead, which is the hit box the markers
+ * always looked like they had.
+ */
+function ChartTooltip({
+  active,
+  payload,
+  rows,
+  tradeIndices,
+  snapRadius,
+}: {
+  active?: boolean;
+  payload?: { payload: ChartRow }[];
+  rows?: readonly ChartRow[];
+  tradeIndices?: readonly number[];
+  snapRadius?: number;
+}) {
   if (!active || !payload?.length) return null;
-  const row = payload[0].payload;
+  const hovered = payload[0].payload;
+  const snapped =
+    hovered.trades.length > 0 || !rows || !tradeIndices
+      ? null
+      : nearestTradeIndex(tradeIndices, hovered.index, snapRadius ?? 0);
+  const row = rows && snapped !== null ? rows[snapped] : hovered;
   return (
     <div className="rounded-md border border-border bg-panel px-3 py-2 text-[12px] shadow-lg">
       <div className="font-semibold text-foreground">{shortDate(row.date)}</div>
@@ -217,6 +290,30 @@ export function PriceChart({
 }) {
   const rows = useMemo(() => buildRows(points, transactions), [points, transactions]);
 
+  const tradeIndices = useMemo(
+    () => rows.filter((row) => row.trades.length > 0).map((row) => row.index),
+    [rows],
+  );
+
+  // The plot's own width, measured rather than assumed: how many days sit under
+  // HIT_RADIUS_PX depends entirely on how wide the drawer happens to be.
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [plotWidth, setPlotWidth] = useState(0);
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setPlotWidth(entry.contentRect.width - Y_AXIS_WIDTH - RIGHT_MARGIN);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const snapRadius = useMemo(() => {
+    if (plotWidth <= 0 || rows.length < 2) return 0;
+    return Math.max(0, Math.round((HIT_RADIUS_PX * (rows.length - 1)) / plotWidth));
+  }, [plotWidth, rows.length]);
+
   const sizeFor = useMemo(
     () => markerSizes(rows.flatMap((row) => [row.buyValue, row.sellValue].filter((v) => v > 0))),
     [rows],
@@ -259,7 +356,7 @@ export function PriceChart({
 
   return (
     <div>
-      <div className="h-64 w-full">
+      <div ref={plotRef} className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={sized} margin={{ top: 12, right: 12, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--color-border-soft)" vertical={false} />
@@ -277,7 +374,11 @@ export function PriceChart({
               domain={["auto", "auto"]}
               stroke="var(--color-border)"
             />
-            <Tooltip content={<ChartTooltip />} />
+            <Tooltip
+              content={
+                <ChartTooltip rows={sized} tradeIndices={tradeIndices} snapRadius={snapRadius} />
+              }
+            />
             <Line
               type="monotone"
               dataKey="close"
