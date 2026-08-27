@@ -327,56 +327,6 @@ export async function fetchHistories(
   return mapSymbols(symbols, (symbol) => fetchHistory(symbol, range));
 }
 
-/** Dividend events for many symbols, with the same bounded fan-out as quotes. */
-export async function fetchDividendsFor(
-  symbols: readonly string[],
-  range = "10y",
-): Promise<Map<string, DividendEvent[]>> {
-  return mapSymbols(symbols, (symbol) => fetchDividends(symbol, range));
-}
-
-export interface DividendEvent {
-  /** Ex-dividend date: own the shares before this and the payment is yours. */
-  date: ISODate;
-  /** Dollars per share. */
-  amount: number;
-}
-
-const dividendCache = new Map<string, CacheEntry<DividendEvent[]>>();
-
-/**
- * Every dividend the feed has on record for a symbol, oldest first.
- *
- * Cached as long as price history is: a dividend that has already been declared
- * never changes, and the next one is a quarter away.
- *
- * The dates are ex-dates, not pay dates. That is the one that decides who gets
- * paid -- ownership before the ex-date is what entitles you -- and it is the
- * only one the feed reports.
- */
-export async function fetchDividends(symbol: string, range = "10y"): Promise<DividendEvent[]> {
-  const key = `${symbol.toUpperCase()}::${range}`;
-  const cached = dividendCache.get(key);
-  if (cached && Date.now() - cached.fetchedAt < HISTORY_TTL_MS) return cached.value;
-
-  const outcome = await fetchChart(symbol, range, "div");
-  if (outcome.status !== "ok") return cached?.value ?? [];
-
-  const raw = outcome.result.events?.dividends ?? {};
-  const events: DividendEvent[] = [];
-  for (const entry of Object.values(raw)) {
-    if (typeof entry?.amount !== "number" || typeof entry?.date !== "number") continue;
-    if (entry.amount <= 0) continue;
-    events.push({ date: isoFromEpochSeconds(entry.date), amount: entry.amount });
-  }
-  events.sort((a, b) => (a.date < b.date ? -1 : 1));
-
-  // A symbol that genuinely pays nothing caches as an empty list, so it isn't
-  // re-asked on every visit. Only a failed request falls back to what's held.
-  dividendCache.set(key, { value: events, fetchedAt: Date.now() });
-  return events;
-}
-
 /** Daily closes for one symbol, oldest first. Empty when the feed has nothing. */
 export async function fetchHistory(symbol: string, range = "10y"): Promise<SymbolHistory> {
   const key = `${symbol.toUpperCase()}::${range}`;

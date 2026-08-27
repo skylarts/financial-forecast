@@ -44,23 +44,60 @@ export function buildGroups<T>(rows: readonly T[], labelFor: (row: T) => string)
   return [...map.entries()].map(([label, groupRows]) => ({ key: label, label, rows: groupRows }));
 }
 
+/**
+ * Reorders groups by their own subtotal of whatever column is being sorted on.
+ *
+ * First-row order is a fair proxy while every row's money belongs to exactly
+ * one group, but grouping by asset class hands each group only a slice of a
+ * multi-class fund: the group that happens to hold the top row can easily be
+ * the smaller pile of money. Ranking by the subtotal is what "sorted by value"
+ * means once the value is divided.
+ *
+ * Only meaningful for columns that add up -- ranking groups by a summed price
+ * or a summed percentage would be arithmetic on nothing -- so callers pass
+ * `total` only for those and leave the rest in first-row order.
+ */
+export function orderGroupsBy<T>(
+  groups: readonly Group<T>[],
+  total: (rows: readonly T[]) => number,
+  direction: "asc" | "desc",
+): Group<T>[] {
+  const factor = direction === "asc" ? 1 : -1;
+  return groups
+    .map((group) => ({ group, rank: total(group.rows) }))
+    .sort((a, b) => (a.rank - b.rank) * factor)
+    .map((entry) => entry.group);
+}
+
 export interface CollapseState {
   isCollapsed: (key: string) => boolean;
   toggle: (key: string) => void;
   expandAll: () => void;
-  collapseAll: (keys: readonly string[]) => void;
-  anyCollapsed: boolean;
+  collapseAll: () => void;
+  /** Every group open, with nothing toggled since. */
+  allExpanded: boolean;
+  /** Every group shut, with nothing toggled since. */
+  allCollapsed: boolean;
 }
 
 /**
  * Which groups are collapsed, cleared whenever the grouping dimension changes.
  *
- * Without the reset, collapsing "Brokerage" under by-account and then switching
- * to by-class would leave a differently-named group collapsed for no visible
- * reason -- the keys are only meaningful within one dimension.
+ * Held as a default plus the groups that depart from it, rather than as the set
+ * of collapsed keys: a table that opens collapsed has to answer "is this group
+ * shut" for keys that don't exist yet when the dimension is picked, and a set
+ * of keys can only ever answer no.
+ *
+ * The reset on a dimension change matters for the same reason it always did --
+ * collapsing "Brokerage" under by-account and then switching to by-class would
+ * otherwise leave a differently-named group collapsed for no visible reason.
  */
-export function useCollapsedGroups(dimension: string): CollapseState {
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+export function useCollapsedGroups(
+  dimension: string,
+  { defaultCollapsed = false }: { defaultCollapsed?: boolean } = {},
+): CollapseState {
+  const initial = () => ({ collapsedByDefault: defaultCollapsed, toggled: new Set<string>() as ReadonlySet<string> });
+  const [state, setState] = useState(initial);
   const [lastDimension, setLastDimension] = useState(dimension);
 
   // Adjusted during render rather than in an effect: an effect would paint one
@@ -69,29 +106,36 @@ export function useCollapsedGroups(dimension: string): CollapseState {
   // re-runs this component immediately on the set, before touching the DOM.
   if (lastDimension !== dimension) {
     setLastDimension(dimension);
-    if (collapsed.size > 0) setCollapsed(new Set());
+    setState(initial);
   }
 
   const toggle = useCallback((key: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (!next.delete(key)) next.add(key);
-      return next;
+    setState((current) => {
+      const toggled = new Set(current.toggled);
+      if (!toggled.delete(key)) toggled.add(key);
+      return { ...current, toggled };
     });
   }, []);
 
-  const expandAll = useCallback(() => setCollapsed(new Set()), []);
-  const collapseAll = useCallback((keys: readonly string[]) => setCollapsed(new Set(keys)), []);
+  const expandAll = useCallback(
+    () => setState({ collapsedByDefault: false, toggled: new Set<string>() }),
+    [],
+  );
+  const collapseAll = useCallback(
+    () => setState({ collapsedByDefault: true, toggled: new Set<string>() }),
+    [],
+  );
 
   return useMemo(
     () => ({
-      isCollapsed: (key: string) => collapsed.has(key),
+      isCollapsed: (key: string) => state.toggled.has(key) !== state.collapsedByDefault,
       toggle,
       expandAll,
       collapseAll,
-      anyCollapsed: collapsed.size > 0,
+      allExpanded: !state.collapsedByDefault && state.toggled.size === 0,
+      allCollapsed: state.collapsedByDefault && state.toggled.size === 0,
     }),
-    [collapsed, toggle, expandAll, collapseAll],
+    [state, toggle, expandAll, collapseAll],
   );
 }
 
@@ -161,20 +205,20 @@ export function GroupHeaderRow({
 }
 
 /** Expand-all / collapse-all pair, shown next to a table's grouping control. */
-export function GroupToggles({
-  groupKeys,
-  collapse,
-}: {
-  groupKeys: readonly string[];
-  collapse: CollapseState;
-}) {
+export function GroupToggles({ collapse }: { collapse: CollapseState }) {
+  const link =
+    "text-[11.5px] underline transition-colors hover:text-foreground disabled:no-underline disabled:opacity-40 disabled:hover:text-dim-2";
   return (
-    <button
-      type="button"
-      onClick={() => (collapse.anyCollapsed ? collapse.expandAll() : collapse.collapseAll(groupKeys))}
-      className="text-[11.5px] text-dim-2 underline transition-colors hover:text-foreground"
-    >
-      {collapse.anyCollapsed ? "Expand all" : "Collapse all"}
-    </button>
+    <span className="flex items-center gap-2 text-dim-2">
+      <button type="button" onClick={collapse.expandAll} disabled={collapse.allExpanded} className={link}>
+        Expand all
+      </button>
+      <span aria-hidden className="text-[11.5px] text-dim-2">
+        ·
+      </span>
+      <button type="button" onClick={collapse.collapseAll} disabled={collapse.allCollapsed} className={link}>
+        Collapse all
+      </button>
+    </span>
   );
 }

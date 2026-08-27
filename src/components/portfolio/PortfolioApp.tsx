@@ -29,10 +29,10 @@ import {
   ownerScope,
 } from "@/lib/portfolio/scope";
 import type { ImportRow } from "@/lib/portfolio/importer";
-import { toTransaction, type ProposedDividend } from "@/engine/portfolio/dividends";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
+import { GroupToggles, useCollapsedGroups } from "./grouping";
 import { HoldingDetail } from "./HoldingDetail";
 import { ImportDialog } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
@@ -41,7 +41,6 @@ import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import type { AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
-import { DividendSyncDialog } from "./DividendSyncDialog";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 
@@ -77,7 +76,7 @@ const TABS = [
 type Tab = (typeof TABS)[number]["value"];
 
 const GROUPINGS = [
-  { value: "none", label: "None" },
+  { value: "none", label: "No grouping" },
   { value: "account", label: "By account" },
   { value: "assetClass", label: "By class" },
   { value: "theme", label: "By theme" },
@@ -148,7 +147,6 @@ export function PortfolioApp() {
   const hasHydrated = usePortfolioStore((s) => s.hasHydrated);
   const importTransactions = usePortfolioStore((s) => s.importTransactions);
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
-  const addTransactions = usePortfolioStore((s) => s.addTransactions);
   const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
   const addAccount = usePortfolioStore((s) => s.addAccount);
@@ -167,13 +165,12 @@ export function PortfolioApp() {
   const [scope, setScope] = useState<string>(ALL_ACCOUNTS_SCOPE);
   const [selected, setSelected] = useState<Holding | null>(null);
   const [importing, setImporting] = useState(false);
-  const [syncingDividends, setSyncingDividends] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
-  const [hideSmall, setHideSmall] = useState(false);
   const [grouping, setGrouping] = useState<HoldingGrouping>("none");
+  const holdingCollapse = useCollapsedGroups(grouping);
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
   const {
@@ -290,22 +287,18 @@ export function PortfolioApp() {
 
   /**
    * Filters narrow which rows are listed, never how they're valued. Weights and
-   * the summary tiles stay computed across the whole account scope, so hiding
-   * small positions can't make the remaining ones look like a bigger share of
-   * the portfolio than they are.
+   * the summary tiles stay computed across the whole account scope, so a
+   * filtered-down list can't make the remaining rows look like a bigger share
+   * of the portfolio than they are.
    */
   const visibleHoldings = useMemo(() => {
     const query = search.trim().toUpperCase();
-    // "Small" is relative to the portfolio, not a fixed dollar figure: half a
-    // percent is roughly where a position stops moving the needle at any size.
-    const threshold = hideSmall ? 0.005 : 0;
     return analysis.holdings.filter((h) => {
       if (query && !h.symbol.includes(query) && !h.name.toUpperCase().includes(query)) return false;
       if (sideFilter !== "all" && h.side !== sideFilter) return false;
-      if (Math.abs(h.weight) < threshold) return false;
       return true;
     });
-  }, [analysis.holdings, search, sideFilter, hideSmall]);
+  }, [analysis.holdings, search, sideFilter]);
 
   const knownThemes = useMemo(() => allThemes(portfolio.securities.map((s) => s.themes)), [portfolio.securities]);
   const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
@@ -426,21 +419,6 @@ export function PortfolioApp() {
     }
   };
 
-  /**
-   * Writes the dividends the user accepted.
-   *
-   * One store write rather than one per row: a first sync on a long-held
-   * dividend payer can be a couple of hundred payments, and each write re-tidies
-   * the whole ledger.
-   */
-  const handleApplyDividends = (proposals: ProposedDividend[]) => {
-    const added = addTransactions(proposals.map(toTransaction));
-    setSyncingDividends(false);
-    setFlash(
-      `Added ${added} dividend${added === 1 ? "" : "s"}. They're ordinary transactions now — edit or delete any of them.`,
-    );
-  };
-
   const handlePush = (account: PortfolioAccount, value: number, costBasis: number) => {
     const target = scenario.accounts.find((a) => a.id === account.forecastAccountId);
     if (!target) return;
@@ -485,12 +463,6 @@ export function PortfolioApp() {
           </select>
           <Btn onClick={refresh} title="Refetch quotes now">
             {pricesLoading ? "Refreshing…" : "Refresh prices"}
-          </Btn>
-          <Btn
-            onClick={() => setSyncingDividends(true)}
-            title="Work out dividends from what you held on each ex-date"
-          >
-            Sync dividends
           </Btn>
           <ExportMenu portfolio={portfolio} />
           <Btn
@@ -619,14 +591,7 @@ export function PortfolioApp() {
                   </option>
                 ))}
               </select>
-              <label className="flex items-center gap-1.5 text-[12px] text-dim">
-                <input
-                  type="checkbox"
-                  checked={hideSmall}
-                  onChange={(e) => setHideSmall(e.target.checked)}
-                />
-                Hide under 0.5%
-              </label>
+              {grouping !== "none" && <GroupToggles collapse={holdingCollapse} />}
               {visibleHoldings.length !== analysis.holdings.length && (
                 <span className="text-[11.5px] text-dim-2">
                   Showing {visibleHoldings.length} of {analysis.holdings.length}
@@ -635,7 +600,6 @@ export function PortfolioApp() {
                     onClick={() => {
                       setSearch("");
                       setSideFilter("all");
-                      setHideSmall(false);
                     }}
                     className="ml-2 underline hover:text-foreground"
                   >
@@ -649,6 +613,7 @@ export function PortfolioApp() {
               accountNames={accountNames}
               showAccount={soleAccountId === null}
               grouping={grouping}
+              collapse={holdingCollapse}
               onSelect={setSelected}
             />
           </div>
@@ -748,15 +713,6 @@ export function PortfolioApp() {
             (lot) => lot.accountId === selected.accountId && lot.symbol === selected.symbol,
           )}
           onClose={() => setSelected(null)}
-        />
-      )}
-
-      {syncingDividends && (
-        <DividendSyncDialog
-          portfolio={portfolio}
-          scopeAccountIds={scopeAccountIds}
-          onClose={() => setSyncingDividends(false)}
-          onApply={handleApplyDividends}
         />
       )}
 
