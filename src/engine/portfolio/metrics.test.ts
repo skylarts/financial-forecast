@@ -473,6 +473,42 @@ describe("short positions", () => {
   });
 });
 
+describe("the portfolio's annualized return", () => {
+  /** A clean doubling over exactly one year, funded by a deposit that covers it. */
+  const doubled = portfolio([
+    deposit(2_000),
+    tx({ type: "buy", date: "2025-08-04", quantity: 10, price: 100 }),
+  ]);
+
+  it("reads the return on what was invested, not on what was deposited", () => {
+    const result = analyzePortfolio(doubled, { VTI: { price: 200, date: "2026-08-04" } }, {
+      asOf: "2026-08-04",
+    });
+    expect(result.summary.irr).toBeCloseTo(1, 2);
+  });
+
+  it("ignores idle cash instead of crediting the positions with it", () => {
+    const withMoreCash = portfolio([
+      deposit(50_000),
+      tx({ type: "buy", date: "2025-08-04", quantity: 10, price: 100 }),
+    ]);
+    const lean = analyzePortfolio(doubled, { VTI: { price: 200, date: "2026-08-04" } }, {
+      asOf: "2026-08-04",
+    });
+    const cashHeavy = analyzePortfolio(withMoreCash, { VTI: { price: 200, date: "2026-08-04" } }, {
+      asOf: "2026-08-04",
+    });
+    // The same trade, the same result -- the extra $48,000 sitting in cash was
+    // never invested and says nothing about how the investment did.
+    expect(cashHeavy.summary.irr).toBeCloseTo(lean.summary.irr ?? 0, 6);
+  });
+
+  it("still reports nothing when there is no trade to measure", () => {
+    const cashOnly = analyzePortfolio(portfolio([deposit(10_000)]), {}, { asOf: "2026-08-04" });
+    expect(cashOnly.summary.irr).toBeNull();
+  });
+});
+
 describe("xirr", () => {
   it("solves a clean doubling over one year", () => {
     const rate = xirr([

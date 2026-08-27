@@ -15,6 +15,7 @@ import {
   type PositionSide,
   type Security,
   type Transaction,
+  type TransactionType,
 } from "@/domain/portfolio";
 import { accountCashBalances } from "./cash";
 import { buildLotLedger, type ClosedLot, type LedgerWarning, type OpenLot } from "./lots";
@@ -302,13 +303,22 @@ function priceFor(symbol: string, prices: PriceMap, security: Security | undefin
  * computable from a typical import. Buys count as money in, sells and
  * dividends as money out, and whatever is still held is treated as a final
  * payout on the valuation date.
+ *
+ * Funding rows are dropped rather than counted, which is the difference between
+ * a return and a bank statement: a deposit is money crossing into the account,
+ * not a payout the investments produced. Counted as flows they read as profit,
+ * which on a well-funded ledger pushed the solved rate outside any believable
+ * bracket and reported no figure at all.
  */
+const FUNDING_TYPES = new Set<TransactionType>(["cash_deposit", "cash_withdrawal"]);
+
 function returnFlows(
   transactions: readonly Transaction[],
   terminalValue: number,
   asOf: ISODate,
 ): { date: ISODate; amount: number }[] {
   const flows = transactions
+    .filter((tx) => !FUNDING_TYPES.has(tx.type))
     .map((tx) => ({ date: tx.date, amount: signedCashFlow(tx) }))
     .filter((flow) => flow.amount !== 0);
   if (terminalValue > 0) flows.push({ date: asOf, amount: terminalValue });
@@ -545,7 +555,10 @@ export function analyzePortfolio(
       .reduce((sum, lot) => sum + lot.gain, 0),
     income,
     totalGain: unrealizedGain + realizedGain + income,
-    irr: xirr(returnFlows(transactions, marketValue + cash, asOf)),
+    // Positions only, to match the flows above: uninvested cash was never put
+    // to work, and paying it out at the end would credit the investments with a
+    // return on money that only ever sat there.
+    irr: xirr(returnFlows(transactions, marketValue, asOf)),
   };
 
   return {

@@ -29,6 +29,7 @@ import {
   ownerScope,
 } from "@/lib/portfolio/scope";
 import type { ImportRow } from "@/lib/portfolio/importer";
+import { buildDemoPortfolio } from "@/lib/portfolio/demoPortfolio";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
@@ -150,6 +151,7 @@ export function PortfolioApp() {
   const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
   const addAccount = usePortfolioStore((s) => s.addAccount);
+  const loadPortfolio = usePortfolioStore((s) => s.loadPortfolio);
   usePortfolioCloudSync();
   // Mounted here too, not just on the forecast's own page (src/app/page.tsx) --
   // otherwise a plan edit made from this page (the auto-sync below, or the
@@ -170,7 +172,7 @@ export function PortfolioApp() {
   const [search, setSearch] = useState("");
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
   const [grouping, setGrouping] = useState<HoldingGrouping>("none");
-  const holdingCollapse = useCollapsedGroups(grouping);
+  const holdingCollapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
   const {
@@ -419,6 +421,26 @@ export function PortfolioApp() {
     }
   };
 
+  /**
+   * Fills an empty tracker with the demo ledger, owned by this household's own
+   * people and pointed at their own forecast accounts.
+   *
+   * Offered only while there is nothing here to lose -- it replaces the
+   * portfolio outright, and a button that could do that to a real ledger has no
+   * business sitting in the header.
+   */
+  const handleLoadDemo = () => {
+    const demo = buildDemoPortfolio(people, scenario.accounts, new Date().toISOString().slice(0, 10));
+    loadPortfolio(demo);
+    const linked = demo.accounts.filter((a) => a.forecastAccountId !== null).length;
+    setFlash(
+      `Loaded ${demo.transactions.length} sample transactions across ${demo.accounts.length} accounts` +
+        (linked > 0
+          ? `, ${linked} of them linked to forecast accounts. Nothing syncs into the forecast until you turn it on per account.`
+          : "."),
+    );
+  };
+
   const handlePush = (account: PortfolioAccount, value: number, costBasis: number) => {
     const target = scenario.accounts.find((a) => a.id === account.forecastAccountId);
     if (!target) return;
@@ -464,6 +486,11 @@ export function PortfolioApp() {
           <Btn onClick={refresh} title="Refetch quotes now">
             {pricesLoading ? "Refreshing…" : "Refresh prices"}
           </Btn>
+          {portfolio.transactions.length === 0 && (
+            <Btn onClick={handleLoadDemo} title="Fill the tracker with a fictional ledger to look at">
+              Load sample data
+            </Btn>
+          )}
           <ExportMenu portfolio={portfolio} />
           <Btn
             variant="primary"
