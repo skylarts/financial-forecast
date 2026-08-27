@@ -15,16 +15,10 @@ import { money, percent, price, shares, toneFor } from "@/lib/portfolio/format";
 import { Segmented } from "@/components/ui/controls";
 import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
-import { FacetMenu } from "@/components/ui/FacetMenu";
 import { useSort, type SortAccessors } from "./useSort";
 import { SortHeader } from "./SortHeader";
 import {
-  assetClassFacetOptions,
-  emptyHoldingFacets,
-  holdingFacetsActive,
-  instrumentTypeFacetOptions,
   matchesHoldingFacets,
-  themeFacetOptions,
   type HoldingFacets,
 } from "./filters";
 
@@ -111,10 +105,15 @@ export function BySymbolPanel({
   holdings,
   closedLots,
   onSelectSymbol,
+  search,
+  facets,
   viewToggle,
 }: {
   holdings: Holding[];
   closedLots: ClosedLot[];
+  /** Both owned by the shared filter bar above the tabs. */
+  search: string;
+  facets: HoldingFacets;
   /** Jumps to the holdings view filtered to this ticker. */
   onSelectSymbol: (symbol: string) => void;
   /** The over-time / by-stock switch, handed down so it sits in this panel's
@@ -123,8 +122,6 @@ export function BySymbolPanel({
 }) {
   const [scope, setScope] = useState<RollupScope>("both");
   const [outcome, setOutcome] = useState<Outcome>("all");
-  const [search, setSearch] = useState("");
-  const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
 
   const all = useMemo(() => rollUpBySymbol(holdings, closedLots), [holdings, closedLots]);
 
@@ -158,10 +155,6 @@ export function BySymbolPanel({
   const { sort, toggle, apply } = useSort<SymbolRollup, Column>(accessors, "gain");
   const sorted = useMemo(() => apply(rows), [apply, rows]);
 
-  const assetClassOptions = useMemo(() => assetClassFacetOptions(all, facets), [all, facets]);
-  const themeOptions = useMemo(() => themeFacetOptions(all, facets), [all, facets]);
-  const instrumentTypeOptions = useMemo(() => instrumentTypeFacetOptions(all, facets), [all, facets]);
-
   // Ranked on the scope's own gain, so switching to Trades reshuffles these to
   // the best and worst round trips rather than leaving position figures behind.
   const ranked = useMemo(
@@ -177,8 +170,6 @@ export function BySymbolPanel({
   const totalGain = rows.reduce((sum, r) => sum + gainForScope(r, scope), 0);
   const winnerCount = rows.filter((r) => gainForScope(r, scope) > 0).length;
   const loserCount = rows.filter((r) => gainForScope(r, scope) < 0).length;
-
-  const filtersActive = search !== "" || holdingFacetsActive(facets) || outcome !== "all";
 
   if (all.length === 0) {
     return (
@@ -204,41 +195,13 @@ export function BySymbolPanel({
           size="sm"
           ariaLabel="Which half of the ledger to rank"
         />
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search symbol or name"
-          className="w-52 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
-        />
-        <FacetMenu
-          label="Class"
-          options={assetClassOptions}
-          state={facets.assetClass}
-          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
-        />
-        <FacetMenu
-          label="Theme"
-          options={themeOptions}
-          state={facets.theme}
-          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
-        />
-        <FacetMenu
-          label="Type"
-          options={instrumentTypeOptions}
-          state={facets.instrumentType}
-          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
-        />
         <OutcomeFilter value={outcome} onChange={setOutcome} />
         <FilterStatus
           shown={rows.length}
           total={all.length}
           noun="names"
-          active={filtersActive}
-          onClear={() => {
-            setSearch("");
-            setFacets(emptyHoldingFacets());
-            setOutcome("all");
-          }}
+          active={outcome !== "all"}
+          onClear={() => setOutcome("all")}
         />
       </div>
 

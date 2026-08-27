@@ -46,6 +46,16 @@ import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 import { FilterStatus } from "./FilterStatus";
+import { FacetMenu } from "@/components/ui/FacetMenu";
+import {
+  assetClassFacetOptions,
+  emptyHoldingFacets,
+  holdingFacetsActive,
+  instrumentTypeFacetOptions,
+  matchesHoldingFacets,
+  themeFacetOptions,
+  type HoldingFacets,
+} from "./filters";
 import { useMarketIndexStore } from "@/store/useMarketIndexes";
 
 /**
@@ -166,7 +176,12 @@ export function PortfolioApp() {
   const [importing, setImporting] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
 
+  // Search and the three facets are shared by every tab that can read them,
+  // rather than re-declared on each. They used to be four search boxes and
+  // three facet sets with seven independent memories, so narrowing to Crypto
+  // on Allocation and moving to Performance meant picking Crypto again.
   const [search, setSearch] = useState("");
+  const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
   const [grouping, setGrouping] = useState<HoldingGrouping>("none");
   const holdingCollapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
@@ -299,14 +314,35 @@ export function PortfolioApp() {
    * filtered-down list can't make the remaining rows look like a bigger share
    * of the portfolio than they are.
    */
-  const visibleHoldings = useMemo(() => {
+  // The shared filters alone, before Holdings adds its own side filter. This is
+  // the slice the bar's count describes, and what every other tab narrows to.
+  const scopedHoldings = useMemo(() => {
     const query = search.trim().toUpperCase();
     return analysis.holdings.filter((h) => {
       if (query && !h.symbol.includes(query) && !h.name.toUpperCase().includes(query)) return false;
-      if (sideFilter !== "all" && h.side !== sideFilter) return false;
+      if (!matchesHoldingFacets(h, facets)) return false;
       return true;
     });
-  }, [analysis.holdings, search, sideFilter]);
+  }, [analysis.holdings, search, facets]);
+
+  const visibleHoldings = useMemo(
+    () => scopedHoldings.filter((h) => sideFilter === "all" || h.side === sideFilter),
+    [scopedHoldings, sideFilter],
+  );
+
+  const assetClassOptions = useMemo(
+    () => assetClassFacetOptions(analysis.holdings, facets),
+    [analysis.holdings, facets],
+  );
+  const themeOptions = useMemo(
+    () => themeFacetOptions(analysis.holdings, facets),
+    [analysis.holdings, facets],
+  );
+  const instrumentTypeOptions = useMemo(
+    () => instrumentTypeFacetOptions(analysis.holdings, facets),
+    [analysis.holdings, facets],
+  );
+  const sharedFiltersActive = search !== "" || holdingFacetsActive(facets);
 
   const knownThemes = useMemo(() => allThemes(portfolio.securities.map((s) => s.themes)), [portfolio.securities]);
   const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
@@ -583,6 +619,48 @@ export function PortfolioApp() {
         retrying={pricesLoading}
       />
 
+      {/* Above the tabs because it applies to all of them, and below the
+          summary cards because it does not apply to those -- the cards answer
+          to the account picker in the header, which is the one scope control
+          with a wider reach than the tabs. */}
+      <div className="flex flex-wrap items-center gap-2 px-6 pb-3 pt-1">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search symbol or name"
+          aria-label="Search the portfolio"
+          className="w-56 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
+        />
+        <FacetMenu
+          label="Class"
+          options={assetClassOptions}
+          state={facets.assetClass}
+          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
+        />
+        <FacetMenu
+          label="Theme"
+          options={themeOptions}
+          state={facets.theme}
+          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
+        />
+        <FacetMenu
+          label="Type"
+          options={instrumentTypeOptions}
+          state={facets.instrumentType}
+          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
+        />
+        <FilterStatus
+          shown={scopedHoldings.length}
+          total={analysis.holdings.length}
+          noun="holdings"
+          active={sharedFiltersActive}
+          onClear={() => {
+            setSearch("");
+            setFacets(emptyHoldingFacets());
+          }}
+        />
+      </div>
+
       <div className="border-b border-border px-6">
         <Segmented options={TABS} value={tab} onChange={setTab} size="sm" ariaLabel="Portfolio view" />
       </div>
@@ -590,14 +668,10 @@ export function PortfolioApp() {
       <main className="flex-1">
         {tab === "holdings" && (
           <div className="p-5">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search symbol or name"
-                className="w-52 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
-              />
-              {hasShorts && (
+            {/* Only the side filter is Holdings' own now -- search and the
+                facets moved to the bar above the tabs. */}
+            {hasShorts && (
+              <div className="mb-3 flex flex-wrap items-center gap-2">
                 <Segmented
                   options={SIDE_FILTERS}
                   value={sideFilter}
@@ -605,18 +679,8 @@ export function PortfolioApp() {
                   size="sm"
                   ariaLabel="Filter by position side"
                 />
-              )}
-              <FilterStatus
-                shown={visibleHoldings.length}
-                total={analysis.holdings.length}
-                noun="holdings"
-                active={search !== "" || sideFilter !== "all"}
-                onClear={() => {
-                  setSearch("");
-                  setSideFilter("all");
-                }}
-              />
-            </div>
+              </div>
+            )}
             <HoldingsTable
               holdings={visibleHoldings}
               accountNames={accountNames}
@@ -635,6 +699,8 @@ export function PortfolioApp() {
             accounts={portfolio.accounts}
             accountNames={accountNames}
             people={people}
+            facets={facets}
+            onFacetsChange={setFacets}
             onDrillDown={handleDrillDown}
           >
             <div>
@@ -675,12 +741,15 @@ export function PortfolioApp() {
             <PerformancePanel
               portfolio={portfolio}
               scopeAccountIds={scopeAccountIds}
+              facets={facets}
               viewToggle={performanceToggle}
             />
           ) : (
             <BySymbolPanel
               holdings={analysis.holdings}
               closedLots={analysis.closedLots}
+              search={search}
+              facets={facets}
               onSelectSymbol={(symbol) => {
                 setSearch(symbol);
                 setTab("holdings");
@@ -694,11 +763,17 @@ export function PortfolioApp() {
             closedLots={analysis.closedLots}
             summary={summary}
             accountNames={accountNames}
+            search={search}
           />
         )}
 
         {tab === "transactions" && (
-          <TransactionsPanel portfolio={portfolio} scopeAccountIds={scopeAccountIds} />
+          <TransactionsPanel
+            portfolio={portfolio}
+            scopeAccountIds={scopeAccountIds}
+            search={search}
+            onSearchChange={setSearch}
+          />
         )}
 
         {tab === "accounts" && (
