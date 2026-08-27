@@ -1,5 +1,5 @@
 import { ASSET_CLASS_LABELS, INSTRUMENT_TYPE_LABELS, type AssetClass, type Exposure, type InstrumentType } from "@/domain/portfolio";
-import { EMPTY_FACET, facetActive, facetMatches, type FacetOption, type FacetState } from "@/components/ui/FacetMenu";
+import { EMPTY_FACET, facetActive, facetMatches, type FacetOption, type FacetState } from "@/components/ui/facets";
 
 /** A holding with no theme tags falls into this bucket for grouping and
  *  filtering, the same convention the theme allocation view uses. */
