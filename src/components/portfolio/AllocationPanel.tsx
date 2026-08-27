@@ -19,8 +19,8 @@ import {
 } from "@/engine/portfolio/metrics";
 import { money } from "@/lib/portfolio/format";
 import { ownerLabel } from "@/lib/people";
-import { Segmented } from "@/components/ui/controls";
 import { FacetMenu } from "@/components/ui/FacetMenu";
+import { FilterStatus } from "./FilterStatus";
 import {
   assetClassFacetOptions,
   emptyHoldingFacets,
@@ -257,13 +257,21 @@ export function AllocationPanel({
   return (
     <div className="space-y-6 p-5">
       <div className="flex flex-wrap items-center gap-2">
-        <Segmented
-          options={DIMENSIONS}
+        {/* Seven segments made this the widest control in the app, and the
+            labels are long enough that the strip wrapped on a narrow window.
+            A select says the same thing in a quarter of the space. */}
+        <select
           value={dimension}
-          onChange={setDimension}
-          size="sm"
-          ariaLabel="Break allocation down by"
-        />
+          onChange={(e) => setDimension(e.target.value as AllocationDimension)}
+          aria-label="Break allocation down by"
+          className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
+        >
+          {DIMENSIONS.map((d) => (
+            <option key={d.value} value={d.value}>
+              By {d.label.toLowerCase()}
+            </option>
+          ))}
+        </select>
         <FacetMenu
           label="Class"
           options={assetClassOptions}
@@ -283,13 +291,13 @@ export function AllocationPanel({
           onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
         />
         {filtersActive && (
-          <button
-            type="button"
-            onClick={() => setFacets(emptyHoldingFacets())}
-            className="text-[11.5px] text-dim-2 underline hover:text-foreground"
-          >
-            Clear filters
-          </button>
+          <FilterStatus
+            shown={filteredHoldings.length}
+            total={holdings.length}
+            noun="holdings"
+            active
+            onClear={() => setFacets(emptyHoldingFacets())}
+          />
         )}
         {hasCash && (
           <label className="flex items-center gap-1.5 text-[12px] text-dim">

@@ -13,6 +13,8 @@ import {
 } from "@/engine/portfolio/bySymbol";
 import { money, percent, price, shares, toneFor } from "@/lib/portfolio/format";
 import { Segmented } from "@/components/ui/controls";
+import { FilterStatus } from "./FilterStatus";
+import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { FacetMenu } from "@/components/ui/FacetMenu";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
 import {
@@ -33,14 +35,6 @@ const SCOPES = [
   { value: "positions", label: "Positions" },
   { value: "trades", label: "Trades" },
 ] as const;
-
-const OUTCOMES = [
-  { value: "all", label: "All" },
-  { value: "winners", label: "Winners" },
-  { value: "losers", label: "Losers" },
-] as const;
-
-type Outcome = (typeof OUTCOMES)[number]["value"];
 
 type Column =
   | "symbol"
@@ -171,9 +165,7 @@ export function BySymbolPanel({
       if (!inScope(row, scope)) return false;
       if (query && !row.symbol.includes(query) && !row.name.toUpperCase().includes(query)) return false;
       if (!matchesHoldingFacets(row, facets)) return false;
-      const gain = gainForScope(row, scope);
-      if (outcome === "winners" && gain <= 0) return false;
-      if (outcome === "losers" && gain >= 0) return false;
+      if (!matchesOutcome(outcome, gainForScope(row, scope))) return false;
       return true;
     });
   }, [all, scope, search, facets, outcome]);
@@ -267,29 +259,18 @@ export function BySymbolPanel({
           state={facets.instrumentType}
           onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
         />
-        <Segmented
-          options={OUTCOMES}
-          value={outcome}
-          onChange={setOutcome}
-          size="sm"
-          ariaLabel="Filter by outcome"
+        <OutcomeFilter value={outcome} onChange={setOutcome} />
+        <FilterStatus
+          shown={rows.length}
+          total={all.length}
+          noun="names"
+          active={filtersActive}
+          onClear={() => {
+            setSearch("");
+            setFacets(emptyHoldingFacets());
+            setOutcome("all");
+          }}
         />
-        <span className="text-[11.5px] text-dim-2">
-          {rows.length} of {all.length} names
-          {filtersActive && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearch("");
-                setFacets(emptyHoldingFacets());
-                setOutcome("all");
-              }}
-              className="ml-2 underline hover:text-foreground"
-            >
-              Clear filters
-            </button>
-          )}
-        </span>
       </div>
 
       <div className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">

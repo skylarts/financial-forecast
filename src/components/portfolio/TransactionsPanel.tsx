@@ -24,6 +24,7 @@ import { Btn } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
 import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
+import { FilterStatus } from "./FilterStatus";
 
 const TX_GROUPINGS = [
   { value: "none", label: "No grouping" },
@@ -561,18 +562,17 @@ export function TransactionsPanel({
             ))}
           </select>
           {grouping !== "none" && <GroupToggles collapse={collapse} />}
-          {filtersActive && (
-            <Btn
-              onClick={() => {
-                setSearch("");
-                setTypeFilter("all");
-                setFromDate("");
-                setToDate("");
-              }}
-            >
-              Clear filters
-            </Btn>
-          )}
+          <FilterStatus
+            shown={rows.length}
+            total={portfolio.transactions.length}
+            active={filtersActive}
+            onClear={() => {
+              setSearch("");
+              setTypeFilter("all");
+              setFromDate("");
+              setToDate("");
+            }}
+          />
           {/* Deletes exactly what the filters are showing, so the same control
               covers emptying the ledger before re-importing a corrected file
               and clearing one bad account or date range. */}
