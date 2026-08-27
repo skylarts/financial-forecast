@@ -7,6 +7,7 @@ import {
   normalizeSymbol,
   portfolioAccountSchema,
   portfolioSchema,
+  securitySchema,
   type Portfolio,
   type PortfolioAccount,
   type Security,
@@ -25,7 +26,25 @@ const STORAGE_KEY = "portfolio-tracker";
  * generated lot id names the contract the way the rest of the app will.
  */
 function tidy(portfolio: Portfolio): Portfolio {
-  return withAssignedLotIds(withCanonicalSymbols(withMigratedAccounts(portfolio)));
+  return withAssignedLotIds(withCanonicalSymbols(withMigratedAccounts(withMigratedSecurities(portfolio))));
+}
+
+/**
+ * Brings a stored security up to the current shape.
+ *
+ * Every field the classification work added -- `exposures`, `instrumentType`,
+ * `instrumentTypeSource`, `themes` -- has a default, but only a schema parse
+ * applies one. A security saved before this file existed reads back as a
+ * plain object with none of them, and the classify-holdings editor reads
+ * straight off the record without an optional-chain to fall back on, the same
+ * way it always has for `assetClass`. Without this, every pre-existing
+ * portfolio throws the moment that editor renders.
+ */
+function withMigratedSecurities(portfolio: Portfolio): Portfolio {
+  return {
+    ...portfolio,
+    securities: portfolio.securities.map((security) => securitySchema.parse(security)),
+  };
 }
 
 /**
