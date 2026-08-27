@@ -11,6 +11,7 @@ import {
 } from "@/domain/portfolio";
 import { analyzePortfolio, type Holding, type PriceMap } from "@/engine/portfolio/metrics";
 import { SecurityEditorRow } from "./SecurityEditor";
+import { SummaryCards } from "./SummaryCards";
 import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
 import { usePortfolioCloudSync } from "@/store/usePortfolioCloudSync";
@@ -20,7 +21,7 @@ import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButt
 import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
 import { useSecurityProfiles } from "@/store/useSecurityProfiles";
-import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
+import { money, shortDate } from "@/lib/portfolio/format";
 import {
   accountIdsInScope,
   accountScope,
@@ -128,17 +129,6 @@ function AccountMenu() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Stat({ label, value, tone, hint }: { label: string; value: string; tone?: string; hint?: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-panel px-4 py-3" title={hint}>
-      <div className="text-[10.5px] uppercase tracking-wide text-dim-2">{label}</div>
-      <div className={`mt-1 text-[19px] font-semibold tabular-nums ${tone || "text-foreground"}`}>
-        {value}
-      </div>
     </div>
   );
 }
@@ -543,32 +533,13 @@ export function PortfolioApp() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 px-6 py-4 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Total value" value={money(summary.totalValue)} hint="Positions plus uninvested cash." />
-        <Stat label="Cost basis" value={money(summary.costBasis)} />
-        <Stat
-          label="Unrealized"
-          value={money(summary.unrealizedGain)}
-          tone={toneFor(summary.unrealizedGain)}
-        />
-        <Stat
-          label="Return"
-          value={percent(summary.unrealizedGainPct)}
-          tone={toneFor(summary.unrealizedGain)}
-        />
-        <Stat
-          label="Realized"
-          value={money(summary.realizedGain)}
-          tone={toneFor(summary.realizedGain)}
-          hint="All-time realized gains from closed lots."
-        />
-        <Stat
-          label="Annualized"
-          value={percent(summary.irr)}
-          tone={toneFor(summary.irr ?? 0)}
-          hint="Money-weighted return across every trade and dividend in scope."
-        />
-      </div>
+      <SummaryCards
+        portfolio={portfolio}
+        summary={summary}
+        holdings={analysis.holdings}
+        scopeAccountIds={scopeAccountIds}
+        loadingQuotes={pricesLoading}
+      />
 
       <ExpiredContractsNotice
         contracts={analysis.expiredContracts}

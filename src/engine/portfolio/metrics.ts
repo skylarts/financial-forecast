@@ -27,6 +27,12 @@ export interface PriceQuote {
   date: ISODate;
   /** The feed's name for the security, used when nothing local names it. */
   name?: string;
+  /**
+   * The prior session's close. Null, or absent, when nothing supplied one --
+   * a hand-entered manual price has no yesterday, and the feed occasionally
+   * omits it. Every day-move figure is skipped rather than guessed in that case.
+   */
+  previousClose?: number | null;
 }
 
 export type PriceMap = Record<string, PriceQuote>;
@@ -95,6 +101,15 @@ export interface Holding {
   unrealizedGain: number;
   /** Null when there is no basis to measure against (fully gifted shares). */
   unrealizedGainPct: number | null;
+  /**
+   * What this position has made or lost since the prior close, in dollars.
+   *
+   * Null when the quote carried no previous close, which is different from
+   * zero: an unmoved position and an unmeasurable one must not read the same.
+   */
+  dayChange: number | null;
+  /** The same move as a fraction of yesterday's value. */
+  dayChangePct: number | null;
   /** Share of the total market value in scope, 0–1. */
   weight: number;
   realizedGain: number;
@@ -119,7 +134,22 @@ export interface PortfolioSummary {
   realizedLongTerm: number;
   realizedGainYtd: number;
   income: number;
+  /**
+   * Dividends and interest received since January 1st.
+   *
+   * Read straight off the ledger rather than summed from holdings, so a
+   * dividend from a position that has since been sold still counts -- the
+   * money was received this year either way.
+   */
+  incomeYtd: number;
   totalGain: number;
+  /**
+   * What the positions in scope moved today, in dollars, and as a fraction of
+   * what they closed at yesterday. Null when no priced holding carried a
+   * previous close, so there is nothing to measure the day against.
+   */
+  dayChange: number | null;
+  dayChangePct: number | null;
   irr: number | null;
 }
 
@@ -415,6 +445,21 @@ export function analyzePortfolio(
     const marketValue = side === "short" ? -exposure : exposure;
     const unrealizedGain = !quote ? 0 : side === "short" ? costBasis - exposure : exposure - costBasis;
 
+    // Yesterday's value of the same position, so the day move is a move in this
+    // holding rather than in the price of one share of it. A short gains when
+    // the price falls, so its move carries the opposite sign.
+    const previousClose = quote?.previousClose ?? null;
+    const previousValue = previousClose === null ? null : quantity * previousClose * multiplier;
+    const dayChange =
+      previousValue === null || !quote
+        ? null
+        : side === "short"
+          ? previousValue - exposure
+          : exposure - previousValue;
+    const dayChangePct = dayChange === null || previousValue === null || previousValue === 0
+      ? null
+      : dayChange / previousValue;
+
     // Only the transactions on this side belong to this position -- otherwise a
     // symbol held both long and short would double-count its own history.
     const positionTxs = transactions.filter(
@@ -460,6 +505,8 @@ export function analyzePortfolio(
       marketValue,
       unrealizedGain,
       unrealizedGainPct: costBasis > 0 ? unrealizedGain / costBasis : null,
+      dayChange,
+      dayChangePct,
       weight: 0,
       realizedGain,
       income,
@@ -515,6 +562,8 @@ export function analyzePortfolio(
       marketValue: balance,
       unrealizedGain: 0,
       unrealizedGainPct: null,
+      dayChange: null,
+      dayChangePct: null,
       weight: 0,
       realizedGain: 0,
       income: 0,
@@ -536,6 +585,27 @@ export function analyzePortfolio(
   const realizedGain = taxableClosed.reduce((sum, lot) => sum + lot.gain, 0);
   const currentYear = asOf.slice(0, 4);
 
+  /**
+   * Today's move across the positions that could be measured.
+   *
+   * Summed over only the holdings the feed gave a previous close for, so a
+   * portfolio where nothing could be measured reports null rather than a
+   * confident $0.00. The percentage divides by what those same positions were
+   * worth yesterday -- their value today less the move -- so it is a like-for-
+   * like figure and not today's move over the whole portfolio including the
+   * parts it says nothing about.
+   */
+  const dayMovers = holdings.filter((h) => h.dayChange !== null);
+  const dayChange = dayMovers.length > 0 ? dayMovers.reduce((sum, h) => sum + (h.dayChange ?? 0), 0) : null;
+  const dayBase = dayMovers.reduce((sum, h) => sum + h.marketValue, 0) - (dayChange ?? 0);
+  const dayChangePct = dayChange !== null && dayBase !== 0 ? dayChange / dayBase : null;
+
+  const incomeYtd = transactions
+    .filter(
+      (tx) => (tx.type === "dividend" || tx.type === "interest") && tx.date.startsWith(currentYear),
+    )
+    .reduce((sum, tx) => sum + signedCashFlow(tx), 0);
+
   const summary: PortfolioSummary = {
     marketValue,
     cash,
@@ -554,7 +624,10 @@ export function analyzePortfolio(
       .filter((lot) => lot.disposedDate.startsWith(currentYear))
       .reduce((sum, lot) => sum + lot.gain, 0),
     income,
+    incomeYtd,
     totalGain: unrealizedGain + realizedGain + income,
+    dayChange,
+    dayChangePct,
     // Positions only, to match the flows above: uninvested cash was never put
     // to work, and paying it out at the end would credit the investments with a
     // return on money that only ever sat there.

@@ -773,3 +773,49 @@ export function indexedReturn(points: readonly IndexedPoint[]): number | null {
   if (points.length < 2) return null;
   return points[points.length - 1].index / points[0].index - 1;
 }
+
+/**
+ * The oldest date any of these histories reaches back to.
+ *
+ * What "covered" is measured against. Checking instead whether a trading day
+ * lands on the window's own first date reports a window opening on New Year's
+ * Day or a Sunday as having no data at all, which is how YTD used to read as a
+ * dash for the first days of every January.
+ */
+export function earliestCoveredDate(
+  histories: ReadonlyMap<string, readonly PricePoint[]>,
+): ISODate | null {
+  let earliest: ISODate | null = null;
+  for (const points of histories.values()) {
+    const first = points[0]?.date;
+    if (first !== undefined && (earliest === null || first < earliest)) earliest = first;
+  }
+  return earliest;
+}
+
+/**
+ * A window's return read off an already-built series.
+ *
+ * A time-weighted index is a running product of daily factors that each depend
+ * only on that day's own value and the day before it, never on where the series
+ * happened to start accumulating. So the ratio between any two of its points
+ * reproduces exactly what building a fresh series for that narrower window
+ * would report -- which is what lets a handful of windows be read off one build
+ * instead of costing one apiece.
+ *
+ * `historyStart` is what the loaded prices actually reach back to. A window
+ * opening before that reports null rather than a figure quietly measured over
+ * a shorter span than its own label claims.
+ */
+export function windowReturn(
+  points: readonly PerformancePoint[],
+  from: ISODate,
+  to: ISODate,
+  historyStart: ISODate | null,
+): { total: number | null; annualized: number | null } {
+  const windowed = points.filter((p) => p.date >= from && p.date <= to);
+  if (windowed.length < 2 || historyStart === null || from < historyStart) {
+    return { total: null, annualized: null };
+  }
+  return { total: totalReturn(windowed), annualized: annualizedReturn(windowed) };
+}

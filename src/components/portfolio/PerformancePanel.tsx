@@ -19,12 +19,10 @@ import {
   symbolsForWindow,
   totalReturn,
   type PricePoint,
-  type SplitEvent,
 } from "@/engine/portfolio/performance";
 import { classifySymbol } from "@/engine/portfolio/metrics";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
-import { chunkSymbols } from "@/lib/portfolio/historyBatch";
-import { coversRequest, getCachedHistories, putCachedHistories } from "@/lib/portfolio/priceHistoryCache";
+import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
 import { FacetMenu } from "@/components/ui/FacetMenu";
 import {
@@ -40,47 +38,6 @@ import {
 import { BenchmarkPicker } from "./BenchmarkPicker";
 
 const MAX_BENCHMARKS = 5;
-
-/** Stable empty map, so a render with nothing loaded doesn't invalidate every
- *  memo downstream by handing them a fresh reference each time. */
-const EMPTY_HISTORIES: Map<string, PricePoint[]> = new Map();
-const EMPTY_SPLITS: Map<string, SplitEvent[]> = new Map();
-
-interface FetchedPrices {
-  histories: Map<string, PricePoint[]>;
-  splits: Map<string, SplitEvent[]>;
-  skipped: string[];
-}
-
-/**
- * What the last few requests came back with, held at module scope so it
- * survives the panel unmounting.
- *
- * The portfolio's tabs are siblings that mount and unmount rather than hide,
- * so switching to Holdings and back used to throw away years of daily closes
- * and refetch every one of them -- the same cost as the very first visit,
- * every time. Component state can't survive that unmount; a module-level map
- * can, because the module itself stays loaded for the life of the page.
- *
- * Bounded and evicted oldest-write-first rather than unbounded: a session
- * that tries a lot of different account scopes or benchmark combinations
- * makes a lot of distinct request keys, and this is a cache, not a ledger of
- * everything ever fetched. Reads deliberately don't bump recency -- that
- * would be a mutation during render, which a pure lookup should not be doing
- * -- so eviction is by write order. Close enough for a handful of keys in one
- * person's session.
- */
-const CACHE_LIMIT = 20;
-const priceRequestCache = new Map<string, FetchedPrices>();
-
-function cachePut(key: string, value: FetchedPrices): void {
-  priceRequestCache.delete(key);
-  priceRequestCache.set(key, value);
-  if (priceRequestCache.size > CACHE_LIMIT) {
-    const oldest = priceRequestCache.keys().next().value;
-    if (oldest !== undefined) priceRequestCache.delete(oldest);
-  }
-}
 
 /** Where a benchmark's colour comes from. Fixed by slot, so removing one
  *  doesn't repaint the rest. */
@@ -115,21 +72,22 @@ const MONTHS_BACK: Partial<Record<Period, number>> = {
 };
 
 /**
- * How much history to pull for a period.
+ * How much history to pull, whatever the period.
  *
- * Tiered rather than exact so switching among the short windows reuses one
- * fetch instead of going back to the feed each time.
+ * One range for every window, so switching periods never goes back to the feed
+ * and -- more to the point -- so this panel and the summary cards above it
+ * cannot disagree. Those cards need the full history to report a lifetime
+ * return at all, and they are always on screen. When this panel asked for a
+ * shallower two years for its short periods, its own 1Y box was computed off a
+ * different, thinner series than the "1 Year" figure sitting directly above it,
+ * and the two printed different numbers under the same label.
  *
- * Ten years is the deepest request, never "max": the feed quietly downsamples
- * its max range to monthly closes and ignores the daily interval it was asked
- * for. Monthly data silently rewrote the short periods in the table -- a
- * one-month return computed from two month-end prices -- so a longer window was
- * making the shorter ones wrong. Every range up to 10y comes back daily.
+ * Ten years, never "max": the feed quietly downsamples its max range to
+ * monthly closes and ignores the daily interval it was asked for. Monthly data
+ * silently rewrote the short periods in the table -- a one-month return
+ * computed from two month-end prices. Every range up to 10y comes back daily.
  */
-function fetchRangeFor(period: Period): string {
-  if (period === "max" || period === "custom" || period === "3y" || period === "5y") return "10y";
-  return "2y";
-}
+const HISTORY_RANGE = "10y";
 
 /**
  * How long a typed date is left alone before the chart follows it.
@@ -226,15 +184,6 @@ export function PerformancePanel({
   const [draftTo, setDraftTo] = useState("");
   const [benchmarks, setBenchmarks] = useState<string[]>(["SPY"]);
   const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
-  const [loaded, setLoaded] = useState<{
-    key: string;
-    histories: Map<string, PricePoint[]>;
-    /** The feed's split calendar, which sets the units its closes are quoted in. */
-    splits: Map<string, SplitEvent[]>;
-    /** Symbols the server refused to fetch because the request was over its cap. */
-    skipped: string[];
-    failed: boolean;
-  } | null>(null);
 
   // A part-typed date settles into the real one a beat later; committing on the
   // pause keeps the boxes responsive without needing the user to hit anything.
@@ -335,122 +284,10 @@ export function PerformancePanel({
     return [...new Set(ordered)];
   }, [scopedTransactions, benchmarks, from, to, scopeAccountIds, includedSymbols]);
 
-  const fetchRange = fetchRangeFor(period);
-  const requestKey = `${fetchRange}::${from}::${neededSymbols.join(",")}`;
-
-  useEffect(() => {
-    const [range, windowStart, symbolList] = requestKey.split("::");
-    if (!symbolList) return;
-    // Already have it -- rendered straight from the cache below, nothing to
-    // fetch.
-    if (priceRequestCache.has(requestKey)) return;
-
-    let cancelled = false;
-
-    // One request is capped, and a ledger that has held hundreds of positions
-    // needs every one of them priced to measure a long window -- a single call
-    // would answer for the first slice and report the rest as skipped, leaving
-    // the series to value the remainder at the last figure paid. The groups go
-    // one after another rather than at once: the route already fans each one
-    // out across the feed, and firing them in parallel is what the cap exists
-    // to prevent.
-    (async () => {
-      const symbols = symbolList.split(",");
-      const histories = new Map<string, PricePoint[]>();
-      const splits = new Map<string, SplitEvent[]>();
-      const skipped: string[] = [];
-      try {
-        // Daily closes outlive the browser tab that fetched them, so a symbol
-        // this window already has a wide-enough, fresh-enough entry for
-        // (persisted across the last reload, not just this session) never
-        // needs to touch the network at all -- only what's actually missing
-        // does, and it's what the cap below is spent on.
-        const cached = await getCachedHistories(symbols.map((symbol) => ({ symbol, range })));
-        if (cancelled) return;
-        const needsFetch: string[] = [];
-        for (const symbol of symbols) {
-          const entry = cached.get(symbol);
-          if (entry && coversRequest(entry, windowStart)) {
-            histories.set(symbol, entry.points);
-            splits.set(symbol, entry.splits);
-          } else {
-            needsFetch.push(symbol);
-          }
-        }
-
-        const freshEntries = new Map<string, { points: PricePoint[]; splits: SplitEvent[] }>();
-        for (const chunk of chunkSymbols(needsFetch)) {
-          const response = await fetch(
-            `/api/prices/history/batch?symbols=${encodeURIComponent(chunk.join(","))}&range=${range}&from=${windowStart}`,
-          );
-          if (!response.ok) throw new Error(String(response.status));
-          const body: {
-            histories?: Record<string, PricePoint[]>;
-            splits?: Record<string, SplitEvent[]>;
-            skipped?: string[];
-          } = await response.json();
-          if (cancelled) return;
-          for (const [symbol, points] of Object.entries(body.histories ?? {})) {
-            histories.set(symbol, points);
-          }
-          for (const [symbol, events] of Object.entries(body.splits ?? {})) {
-            splits.set(symbol, events);
-          }
-          for (const symbol of Object.keys(body.histories ?? {})) {
-            freshEntries.set(symbol, { points: histories.get(symbol) ?? [], splits: splits.get(symbol) ?? [] });
-          }
-          skipped.push(...(body.skipped ?? []));
-        }
-        if (!cancelled) {
-          // Not cached until the whole chunked fetch succeeds -- a partial
-          // result cached mid-failure would be indistinguishable from a
-          // complete one on the next visit.
-          cachePut(requestKey, { histories, splits, skipped });
-          setLoaded({ key: requestKey, histories, splits, skipped, failed: false });
-          // Fire-and-forget: persisting is for the *next* reload, so nothing
-          // here should wait on it.
-          void putCachedHistories(range, windowStart, freshEntries);
-        }
-      } catch {
-        if (!cancelled) {
-          setLoaded({
-            key: requestKey,
-            histories: new Map(),
-            splits: new Map(),
-            skipped: [],
-            failed: true,
-          });
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [requestKey]);
-
-  // A cached hit for this exact request wins over whatever `loaded` still
-  // holds from state -- state only lags one render behind the cache anyway
-  // (the fetch effect writes both together), and reading the cache directly
-  // is what makes a remounted panel render already-fetched data on its very
-  // first paint instead of an empty chart while the effect re-fires.
-  const cachedForKey = priceRequestCache.get(requestKey);
-
-  // Derived from what arrived rather than tracked separately, so a slow request
-  // for the previous period can't land after a newer one and leave the panel
-  // showing one window's prices under another window's label.
-  const stateForKey = loaded?.key === requestKey ? loaded : undefined;
-  const settled = cachedForKey !== undefined || stateForKey !== undefined;
-  const loading = neededSymbols.length > 0 && !settled;
-  const failed = cachedForKey === undefined && (stateForKey?.failed ?? false);
-  const skipped = cachedForKey?.skipped ?? stateForKey?.skipped ?? [];
-  const histories = useMemo(
-    () => cachedForKey?.histories ?? stateForKey?.histories ?? EMPTY_HISTORIES,
-    [cachedForKey, stateForKey],
-  );
-  const splits = useMemo(
-    () => cachedForKey?.splits ?? stateForKey?.splits ?? EMPTY_SPLITS,
-    [cachedForKey, stateForKey],
+  const { histories, splits, skipped, loading, failed } = usePriceHistories(
+    neededSymbols,
+    HISTORY_RANGE,
+    from,
   );
 
   const series = useMemo(

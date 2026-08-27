@@ -8,6 +8,8 @@ interface FeedQuote {
   price: number;
   date: string;
   name: string;
+  /** Prior session's close, or null when the feed didn't report one. */
+  previousClose?: number | null;
   /** Served from cache after a failed refresh -- real, but older than it looks. */
   stale?: boolean;
 }
@@ -116,7 +118,12 @@ export function usePrices(symbols: readonly string[]): {
   const prices = useMemo(() => {
     const map: PriceMap = {};
     for (const [symbol, quote] of Object.entries(quotes)) {
-      map[symbol] = { price: quote.price, date: quote.date, name: quote.name };
+      map[symbol] = {
+        price: quote.price,
+        date: quote.date,
+        name: quote.name,
+        previousClose: quote.previousClose ?? null,
+      };
     }
     return map;
   }, [quotes]);
