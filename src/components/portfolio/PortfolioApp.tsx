@@ -30,14 +30,13 @@ import {
   JOINT_OWNER_SCOPE,
   ownerScope,
 } from "@/lib/portfolio/scope";
-import type { ImportRow } from "@/lib/portfolio/importer";
 import { buildDemoPortfolio } from "@/lib/portfolio/demoPortfolio";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
 import { useCollapsedGroups } from "./grouping";
 import { PositionDetail, type PositionSelection } from "./PositionDetail";
-import { ImportDialog } from "./ImportDialog";
+import { ImportDialog, type ImportAssignment } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
 import { ExportMenu } from "./ExportMenu";
 import { TransactionsPanel } from "./TransactionsPanel";
@@ -408,22 +407,21 @@ export function PortfolioApp() {
 
   const { summary } = analysis;
 
-  const handleImport = (accountId: string, rows: ImportRow[]) => {
+  const handleImport = (assignments: ImportAssignment[]) => {
     // A statement dividend that lands on a payment the sync already wrote
     // under its ex-date supersedes that estimate rather than duplicating it.
-    const replacedIds = rows
-      .map((row) => row.syncMatchId)
+    const replacedIds = assignments
+      .map(({ row }) => row.syncMatchId)
       .filter((id): id is string => id !== null);
     const replaced = replacedIds.length > 0 ? removeTransactions(replacedIds) : 0;
 
     const batchId = importTransactions(
-      accountId,
-      rows.map((row) => row.draft),
+      assignments.map(({ accountId, row }) => ({ accountId, draft: row.draft })),
     );
     setImporting(false);
     setFlashState({
       text:
-        `Imported ${rows.length} transaction${rows.length === 1 ? "" : "s"}` +
+        `Imported ${assignments.length} transaction${assignments.length === 1 ? "" : "s"}` +
         (replaced > 0 ? `, replacing ${replaced} synced dividend${replaced === 1 ? "" : "s"}.` : "."),
       undoBatch: batchId,
     });
@@ -632,6 +630,7 @@ export function PortfolioApp() {
                   syncToForecast: true,
                   ownerId: null,
                   openingCashBalance: 0,
+                  parentAccountId: null,
                 });
               }
               setImporting(true);

@@ -19,6 +19,7 @@ import {
   type TransactionType,
 } from "@/domain/portfolio";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
+import { accountPath, accountTreeRows } from "@/lib/portfolio/accountTree";
 import { money, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Btn } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
@@ -388,6 +389,11 @@ export function TransactionsPanel({
   const updateTransaction = usePortfolioStore((s) => s.updateTransaction);
   const removeTransaction = usePortfolioStore((s) => s.removeTransaction);
   const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
+  const moveTransactions = usePortfolioStore((s) => s.moveTransactions);
+  const splitTransactions = usePortfolioStore((s) => s.splitTransactions);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [bulkAccountId, setBulkAccountId] = useState("");
+  const [splitPct, setSplitPct] = useState("50");
   const [adding, setAdding] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -396,8 +402,10 @@ export function TransactionsPanel({
   const [toDate, setToDate] = useState("");
   const [grouping, setGrouping] = useState<TxGrouping>("none");
 
+  // Qualified with the parent, so a row filed under a sleeve reads as
+  // "401(k) / Roth" rather than a bare "Roth" that could be anyone's.
   const accountNames = useMemo(
-    () => new Map(portfolio.accounts.map((a) => [a.id, a.name])),
+    () => new Map(portfolio.accounts.map((a) => [a.id, accountPath(portfolio.accounts, a)])),
     [portfolio.accounts],
   );
 
@@ -484,6 +492,32 @@ export function TransactionsPanel({
   // overall, same as the pre-owner behavior for "all".
   const defaultAccountId =
     scopeAccountIds?.length === 1 ? scopeAccountIds[0] : portfolio.accounts[0]?.id;
+
+  // Selection only ever means rows currently on screen: a filter change that
+  // hides a selected row must not leave it silently queued for a bulk move.
+  const visibleIds = useMemo(() => rows.map((tx) => tx.id), [rows]);
+  const selectedVisible = useMemo(
+    () => visibleIds.filter((id) => selected.has(id)),
+    [visibleIds, selected],
+  );
+  const allVisibleSelected = visibleIds.length > 0 && selectedVisible.length === visibleIds.length;
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const clearSelection = () => setSelected(new Set());
+
+  // Where a bulk action can send rows. Sleeves are the point of this, but any
+  // account is fair game -- rows land in the wrong account for plenty of
+  // reasons besides a pre-tax/Roth split.
+  const moveTargets = useMemo(() => accountTreeRows(portfolio.accounts), [portfolio.accounts]);
+  const splitFraction = Number(splitPct) / 100;
+  const splitValid = splitFraction > 0 && splitFraction < 1;
 
   return (
     <div className="p-5">
@@ -607,6 +641,68 @@ export function TransactionsPanel({
         />
       )}
 
+      {selectedVisible.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2">
+          <span className="text-[12px] font-medium text-foreground">
+            {selectedVisible.length} selected
+          </span>
+
+          <select
+            value={bulkAccountId}
+            onChange={(e) => setBulkAccountId(e.target.value)}
+            className={INPUT}
+          >
+            <option value="">— pick an account —</option>
+            {moveTargets.map(({ account, depth }) => (
+              <option key={account.id} value={account.id}>
+                {depth > 0 ? `\u00a0\u00a0↳ ${account.name}` : account.name}
+              </option>
+            ))}
+          </select>
+
+          <Btn
+            onClick={() => {
+              if (!bulkAccountId) return;
+              moveTransactions(selectedVisible, bulkAccountId);
+              clearSelection();
+            }}
+            className={bulkAccountId ? "" : "pointer-events-none opacity-40"}
+            title="File every selected row under that account. Lot ids are re-derived there, since a lot belongs to one account's ledger."
+          >
+            Move all
+          </Btn>
+
+          <span className="text-dim-2">|</span>
+
+          <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+            Split
+            <input
+              type="number"
+              min={1}
+              max={99}
+              value={splitPct}
+              onChange={(e) => setSplitPct(e.target.value)}
+              className={`${INPUT} w-16 text-right tabular-nums`}
+            />
+            %
+          </label>
+
+          <Btn
+            onClick={() => {
+              if (!bulkAccountId || !splitValid) return;
+              splitTransactions(selectedVisible, bulkAccountId, splitFraction);
+              clearSelection();
+            }}
+            className={bulkAccountId && splitValid ? "" : "pointer-events-none opacity-40"}
+            title="Divide each selected row in two: that percentage moves to the chosen account, the rest stays. The halves add back to the original exactly. For statements that report activity combined and the pre-tax/Roth split only as a quarterly summary."
+          >
+            Split into it
+          </Btn>
+
+          <Btn onClick={clearSelection}>Clear</Btn>
+        </div>
+      )}
+
       {rows.length === 0 ? (
         <p className="py-8 text-center text-[13px] text-dim">
           No transactions yet. Import a statement or add one by hand.
@@ -617,6 +713,18 @@ export function TransactionsPanel({
           <table className="w-full border-collapse">
             <thead>
               <tr className="sticky top-0 z-10 border-b border-border bg-panel">
+                <th className={`${HEAD} w-8 text-center`}>
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(visibleIds))}
+                    title={
+                      allVisibleSelected
+                        ? "Deselect every row shown"
+                        : `Select all ${visibleIds.length} rows shown`
+                    }
+                  />
+                </th>
                 <SortHeader
                   label={`Date${groupedColumnMarker(groupedColumn, "date")}`}
                   column="date"
@@ -676,7 +784,7 @@ export function TransactionsPanel({
                         onToggle={() => collapse.toggle(group.key)}
                         // Date, Account, Type, Symbol -- none of which totals
                         // across rows of different types.
-                        labelSpan={4}
+                        labelSpan={5}
                         cells={[
                           <span
                             key="qty"
@@ -701,7 +809,7 @@ export function TransactionsPanel({
                       group.rows.map((tx: Transaction) =>
                         editingId === tx.id ? (
                         <tr key={tx.id}>
-                          <td colSpan={9} className="p-0">
+                          <td colSpan={10} className="p-0">
                             <TransactionForm
                               accounts={portfolio.accounts}
                               initial={formFromTransaction(tx)}
@@ -729,7 +837,19 @@ export function TransactionsPanel({
                           </td>
                         </tr>
                       ) : (
-                        <tr key={tx.id} className="border-b border-border-soft hover:bg-panel-2">
+                        <tr
+                          key={tx.id}
+                          className={`border-b border-border-soft hover:bg-panel-2 ${
+                            selected.has(tx.id) ? "bg-accent/10" : ""
+                          }`}
+                        >
+                          <td className={`${CELL} text-center`}>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(tx.id)}
+                              onChange={() => toggleRow(tx.id)}
+                            />
+                          </td>
                           <td className={`${CELL} text-left text-dim`}>{shortDate(tx.date)}</td>
                           <td className={`${CELL} text-left text-dim`}>
                             {accountNames.get(tx.accountId) ?? "—"}
@@ -787,7 +907,7 @@ export function TransactionsPanel({
             </tbody>
             <tfoot>
               <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
-                <td className={`${CELL} text-left text-foreground`} colSpan={4}>
+                <td className={`${CELL} text-left text-foreground`} colSpan={5}>
                   Total
                 </td>
                 {(() => {

@@ -71,6 +71,29 @@ export const portfolioAccountSchema = z.object({
    * same dollars a second time.
    */
   openingCashBalance: z.number().default(0),
+  /**
+   * The account this one is a sleeve of, by its id. Null -- the overwhelming
+   * majority -- means a normal, standalone account.
+   *
+   * This exists for the one real case the tracker could not otherwise express:
+   * a 401(k) or 457 that holds pre-tax and Roth money side by side. Those two
+   * pots are taxed completely differently on the way out, so the forecast has
+   * to see them as two accounts (its whole withdrawal engine keys off a single
+   * `taxTreatment` per account). But they are one account at the custodian,
+   * with one statement, one fund lineup and one set of confirmations.
+   *
+   * So the split is modelled as two real accounts -- each with its own `type`,
+   * its own `forecastAccountId`, its own replayed cash and lots -- gathered
+   * under a parent that holds no transactions of its own and exists to name
+   * the thing and total it up. Every transaction still carries exactly one
+   * `accountId`, so lot matching, cash replay and performance are untouched by
+   * any of this; only display and scoping know the parent exists.
+   *
+   * Deliberately one level deep. A sleeve cannot itself have sleeves --
+   * see `assertAssignableParent` in `src/lib/portfolio/accountTree.ts`, which
+   * is the one place that rule is enforced.
+   */
+  parentAccountId: idSchema.nullable().default(null),
 });
 export type PortfolioAccount = z.infer<typeof portfolioAccountSchema>;
 

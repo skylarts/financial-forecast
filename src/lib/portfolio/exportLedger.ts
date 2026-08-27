@@ -1,4 +1,5 @@
 import type { Portfolio } from "@/domain/portfolio";
+import { accountPath } from "./accountTree";
 
 /**
  * Getting the ledger back out, in the two shapes it is actually wanted in.
@@ -43,7 +44,12 @@ function cell(value: string | number | null | undefined): string {
  * import as a trade that moved no money.
  */
 export function toCsv(portfolio: Portfolio): string {
-  const accountName = new Map(portfolio.accounts.map((a) => [a.id, a.name]));
+  // Sleeves are named for their pot -- "Pre-tax", "Roth" -- which says nothing
+  // on its own once a file leaves the app. Qualifying each with its parent
+  // makes the column readable in a spreadsheet, where this export is read.
+  const accountName = new Map(
+    portfolio.accounts.map((a) => [a.id, accountPath(portfolio.accounts, a)]),
+  );
   const rows = [...portfolio.transactions].sort((a, b) =>
     a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
   );

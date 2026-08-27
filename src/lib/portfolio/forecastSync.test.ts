@@ -13,6 +13,7 @@ function account(patch: Partial<PortfolioAccount> & { id: string }): PortfolioAc
     syncToForecast: true,
     ownerId: null,
     openingCashBalance: 0,
+    parentAccountId: null,
     ...patch,
   };
 }
@@ -114,6 +115,40 @@ describe("pendingForecastPushes", () => {
     const pa = account({ id: "pa1", forecastAccountId: "does-not-exist" });
 
     expect(pendingForecastPushes(portfolioWith(pa), PRICES, [])).toEqual([]);
+  });
+
+  it("never pushes a split account's parent, only its sleeves", () => {
+    // One 401(k) holding both pots: the parent totals $2,400 across its two
+    // sleeves, and pushing it would write that whole figure into the pre-tax
+    // forecast account on top of what the sleeves already wrote.
+    const parent = account({ id: "k401", name: "401(k)", forecastAccountId: "fa-pre" });
+    const pre = account({
+      id: "pre",
+      type: "traditional_401k",
+      parentAccountId: "k401",
+      forecastAccountId: "fa-pre",
+    });
+    const roth = account({
+      id: "roth",
+      type: "roth_401k",
+      parentAccountId: "k401",
+      forecastAccountId: "fa-roth",
+    });
+    const portfolio: Portfolio = {
+      id: "p1",
+      accounts: [parent, pre, roth],
+      transactions: [buy({ accountId: "pre" }), buy({ accountId: "roth" })],
+      securities: [],
+    };
+    const forecastAccounts = [
+      makeAccount({ id: "fa-pre", class: "tax_deferred", taxTreatment: "tax_deferred", startingBalance: 0 }),
+      makeAccount({ id: "fa-roth", class: "tax_free", taxTreatment: "tax_free", startingBalance: 0 }),
+    ];
+
+    expect(pendingForecastPushes(portfolio, PRICES, forecastAccounts)).toEqual([
+      { forecastAccountId: "fa-pre", startingBalance: 1200 },
+      { forecastAccountId: "fa-roth", startingBalance: 1200 },
+    ]);
   });
 
   it("omits startingCostBasis for a non-taxable target", () => {

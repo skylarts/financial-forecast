@@ -16,6 +16,9 @@ import {
 import type { DraftTransaction } from "@/lib/portfolio/importer";
 import { withAssignedLotIds } from "@/lib/portfolio/lotAssignment";
 import { withCanonicalSymbols } from "@/lib/portfolio/canonicalSymbols";
+import { accountFamilyIds, hasSleeves } from "@/lib/portfolio/accountTree";
+import { splitTransactionByFraction } from "@/lib/portfolio/splitTransaction";
+import { sleeveTypeFor, TAX_SOURCE_SLEEVES } from "@/lib/portfolio/taxSource";
 import { buildLotLedger } from "@/engine/portfolio/lots";
 
 const STORAGE_KEY = "portfolio-tracker";
@@ -82,7 +85,10 @@ interface PortfolioState {
   addAccount: (account: Omit<PortfolioAccount, "id">) => string;
   updateAccount: (id: string, patch: Partial<Omit<PortfolioAccount, "id">>) => void;
   /** Also removes that account's transactions -- orphaned rows would keep
-   *  contributing to totals with nothing on screen explaining them. */
+   *  contributing to totals with nothing on screen explaining them -- and any
+   *  sleeves beneath it, along with theirs. A sleeve only means anything as a
+   *  subdivision of its parent, so leaving one behind would strand an account
+   *  whose name no longer refers to anything. */
   removeAccount: (id: string) => void;
 
   addTransaction: (tx: Omit<Transaction, "id">) => string;
@@ -101,8 +107,17 @@ interface PortfolioState {
    * the whole portfolio once per row. Returns how many actually went.
    */
   removeTransactions: (ids: readonly string[]) => number;
-  /** Returns the batch id, so a bad import can be rolled back wholesale. */
-  importTransactions: (accountId: string, drafts: readonly DraftTransaction[]) => string;
+  /**
+   * Writes one import as a single batch, each row carrying the account it was
+   * routed to. Returns the batch id, so a bad import can be rolled back
+   * wholesale.
+   *
+   * Rows name their own account rather than the batch naming one, because a
+   * split workplace account's statement fans out across its sleeves: the money
+   * source printed over each block of fund activity is what decides which pot
+   * the row lands in, and that varies row by row within one file.
+   */
+  importTransactions: (rows: readonly { accountId: string; draft: DraftTransaction }[]) => string;
   undoImport: (batchId: string) => number;
 
   upsertSecurity: (security: Security) => void;
@@ -117,6 +132,49 @@ interface PortfolioState {
     forecastAccountId: string | null,
     adoptOwnerId?: string | null,
   ) => void;
+
+  /**
+   * Turns a workplace account into a split one: two sleeves, pre-tax and Roth,
+   * each typed so it carries the right tax treatment into its own forecast
+   * account.
+   *
+   * Existing transactions stay on the parent rather than being handed to a
+   * sleeve. Which pot an already-imported row belongs to is a fact about the
+   * statement it came from, not something this can infer, and guessing would
+   * put Roth dollars in the pre-tax pot where nothing would ever flag them.
+   * They show up as "unassigned" until they are moved.
+   */
+  splitByTaxSource: (id: string) => void;
+
+  /**
+   * Files existing rows under a different account -- how transactions already
+   * in the ledger reach the sleeve they belong to once an account is split.
+   *
+   * Lot ids are cleared on the way, so each row re-derives its lot inside the
+   * account it now lives in. A lot id names a purchase in one account's ledger;
+   * carrying it across would point a sale at a lot that is not there.
+   */
+  moveTransactions: (ids: readonly string[], accountId: string) => number;
+
+  /**
+   * Divides each named row in two along `fraction`, leaving one part where it
+   * is and filing the other under `toAccountId`.
+   *
+   * For the statements that report a quarter's fund activity combined and its
+   * pre-tax/Roth split only as a summary: the two halves are real rows in real
+   * accounts, and they add back to the original exactly. The moved part is
+   * rounded and the remainder is what stays, so no cent is invented or lost
+   * however the fraction divides.
+   *
+   * Rows whose quantity is a ratio rather than a share count -- splits and
+   * spinoffs -- are left alone and not counted in the return: halving a 2:1
+   * split into two 1:1 splits would quietly change what it does.
+   */
+  splitTransactions: (
+    ids: readonly string[],
+    toAccountId: string,
+    fraction: number,
+  ) => number;
 
   loadPortfolio: (portfolio: Portfolio) => void;
   importJson: (raw: unknown) => { ok: true } | { ok: false; error: string };
@@ -154,11 +212,14 @@ export const usePortfolioStore = create<PortfolioState>()(
           })),
 
         removeAccount: (id) =>
-          mutate((p) => ({
-            ...p,
-            accounts: p.accounts.filter((a) => a.id !== id),
-            transactions: p.transactions.filter((tx) => tx.accountId !== id),
-          })),
+          mutate((p) => {
+            const doomed = new Set(accountFamilyIds(p.accounts, id));
+            return {
+              ...p,
+              accounts: p.accounts.filter((a) => !doomed.has(a.id)),
+              transactions: p.transactions.filter((tx) => !doomed.has(tx.accountId)),
+            };
+          }),
 
         addTransaction: (tx) => {
           const id = nanoid();
@@ -195,13 +256,18 @@ export const usePortfolioStore = create<PortfolioState>()(
           return before - get().portfolio.transactions.length;
         },
 
-        importTransactions: (accountId, drafts) => {
+        importTransactions: (rows) => {
           const batchId = nanoid();
           mutate((p) => ({
             ...p,
             transactions: [
               ...p.transactions,
-              ...drafts.map((draft) => ({ ...draft, id: nanoid(), accountId, importBatchId: batchId })),
+              ...rows.map(({ accountId, draft }) => ({
+                ...draft,
+                id: nanoid(),
+                accountId,
+                importBatchId: batchId,
+              })),
             ],
           }));
           return batchId;
@@ -246,6 +312,78 @@ export const usePortfolioStore = create<PortfolioState>()(
                 : a,
             ),
           })),
+
+        moveTransactions: (ids, accountId) => {
+          const wanted = new Set(ids);
+          let moved = 0;
+          mutate((p) => ({
+            ...p,
+            transactions: p.transactions.map((tx) => {
+              if (!wanted.has(tx.id) || tx.accountId === accountId) return tx;
+              moved += 1;
+              return { ...tx, accountId, lotId: null };
+            }),
+          }));
+          return moved;
+        },
+
+        splitTransactions: (ids, toAccountId, fraction) => {
+          const wanted = new Set(ids);
+          let split = 0;
+
+          mutate((p) => {
+            const next: Transaction[] = [];
+            for (const tx of p.transactions) {
+              const halves = wanted.has(tx.id)
+                ? splitTransactionByFraction(tx, toAccountId, fraction, nanoid())
+                : null;
+              if (!halves) {
+                next.push(tx);
+                continue;
+              }
+              split += 1;
+              next.push(halves.kept, halves.moved);
+            }
+            return { ...p, transactions: next };
+          });
+
+          return split;
+        },
+
+        splitByTaxSource: (id) =>
+          mutate((p) => {
+            const parent = p.accounts.find((a) => a.id === id);
+            // Already split, or itself a sleeve: the tree is one level deep,
+            // and re-splitting would strand the sleeves that exist.
+            if (!parent || parent.parentAccountId !== null || hasSleeves(p.accounts, id)) return p;
+
+            const sleeves = TAX_SOURCE_SLEEVES.map((sleeve) => ({
+              ...parent,
+              id: nanoid(),
+              name: sleeve.name,
+              type: sleeveTypeFor(parent.type, sleeve.source),
+              parentAccountId: parent.id,
+              // Each sleeve links to its own forecast account, and until the
+              // user picks one there is nothing honest to point at.
+              forecastAccountId: null,
+              syncToForecast: true,
+              // Opening cash seeded the parent's ledger and still does; the
+              // sleeves start from their own first rows.
+              openingCashBalance: 0,
+            }));
+
+            return {
+              ...p,
+              accounts: [
+                // The parent stops syncing the moment it has sleeves, so a link
+                // left on it would be stored, invisible, and wrong. Dropping it
+                // costs one dropdown; keeping it risks pushing the whole
+                // account's value into whichever half it happened to name.
+                ...p.accounts.map((a) => (a.id === id ? { ...a, forecastAccountId: null } : a)),
+                ...sleeves,
+              ],
+            };
+          }),
 
         loadPortfolio: (portfolio) =>
           set({ portfolio: tidy(portfolio), lastSavedAt: Date.now() }),

@@ -42,6 +42,7 @@ function portfolio(transactions: Transaction[], opening = 0): Portfolio {
         syncToForecast: true,
         ownerId: null,
         openingCashBalance: opening,
+        parentAccountId: null,
       },
     ],
     transactions,
@@ -133,6 +134,7 @@ describe("accountCashBalances", () => {
       syncToForecast: true,
       ownerId: null,
       openingCashBalance: 0,
+      parentAccountId: null,
     });
     p.transactions.push(cash("cash_deposit", "2025-01-02", 7000, "acct-2"));
 

@@ -338,3 +338,94 @@ describe("directionless transfer wording", () => {
     expect(row.issues.join(" ")).toMatch(/could not tell/i);
   });
 });
+
+describe("buildImportRows: money source", () => {
+  // The shape a Texa$aver/Empower confirmation converts to: one file, both
+  // pots, each fund row stamped with the source it was funded from.
+  const csv = [
+    "Date,Action,Symbol,Quantity,Price,Amount,Money Source",
+    "08/04/2026,YOU BOUGHT,VIIIX,1.70686,608.72,1039.00,EMPLOYEE BEFORE TAX-VOLUNTARY",
+    "08/04/2026,YOU BOUGHT,VIIIX,0.42672,608.72,259.75,ROTH CONTRIBUTION",
+    "08/04/2026,YOU BOUGHT,VIIIX,0.10000,608.72,60.87,Rollover",
+  ].join("\n");
+
+  function rows() {
+    const table = parseDelimited(csv);
+    return buildImportRows(table, guessMapping(table.headers));
+  }
+
+  it("finds the money-source column from the header", () => {
+    const table = parseDelimited(csv);
+    expect(guessMapping(table.headers).taxSource).toBe(6);
+  });
+
+  it("carries each row's source label through verbatim", () => {
+    expect(rows().map((r) => r.taxSourceLabel)).toEqual([
+      "EMPLOYEE BEFORE TAX-VOLUNTARY",
+      "ROTH CONTRIBUTION",
+      "Rollover",
+    ]);
+  });
+
+  it("leaves the label empty when the file has no such column", () => {
+    const table = parseDelimited("Date,Action,Symbol,Quantity,Price,Amount\n01/10/2024,YOU BOUGHT,VTI,10,100,-1000");
+    const [row] = buildImportRows(table, guessMapping(table.headers));
+    expect(row.taxSourceLabel).toBe("");
+  });
+
+  it("does not let the source column swallow the description", () => {
+    const table = parseDelimited(
+      "Date,Action,Symbol,Quantity,Price,Amount,Money Source,Description\n" +
+        "08/04/2026,YOU BOUGHT,VIIIX,1,608.72,608.72,ROTH CONTRIBUTION,Payroll contribution",
+    );
+    const mapping = guessMapping(table.headers);
+    expect(mapping.taxSource).toBe(6);
+    expect(mapping.note).toBe(7);
+
+    const [row] = buildImportRows(table, mapping);
+    expect(row.taxSourceLabel).toBe("ROTH CONTRIBUTION");
+    expect(row.draft.note).toBe("Payroll contribution");
+  });
+
+  it("looks across every account an import can reach for superseded dividends", () => {
+    // The sync wrote this dividend onto the Roth sleeve; the statement row
+    // routes there too, and must still be recognised as the same payment even
+    // though the import was launched from the parent.
+    const table = parseDelimited(
+      "Date,Action,Symbol,Quantity,Price,Amount,Money Source\n" +
+        "04/15/2024,DIVIDEND RECEIVED,VTI,,,42.00,ROTH CONTRIBUTION",
+    );
+    const existing = [
+      {
+        id: "auto-1",
+        accountId: "roth-sleeve",
+        date: "2024-04-12" as const,
+        type: "dividend" as const,
+        symbol: "VTI",
+        quantity: 0,
+        price: 0,
+        amount: 42,
+        fees: 0,
+        lotId: null,
+        acquiredDate: null,
+        spinoffSymbol: null,
+        spinoffShareRatio: null,
+        spinoffBasisRetained: null,
+        note: "",
+        importBatchId: null,
+        sourceHash: "auto-div:VTI:2024-04-12",
+      },
+    ];
+
+    const [viaParent] = buildImportRows(table, guessMapping(table.headers), existing, [
+      "parent",
+      "roth-sleeve",
+    ]);
+    expect(viaParent.syncMatchId).toBe("auto-1");
+
+    // Scoped to the parent alone it is invisible, which is exactly why the
+    // family is passed instead.
+    const [parentOnly] = buildImportRows(table, guessMapping(table.headers), existing, "parent");
+    expect(parentOnly.syncMatchId).toBeNull();
+  });
+});
