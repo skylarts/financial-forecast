@@ -12,7 +12,7 @@ const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-d
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
 const GROUPINGS = [
-  { value: "none", label: "None" },
+  { value: "none", label: "No grouping" },
   { value: "symbol", label: "By stock" },
   { value: "account", label: "By account" },
   { value: "term", label: "By term" },
@@ -142,8 +142,9 @@ export function RealizedPanel({
     return buildGroups(sorted, labelFor);
   }, [sorted, grouping, accountNames]);
 
-  const collapse = useCollapsedGroups(grouping);
-  const groupKeys = useMemo(() => groups.map((g) => g.key), [groups]);
+  // Opens collapsed: picking a grouping here is asking for the subtotals --
+  // the hundreds of underlying rows are what the grouping was meant to fold away.
+  const collapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
 
   // Symbol, Account, Acquired, Sold, Shares -- none of which sums meaningfully
   // across lots of different securities bought on different days.
@@ -206,7 +207,7 @@ export function RealizedPanel({
                 </option>
               ))}
             </select>
-            {grouping !== "none" && <GroupToggles groupKeys={groupKeys} collapse={collapse} />}
+            {grouping !== "none" && <GroupToggles collapse={collapse} />}
             {sorted.length !== closedLots.length && (
               <span className="text-[11.5px] text-dim-2">
                 Showing {sorted.length} of {closedLots.length}

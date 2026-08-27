@@ -4,8 +4,8 @@ import { Fragment, useMemo } from "react";
 import { ASSET_CLASS_LABELS } from "@/domain/portfolio";
 import { explodeExposures, type Holding } from "@/engine/portfolio/metrics";
 import { money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
-import { sortMarker, useSort, type SortAccessors } from "./useSort";
-import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups, type Group } from "./grouping";
+import { sortMarker, useSort, type SortAccessors, type SortState } from "./useSort";
+import { buildGroups, GroupHeaderRow, orderGroupsBy, type CollapseState, type Group } from "./grouping";
 import { UNTAGGED } from "./filters";
 
 export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "side";
@@ -13,7 +13,7 @@ export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "sid
 /** A row as actually rendered. Grouping by class or theme can turn one
  *  holding into several of these -- `source` is always the real, whole
  *  holding behind the row, which is what a click should open. */
-type Row = Holding & { source: Holding; sliceNote?: string };
+type Row = Holding & { source: Holding; sliceNote?: string; groupLabel?: string };
 
 function toRow(holding: Holding): Row {
   return { ...holding, source: holding };
@@ -30,6 +30,17 @@ type Column =
   | "unrealized"
   | "return"
   | "irr";
+
+/**
+ * Columns whose group ordering should follow the group's subtotal rather than
+ * its top row. Money columns only: a group's summed price or summed return
+ * percentage isn't a figure, so those keep first-row order.
+ */
+const GROUP_TOTALS: Partial<Record<Column, (row: Row) => number>> = {
+  value: (row) => row.marketValue,
+  weight: (row) => row.weight,
+  unrealized: (row) => row.unrealizedGain,
+};
 
 const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
@@ -97,20 +108,98 @@ function totalsFor(rows: readonly Holding[]): GroupTotals {
   };
 }
 
+/**
+ * The rows a grouping actually puts on screen, before sorting.
+ *
+ * Grouping by class or theme can turn one holding into several rows, so this
+ * runs first and the sort runs over its output: sorting whole positions and
+ * splitting them afterwards ranked every slice by money that mostly sits in
+ * some other group -- a fund 90% in international stock led the US Equity
+ * group on the strength of a slice a tenth its size.
+ */
+export function rowsFor(holdings: readonly Holding[], grouping: HoldingGrouping): Row[] {
+  if (grouping === "assetClass") {
+    // A single-class holding explodes into one row identical to itself; a
+    // fund like VT explodes into one row per class it spans, each carrying
+    // only its own slice of the value -- see `explodeExposures`.
+    return explodeExposures(holdings).map((r) => ({
+      ...r,
+      source: r.source,
+      groupLabel: ASSET_CLASS_LABELS[r.assetClass],
+      sliceNote: r.exposureCount > 1 ? `${Math.round(r.exposureWeight * 100)}% of position` : undefined,
+    }));
+  }
+
+  if (grouping === "theme") {
+    // Unlike a class split, a theme tag doesn't divide the holding's value --
+    // a position tagged both "Core" and "AI" shows its full value under each,
+    // which is why the grand total is computed off the holdings rather than
+    // off these rows.
+    const rows: Row[] = [];
+    for (const holding of holdings) {
+      const tags = holding.themes.length > 0 ? holding.themes : [UNTAGGED];
+      for (const tag of tags) {
+        rows.push({
+          ...holding,
+          key: tags.length > 1 ? `${holding.key}::${tag}` : holding.key,
+          source: holding,
+          groupLabel: tag,
+        });
+      }
+    }
+    return rows;
+  }
+
+  return holdings.map(toRow);
+}
+
+/**
+ * Sorted rows bucketed into groups, ordered by their own subtotal of whatever
+ * money column is being sorted on.
+ *
+ * `rows` must already be sorted -- the buckets keep the order they arrive in,
+ * so the sort is what orders positions inside each group.
+ */
+export function groupsFor(
+  rows: readonly Row[],
+  grouping: HoldingGrouping,
+  accountNames: Map<string, string>,
+  sort: SortState<Column>,
+): Group<Row>[] {
+  if (grouping === "none") return [{ key: "", label: "", rows: [...rows] }];
+
+  const labelFor = (row: Row) =>
+    row.groupLabel ??
+    (grouping === "account"
+      ? accountNames.get(row.accountId) ?? "Unknown account"
+      : row.side === "short"
+        ? "Short positions"
+        : "Long positions");
+
+  const built = buildGroups(rows, labelFor);
+  const total = GROUP_TOTALS[sort.key];
+  if (!total) return built;
+  return orderGroupsBy(built, (grouped) => grouped.reduce((sum, row) => sum + total(row), 0), sort.direction);
+}
+
 export function HoldingsTable({
   holdings,
   accountNames,
   showAccount,
   grouping,
+  collapse,
   onSelect,
 }: {
   holdings: Holding[];
   accountNames: Map<string, string>;
   showAccount: boolean;
   grouping: HoldingGrouping;
+  /** Owned by the parent so its expand/collapse controls can sit beside the
+   *  grouping dropdown rather than floating above the table. */
+  collapse: CollapseState;
   onSelect: (holding: Holding) => void;
 }) {
-  const accessors = useMemo<SortAccessors<Holding, Column>>(
+  const accessors = useMemo<SortAccessors<Row, Column>>(
     () => ({
       symbol: (h) => h.symbol,
       account: (h) => accountNames.get(h.accountId) ?? "",
@@ -126,57 +215,16 @@ export function HoldingsTable({
     [accountNames],
   );
 
-  const { sort, toggle, apply } = useSort<Holding, Column>(accessors, "value");
-  // Sorted before any grouping-driven explosion, so "sort by value" orders by
-  // each holding's whole position, not by whatever fraction of it a class
-  // split happens to land in first.
-  const sorted = useMemo(() => apply(holdings), [apply, holdings]);
+  const { sort, toggle, apply } = useSort<Row, Column>(accessors, "value");
 
-  const groups = useMemo((): Group<Row>[] => {
-    if (grouping === "none") return [{ key: "", label: "", rows: sorted.map(toRow) }];
+  const rows = useMemo(() => rowsFor(holdings, grouping), [holdings, grouping]);
 
-    if (grouping === "assetClass") {
-      // A single-class holding explodes into one row identical to itself; a
-      // fund like VT explodes into one row per class it spans, each carrying
-      // only its own slice of the value -- see `explodeExposures`.
-      const rows: Row[] = explodeExposures(sorted).map((r) => ({
-        ...r,
-        source: r.source,
-        sliceNote: r.exposureCount > 1 ? `${Math.round(r.exposureWeight * 100)}% of position` : undefined,
-      }));
-      return buildGroups(rows, (r) => ASSET_CLASS_LABELS[r.assetClass]);
-    }
+  const sorted = useMemo(() => apply(rows), [apply, rows]);
 
-    if (grouping === "theme") {
-      // Unlike a class split, a theme tag doesn't divide the holding's value
-      // -- a position tagged both "Core" and "AI" shows its full value under
-      // each, which is why the grand total below is computed off the
-      // unexploded list rather than off these groups.
-      const buckets = new Map<string, Row[]>();
-      for (const holding of sorted) {
-        const tags = holding.themes.length > 0 ? holding.themes : [UNTAGGED];
-        for (const tag of tags) {
-          const row: Row = { ...holding, key: tags.length > 1 ? `${holding.key}::${tag}` : holding.key, source: holding };
-          const bucket = buckets.get(tag);
-          if (bucket) bucket.push(row);
-          else buckets.set(tag, [row]);
-        }
-      }
-      return [...buckets.entries()].map(([label, rows]) => ({ key: label, label, rows }));
-    }
-
-    const labelFor = (h: Holding) =>
-      grouping === "account"
-        ? accountNames.get(h.accountId) ?? "Unknown account"
-        : h.side === "short"
-          ? "Short positions"
-          : "Long positions";
-
-    return buildGroups(sorted.map(toRow), labelFor);
-  }, [sorted, grouping, accountNames]);
-
-  const collapse = useCollapsedGroups(grouping);
-  const groupKeys = useMemo(() => groups.map((g) => g.key), [groups]);
+  const groups = useMemo(
+    () => groupsFor(sorted, grouping, accountNames, sort),
+    [sorted, grouping, accountNames, sort],
+  );
 
   if (holdings.length === 0) {
     return (
@@ -189,17 +237,13 @@ export function HoldingsTable({
   // Everything left of Value: the label spans them because none of shares, avg
   // cost, or price means anything summed across different securities.
   const labelSpan = showAccount ? 5 : 4;
-  // Totals over every visible row regardless of group collapse -- collapsing a
-  // group hides its rows, not its money.
-  const grandTotals = totalsFor(sorted);
+  // Totals over every visible holding regardless of group collapse -- collapsing
+  // a group hides its rows, not its money. Off the holdings rather than the
+  // rows, so a class split or a second theme tag can't count one position twice.
+  const grandTotals = totalsFor(holdings);
 
   return (
     <div className="overflow-x-auto">
-      {grouping !== "none" && (
-        <div className="mb-1.5 flex justify-end">
-          <GroupToggles groupKeys={groupKeys} collapse={collapse} />
-        </div>
-      )}
       <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
       <table className="w-full border-collapse">
         <thead>

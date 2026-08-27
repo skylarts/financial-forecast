@@ -26,7 +26,7 @@ import { sortMarker, useSort, type SortAccessors } from "./useSort";
 import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
 
 const TX_GROUPINGS = [
-  { value: "none", label: "None" },
+  { value: "none", label: "No grouping" },
   { value: "symbol", label: "By stock" },
   { value: "account", label: "By account" },
   { value: "type", label: "By type" },
@@ -486,8 +486,9 @@ export function TransactionsPanel({
     return buildGroups(rows, labelFor);
   }, [rows, grouping, accountNames]);
 
-  const collapse = useCollapsedGroups(grouping);
-  const groupKeys = useMemo(() => groups.map((g) => g.key), [groups]);
+  // Opens collapsed: picking a grouping here is asking for the subtotals --
+  // the hundreds of underlying rows are what the grouping was meant to fold away.
+  const collapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
 
   // A scope naming exactly one account (a single-account person, or the
   // account picker itself) is the obvious default; anything broader -- "all",
@@ -559,7 +560,7 @@ export function TransactionsPanel({
               </option>
             ))}
           </select>
-          {grouping !== "none" && <GroupToggles groupKeys={groupKeys} collapse={collapse} />}
+          {grouping !== "none" && <GroupToggles collapse={collapse} />}
           {filtersActive && (
             <Btn
               onClick={() => {
