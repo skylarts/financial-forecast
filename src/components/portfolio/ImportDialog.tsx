@@ -349,8 +349,8 @@ export function ImportDialog({
           <p className="text-[11.5px] text-dim-2">
             {unrouted > 0 && (
               <span className="text-accent">
-                {unrouted} row{unrouted === 1 ? "" : "s"} have no sleeve and will sit on the parent
-                as unassigned.{" "}
+                {unrouted} row{unrouted === 1 ? " has" : "s have"} no sleeve and will sit on the
+                parent as unassigned.{" "}
               </span>
             )}
             {replacing > 0 &&
