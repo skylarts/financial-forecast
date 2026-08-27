@@ -943,7 +943,15 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    balance once set).
     for (const account of accounts) {
       if (!hasReachedStartMonth(month, account.effectiveStartDate)) continue;
-      const isCreationMonth = month.slice(0, 7) === account.effectiveStartDate.slice(0, 7);
+      // An account's own creation month normally seeds it -- but that month
+      // never gets simulated when effectiveStartDate already precedes the
+      // plan's own start (e.g. a buy_home event whose closing date is now in
+      // the past because plan start auto-tracks "today"). Without this, such
+      // an account would sit frozen at the balances map's $0 default forever
+      // -- seed it on month one instead, the earliest this plan ever sees it.
+      const isCreationMonth =
+        month.slice(0, 7) === account.effectiveStartDate.slice(0, 7) ||
+        (i === 0 && compareDates(account.effectiveStartDate, month) < 0);
       if (isCreationMonth) {
         // The opening balance is the account's starting balance for its first
         // year -- surface it in the "Starting balance" rollforward row rather

@@ -644,6 +644,47 @@ describe("forecastScenario -- buy_home", () => {
     // Old home's ongoing property tax stops too.
     expect(y2028.cashFlow.expenseByItem.some((i) => i.id === `${home.id}:ownership_costs`)).toBe(false);
   });
+
+  it("still seeds an account whose startDate is before the plan's own start date (e.g. a buy_home purchase that's now in the past)", () => {
+    // Regression: plan start auto-tracks "today", so a buy_home event's closing
+    // date -- correct when the plan was set up -- can end up before plan start
+    // by the time the household reopens the plan. The account's creation month
+    // is then never simulated, and it used to stay frozen at $0 forever.
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 1_000_000, growthRatePct: 0 });
+    const home = makeAccount({
+      class: "real_estate",
+      name: "First House",
+      startingBalance: 500_000,
+      growthRatePct: 0,
+      propertyGrowthRatePct: 0,
+      startDate: "2025-06-01",
+    });
+    const mortgage = makeAccount({
+      class: "mortgage",
+      name: "First House (Mortgage)",
+      startingBalance: 400_000,
+      growthRatePct: 0,
+      startDate: "2025-06-01",
+      loanTerms: {
+        originalPrincipal: 400_000,
+        originationDate: "2025-06-01",
+        annualInterestRatePct: 0.06,
+        termMonths: 360,
+        linkedAssetId: home.id,
+      },
+    });
+    const scenario = makeScenario({
+      accounts: [checking, { ...home, linkedLiabilityId: mortgage.id }, mortgage],
+      startDate: "2026-01-01", // after both accounts' own startDate above
+      horizonEndDate: "2026-12-31",
+    });
+    const result = forecastScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+
+    expect(y2026.accountBalances[home.id]).toBeCloseTo(500_000, 0);
+    expect(y2026.cashFlow.expenseByItem.some((i) => i.id === mortgage.id)).toBe(true);
+    expect(y2026.accountBalances[mortgage.id]).toBeLessThan(400_000);
+  });
 });
 
 describe("forecastScenario -- sell_home", () => {
