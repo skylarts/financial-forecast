@@ -215,6 +215,10 @@ describe("analyzePortfolio", () => {
     // the money still arrived this year.
     expect(result.holdings.filter((h) => h.kind === "position")).toHaveLength(0);
     expect(result.summary.incomeYtd).toBeCloseTo(42, 6);
+    // And lifetime income has to count the 2025 dividend too, which incomeYtd
+    // correctly leaves out -- summing from `holdings` instead would drop all
+    // three, since no holding survives to carry any of them.
+    expect(result.summary.income).toBeCloseTo(72, 6);
   });
 
   it("counts dividends as income without touching share count", () => {
