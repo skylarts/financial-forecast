@@ -24,15 +24,9 @@ import { classifySymbol } from "@/engine/portfolio/metrics";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
-import { FacetMenu } from "@/components/ui/FacetMenu";
-import { FilterStatus } from "./FilterStatus";
 import {
-  assetClassFacetOptions,
-  emptyHoldingFacets,
   holdingFacetsActive,
-  instrumentTypeFacetOptions,
   matchesHoldingFacets,
-  themeFacetOptions,
   type Classifiable,
   type HoldingFacets,
 } from "./filters";
@@ -176,12 +170,15 @@ function GrowthTooltip({
 export function PerformancePanel({
   portfolio,
   scopeAccountIds,
+  facets,
   viewToggle,
 }: {
   portfolio: Portfolio;
   /** null = every account (the "all" scope); otherwise the account ids the
    *  header's person-or-account picker currently covers. */
   scopeAccountIds: readonly string[] | null;
+  /** Owned by the shared filter bar above the tabs. */
+  facets: HoldingFacets;
   /** The over-time / by-stock switch, handed down so it sits in this panel's
    *  own first control row rather than in a second bar above it. */
   viewToggle?: ReactNode;
@@ -197,7 +194,6 @@ export function PerformancePanel({
   const [draftFrom, setDraftFrom] = useState("");
   const [draftTo, setDraftTo] = useState("");
   const [benchmarks, setBenchmarks] = useState<string[]>(["SPY"]);
-  const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
 
   // A part-typed date settles into the real one a beat later; committing on the
   // pause keeps the boxes responsive without needing the user to hit anything.
@@ -234,13 +230,6 @@ export function PerformancePanel({
     return map;
   }, [scopedTransactions, securityBySymbol]);
 
-  const facetRows = useMemo(() => [...symbolClassifications.values()], [symbolClassifications]);
-  const assetClassOptions = useMemo(() => assetClassFacetOptions(facetRows, facets), [facetRows, facets]);
-  const themeOptions = useMemo(() => themeFacetOptions(facetRows, facets), [facetRows, facets]);
-  const instrumentTypeOptions = useMemo(
-    () => instrumentTypeFacetOptions(facetRows, facets),
-    [facetRows, facets],
-  );
   const filtersActive = holdingFacetsActive(facets);
 
   // undefined means "no filter" -- passed straight through to the engine,
@@ -513,31 +502,6 @@ export function PerformancePanel({
             </label>
           </>
         )}
-        <FacetMenu
-          label="Class"
-          options={assetClassOptions}
-          state={facets.assetClass}
-          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
-        />
-        <FacetMenu
-          label="Theme"
-          options={themeOptions}
-          state={facets.theme}
-          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
-        />
-        <FacetMenu
-          label="Type"
-          options={instrumentTypeOptions}
-          state={facets.instrumentType}
-          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
-        />
-        <FilterStatus
-          shown={includedSymbols?.size ?? 0}
-          total={symbolClassifications.size}
-          noun="names"
-          active={filtersActive}
-          onClear={() => setFacets(emptyHoldingFacets())}
-        />
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">

@@ -79,18 +79,24 @@ export function FacetMenu({
     onChange({ ...state, selected: next });
   };
 
-  if (options.length <= 1) return null;
+  // Nothing to choose between. It stays on screen rather than unmounting: this
+  // lives in the shared bar above the tabs now, and a control that vanishes as
+  // a sibling facet narrows the rows makes the bar change shape under the
+  // cursor. Disabled says the same thing and holds its place.
+  const empty = options.length <= 1 && !active;
 
   return (
     <div ref={wrap} className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        disabled={empty}
+        title={empty ? `Nothing to filter by ${label.toLowerCase()} in this view` : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
         className={`rounded-md border bg-panel-2 px-2 py-1.5 text-[12.5px] font-medium transition-colors ${
           active ? "border-accent text-accent" : "border-border text-dim hover:text-foreground"
-        }`}
+        } disabled:cursor-default disabled:border-border-soft disabled:text-dim-2 disabled:hover:text-dim-2`}
       >
         {label}
         {active ? ` · ${state.selected.size}` : ""} ▾

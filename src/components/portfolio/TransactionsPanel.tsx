@@ -371,11 +371,18 @@ function num(raw: string): number {
 export function TransactionsPanel({
   portfolio,
   scopeAccountIds,
+  search,
+  onSearchChange,
 }: {
   portfolio: Portfolio;
   /** null = every account (the "all" scope); otherwise the account ids the
    *  header's person-or-account picker currently covers. */
   scopeAccountIds: readonly string[] | null;
+  /** Owned by the shared filter bar above the tabs. It still matches lot IDs
+   *  here as well as tickers -- one search box, read the way each tab can. */
+  search: string;
+  /** Clicking a lot ID searches for it, which now writes to the shared box. */
+  onSearchChange: (next: string) => void;
 }) {
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const updateTransaction = usePortfolioStore((s) => s.updateTransaction);
@@ -384,7 +391,6 @@ export function TransactionsPanel({
   const [adding, setAdding] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -449,7 +455,9 @@ export function TransactionsPanel({
   }, [portfolio.transactions, scopeAccountIds, search, typeFilter, fromDate, toDate, tickers]);
 
   const rows = useMemo(() => apply(filtered), [apply, filtered]);
-  const filtersActive = search !== "" || typeFilter !== "all" || fromDate !== "" || toDate !== "";
+  // Only this tab's own filters -- the shared search has its own way out in
+  // the bar that owns it.
+  const filtersActive = typeFilter !== "all" || fromDate !== "" || toDate !== "";
 
   const groups = useMemo(() => {
     if (grouping === "none") return [{ key: "", label: "", rows }];
@@ -485,19 +493,6 @@ export function TransactionsPanel({
           <span className="ml-2 text-[12px] font-normal text-dim-2">{rows.length} rows</span>
         </h2>
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Symbol or lot ID"
-            title="Pick an exact ticker to see only that symbol, or type part of a ticker or lot ID to wildcard-match."
-            list="tx-ticker-list"
-            className={`${INPUT} w-48`}
-          />
-          <datalist id="tx-ticker-list">
-            {tickers.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
@@ -533,7 +528,6 @@ export function TransactionsPanel({
             total={portfolio.transactions.length}
             active={filtersActive}
             onClear={() => {
-              setSearch("");
               setTypeFilter("all");
               setFromDate("");
               setToDate("");
@@ -759,7 +753,7 @@ export function TransactionsPanel({
                           </td>
                           <td className={`${CELL} text-right text-dim`}>{money(signedTransactionAmount(tx))}</td>
                           <td className={`${CELL} text-left text-dim-2`}>
-                            <LotCell tx={tx} onSearch={setSearch} />
+                            <LotCell tx={tx} onSearch={onSearchChange} />
                           </td>
                           <td className={`${CELL} text-right`}>
                             <div className="flex items-center justify-end gap-2.5">

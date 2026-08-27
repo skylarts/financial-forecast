@@ -66,13 +66,15 @@ export function RealizedPanel({
   closedLots,
   summary,
   accountNames,
+  search,
 }: {
   closedLots: ClosedLot[];
   summary: PortfolioSummary;
   accountNames: Map<string, string>;
+  /** Owned by the shared filter bar above the tabs. */
+  search: string;
 }) {
   const [grouping, setGrouping] = useState<RealizedGrouping>("none");
-  const [search, setSearch] = useState("");
   const [outcome, setOutcome] = useState<Outcome>("all");
 
   const accessors = useMemo<SortAccessors<ClosedLot, Column>>(
@@ -158,22 +160,13 @@ export function RealizedPanel({
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search symbol"
-              className="w-44 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
-            />
             <OutcomeFilter value={outcome} onChange={setOutcome} />
             <FilterStatus
               shown={sorted.length}
               total={closedLots.length}
               noun="lots"
-              active={search !== "" || outcome !== "all"}
-              onClear={() => {
-                setSearch("");
-                setOutcome("all");
-              }}
+              active={outcome !== "all"}
+              onClear={() => setOutcome("all")}
             />
           </div>
 
