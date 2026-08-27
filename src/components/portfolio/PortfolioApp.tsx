@@ -157,6 +157,7 @@ export function PortfolioApp() {
   const importTransactions = usePortfolioStore((s) => s.importTransactions);
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
+  const undoImport = usePortfolioStore((s) => s.undoImport);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
   const addAccount = usePortfolioStore((s) => s.addAccount);
   const loadPortfolio = usePortfolioStore((s) => s.loadPortfolio);
@@ -176,7 +177,17 @@ export function PortfolioApp() {
   const [scope, setScope] = useState<string>(ALL_ACCOUNTS_SCOPE);
   const [selected, setSelected] = useState<PositionSelection | null>(null);
   const [importing, setImporting] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
+  /**
+   * The banner message, and the import it can take back.
+   *
+   * `undoBatch` rides along with the message rather than sitting in its own
+   * state so the two can never come apart: an Undo offered next to a later,
+   * unrelated message would still throw away the earlier import, and that is
+   * exactly the kind of button somebody presses. Setting any other message
+   * clears it, because `setFlash` cannot carry one.
+   */
+  const [flash, setFlashState] = useState<{ text: string; undoBatch?: string } | null>(null);
+  const setFlash = (text: string | null) => setFlashState(text === null ? null : { text });
 
   // Search and the three facets are shared by every tab that can read them,
   // rather than re-declared on each. They used to be four search boxes and
@@ -405,14 +416,36 @@ export function PortfolioApp() {
       .filter((id): id is string => id !== null);
     const replaced = replacedIds.length > 0 ? removeTransactions(replacedIds) : 0;
 
-    importTransactions(
+    const batchId = importTransactions(
       accountId,
       rows.map((row) => row.draft),
     );
     setImporting(false);
-    setFlash(
-      `Imported ${rows.length} transaction${rows.length === 1 ? "" : "s"}` +
+    setFlashState({
+      text:
+        `Imported ${rows.length} transaction${rows.length === 1 ? "" : "s"}` +
         (replaced > 0 ? `, replacing ${replaced} synced dividend${replaced === 1 ? "" : "s"}.` : "."),
+      undoBatch: batchId,
+    });
+  };
+
+  /**
+   * Takes back the import the banner is describing.
+   *
+   * Offered only while that banner is up: it is the fix for having just sent a
+   * file to the wrong account, which is the moment you notice. Once the message
+   * is gone the import is ordinary history, and unpicking it belongs to the
+   * transactions list, where the rows can be seen before they are deleted.
+   *
+   * Dividends the import superseded stay gone. They were the price feed's own
+   * estimates rather than anything the user entered, and the next sync writes
+   * them again -- so the message says so instead of implying a clean reversal.
+   */
+  const handleUndoImport = (batchId: string, replacedSynced: boolean) => {
+    const removed = undoImport(batchId);
+    setFlash(
+      `Removed ${removed} imported transaction${removed === 1 ? "" : "s"}.` +
+        (replacedSynced ? " Synced dividends it replaced will come back on the next sync." : ""),
     );
   };
 
@@ -612,10 +645,22 @@ export function PortfolioApp() {
 
       {flash && (
         <div className="flex items-center justify-between gap-3 border-b border-border bg-panel-2 px-6 py-2 text-[12.5px] text-foreground">
-          <span>{flash}</span>
-          <button type="button" onClick={() => setFlash(null)} className="text-dim hover:text-foreground">
-            Dismiss
-          </button>
+          <span>{flash.text}</span>
+          <div className="flex shrink-0 items-center gap-3">
+            {flash.undoBatch && (
+              <button
+                type="button"
+                onClick={() => handleUndoImport(flash.undoBatch!, flash.text.includes("replacing"))}
+                className="text-accent hover:underline"
+                title="Remove every transaction this import added"
+              >
+                Undo import
+              </button>
+            )}
+            <button type="button" onClick={() => setFlash(null)} className="text-dim hover:text-foreground">
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
