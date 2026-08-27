@@ -93,6 +93,21 @@ const HISTORY_TTL_MS = 12 * 60 * 60 * 1000;
  */
 const STALE_FALLBACK_MS = 72 * 60 * 60 * 1000;
 
+/**
+ * `Cache-Control` for the price routes, mirroring the TTLs above so the
+ * browser's own HTTP cache and this process's in-memory one agree on how
+ * fresh each kind of data needs to be. `private` because there is no shared
+ * cache in front of this app worth serving out of -- the only cache these
+ * headers are for is the requesting browser's own.
+ *
+ * `stale-while-revalidate` lets a request past `max-age` still answer
+ * instantly from the stale copy while a background refetch brings it current,
+ * rather than the caller blocking on the network the moment the age ticks
+ * over.
+ */
+export const HISTORY_CACHE_CONTROL = `private, max-age=${Math.floor(HISTORY_TTL_MS / 1000)}, stale-while-revalidate=${Math.floor(HISTORY_TTL_MS / 1000)}`;
+export const QUOTE_CACHE_CONTROL = `private, max-age=${Math.floor(QUOTE_TTL_MS / 1000)}, stale-while-revalidate=${Math.floor(QUOTE_TTL_MS / 1000)}`;
+
 function isoFromEpochSeconds(seconds: number): ISODate {
   return new Date(seconds * 1000).toISOString().slice(0, 10);
 }

@@ -1,13 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import type { Transaction } from "@/domain/portfolio";
 import { TRANSACTION_TYPE_LABELS } from "@/domain/portfolio";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { Holding } from "@/engine/portfolio/metrics";
 import { lotTermLabel, money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Segmented } from "@/components/ui/controls";
-import { PriceChart, type PricePoint } from "./PriceChart";
+import type { PricePoint } from "./PriceChart";
+
+/**
+ * The Holdings tab -- almost always the first thing this page shows -- opens
+ * this drawer eagerly enough that a static import would have pulled Recharts
+ * into the tab's own bundle just for a chart that isn't shown until a row is
+ * clicked. Deferred here instead of loaded up front.
+ */
+const PriceChart = dynamic(() => import("./PriceChart").then((m) => m.PriceChart), {
+  ssr: false,
+  loading: () => <div className="h-64 animate-pulse rounded-md bg-panel-2" />,
+});
 
 /**
  * Chart ranges, short end first.

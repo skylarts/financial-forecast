@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import type { Granularity, Id, PeriodSnapshot } from "@/domain";
 import type { DollarMode } from "@/lib/format";
 import { Header } from "@/components/layout/Header";
@@ -8,7 +9,6 @@ import { Footer } from "@/components/layout/Footer";
 import { ViewBar } from "@/components/layout/ViewBar";
 import type { View } from "@/lib/views";
 import { OverviewBento } from "@/components/kpi/OverviewBento";
-import { NetWorthChart } from "@/components/chart/NetWorthChart";
 import { DetailTabs } from "@/components/tables/DetailTabs";
 import { WarningsBanner } from "@/components/layout/WarningsBanner";
 import { StalePlanBanner } from "@/components/layout/StalePlanBanner";
@@ -21,6 +21,21 @@ import { JoyConfetti } from "@/components/joy/JoyConfetti";
 import { JoyQuote } from "@/components/joy/JoyQuote";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { todayISO } from "@/engine/dateMath";
+
+/**
+ * Recharts is a sizeable chunk of JS that the rest of the Overview page
+ * (KPIs, the account snapshot) doesn't need, so it loads separately from the
+ * bundle those need to become interactive. `ssr: false` because the chart
+ * reads its own container width client-side; a fixed-height placeholder holds
+ * its place so the layout doesn't jump once it's loaded.
+ */
+const NetWorthChart = dynamic(
+  () => import("@/components/chart/NetWorthChart").then((m) => m.NetWorthChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-[320px] w-full animate-pulse rounded-md bg-panel-2" />,
+  },
+);
 
 function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());

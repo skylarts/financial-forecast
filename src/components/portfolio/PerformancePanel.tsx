@@ -23,6 +23,7 @@ import {
 } from "@/engine/portfolio/performance";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import { chunkSymbols } from "@/lib/portfolio/historyBatch";
+import { coversRequest, getCachedHistories, putCachedHistories } from "@/lib/portfolio/priceHistoryCache";
 import { Segmented } from "@/components/ui/controls";
 import { BenchmarkPicker } from "./BenchmarkPicker";
 
@@ -305,11 +306,31 @@ export function PerformancePanel({
     // out across the feed, and firing them in parallel is what the cap exists
     // to prevent.
     (async () => {
+      const symbols = symbolList.split(",");
       const histories = new Map<string, PricePoint[]>();
       const splits = new Map<string, SplitEvent[]>();
       const skipped: string[] = [];
       try {
-        for (const chunk of chunkSymbols(symbolList.split(","))) {
+        // Daily closes outlive the browser tab that fetched them, so a symbol
+        // this window already has a wide-enough, fresh-enough entry for
+        // (persisted across the last reload, not just this session) never
+        // needs to touch the network at all -- only what's actually missing
+        // does, and it's what the cap below is spent on.
+        const cached = await getCachedHistories(symbols.map((symbol) => ({ symbol, range })));
+        if (cancelled) return;
+        const needsFetch: string[] = [];
+        for (const symbol of symbols) {
+          const entry = cached.get(symbol);
+          if (entry && coversRequest(entry, windowStart)) {
+            histories.set(symbol, entry.points);
+            splits.set(symbol, entry.splits);
+          } else {
+            needsFetch.push(symbol);
+          }
+        }
+
+        const freshEntries = new Map<string, { points: PricePoint[]; splits: SplitEvent[] }>();
+        for (const chunk of chunkSymbols(needsFetch)) {
           const response = await fetch(
             `/api/prices/history/batch?symbols=${encodeURIComponent(chunk.join(","))}&range=${range}&from=${windowStart}`,
           );
@@ -326,6 +347,9 @@ export function PerformancePanel({
           for (const [symbol, events] of Object.entries(body.splits ?? {})) {
             splits.set(symbol, events);
           }
+          for (const symbol of Object.keys(body.histories ?? {})) {
+            freshEntries.set(symbol, { points: histories.get(symbol) ?? [], splits: splits.get(symbol) ?? [] });
+          }
           skipped.push(...(body.skipped ?? []));
         }
         if (!cancelled) {
@@ -334,6 +358,9 @@ export function PerformancePanel({
           // complete one on the next visit.
           cachePut(requestKey, { histories, splits, skipped });
           setLoaded({ key: requestKey, histories, splits, skipped, failed: false });
+          // Fire-and-forget: persisting is for the *next* reload, so nothing
+          // here should wait on it.
+          void putCachedHistories(range, windowStart, freshEntries);
         }
       } catch {
         if (!cancelled) {

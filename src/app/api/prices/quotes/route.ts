@@ -1,4 +1,4 @@
-import { fetchQuotes } from "@/lib/portfolio/priceFeed";
+import { fetchQuotes, QUOTE_CACHE_CONTROL } from "@/lib/portfolio/priceFeed";
 
 /** Guards against one request fanning out into hundreds of upstream fetches. */
 const MAX_SYMBOLS = 60;
@@ -34,11 +34,14 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({
-    quotes,
-    unknown,
-    unavailable,
-    /** Everything unpriced, for callers that don't care why. */
-    missing: [...unknown, ...unavailable],
-  });
+  return Response.json(
+    {
+      quotes,
+      unknown,
+      unavailable,
+      /** Everything unpriced, for callers that don't care why. */
+      missing: [...unknown, ...unavailable],
+    },
+    { headers: { "Cache-Control": QUOTE_CACHE_CONTROL } },
+  );
 }

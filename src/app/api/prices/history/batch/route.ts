@@ -1,4 +1,4 @@
-import { fetchHistories } from "@/lib/portfolio/priceFeed";
+import { fetchHistories, HISTORY_CACHE_CONTROL } from "@/lib/portfolio/priceFeed";
 import { HISTORY_BATCH_LIMIT } from "@/lib/portfolio/historyBatch";
 
 const ALLOWED_RANGES = new Set(["1mo", "3mo", "6mo", "ytd", "1y", "2y", "5y", "10y", "max"]);
@@ -52,7 +52,12 @@ export async function GET(request: Request) {
   const symbols = requested.slice(0, MAX_SYMBOLS);
   const skipped = requested.slice(MAX_SYMBOLS);
 
-  if (symbols.length === 0) return Response.json({ histories: {}, splits: {}, skipped });
+  if (symbols.length === 0) {
+    return Response.json(
+      { histories: {}, splits: {}, skipped },
+      { headers: { "Cache-Control": HISTORY_CACHE_CONTROL } },
+    );
+  }
 
   const results = await fetchHistories(symbols, range);
 
@@ -85,5 +90,8 @@ export async function GET(request: Request) {
     if (result.splits.length > 0) splits[symbol] = result.splits;
   }
 
-  return Response.json({ histories, splits, skipped });
+  return Response.json(
+    { histories, splits, skipped },
+    { headers: { "Cache-Control": HISTORY_CACHE_CONTROL } },
+  );
 }
