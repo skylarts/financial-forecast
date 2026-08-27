@@ -93,3 +93,30 @@ export function classifyTaxSource(label: string): TaxSource | null {
   }
   return null;
 }
+
+/**
+ * Which pot an account type represents, or null for a type that is not a
+ * workplace/IRA tax bucket at all.
+ */
+export function taxSourceOfAccountType(type: PortfolioAccountType): TaxSource | null {
+  if (type === "roth_401k" || type === "roth_ira") return "roth";
+  if (type === "traditional_401k" || type === "traditional_ira") return "pretax";
+  return null;
+}
+
+/**
+ * The sleeve a statement's source label most likely belongs to, or null when
+ * nothing can be said.
+ *
+ * Used only to seed the import dialog's routing table. Every guess it makes is
+ * shown next to the label it came from and can be overruled before a single
+ * row is written, which is what makes guessing safe here and not elsewhere.
+ */
+export function suggestSleeve<T extends { type: PortfolioAccountType }>(
+  label: string,
+  sleeves: readonly T[],
+): T | null {
+  const source = classifyTaxSource(label);
+  if (source === null) return null;
+  return sleeves.find((s) => taxSourceOfAccountType(s.type) === source) ?? null;
+}

@@ -30,6 +30,16 @@ export interface ColumnMapping {
   spinoffShareRatio: number | null;
   /** For a spinoff/exchange row: fraction of basis staying with `symbol`, 0-1. */
   spinoffBasisRetained: number | null;
+  /**
+   * Which pot of a split workplace account the row belongs to -- Empower calls
+   * it the money source and prints "EMPLOYEE BEFORE TAX-VOLUNTARY" or "ROTH
+   * CONTRIBUTION" over each block of fund activity.
+   *
+   * Unlike every other field here it names no property of a transaction: it
+   * decides which *account* the row lands in. See `taxSourceLabel` on
+   * ImportRow, which carries the raw value through for the dialog to route on.
+   */
+  taxSource: number | null;
   note: number | null;
 }
 
@@ -48,6 +58,7 @@ export const IMPORT_FIELD_LABELS: Record<ImportField, string> = {
   spinoffSymbol: "Spinoff: new symbol",
   spinoffShareRatio: "Spinoff: share ratio",
   spinoffBasisRetained: "Spinoff: basis retained",
+  taxSource: "Money source (pre-tax / Roth)",
   note: "Description",
 };
 
@@ -56,6 +67,14 @@ export type DraftTransaction = Omit<Transaction, "id" | "accountId" | "importBat
 export interface ImportRow {
   raw: string[];
   draft: DraftTransaction;
+  /**
+   * The row's money-source cell, verbatim and untouched, or "" when the file
+   * has no such column. Kept raw rather than classified here because routing
+   * is the user's call: the dialog groups the file's distinct values, guesses
+   * a sleeve for each, and lets that guess be overruled before anything is
+   * written.
+   */
+  taxSourceLabel: string;
   /** Non-fatal notes; a row with issues still imports unless `skip` is set. */
   issues: string[];
   /** True when the row could not be understood well enough to import. */
@@ -166,6 +185,10 @@ const FIELD_PATTERNS: Record<ImportField, RegExp[]> = {
   spinoffSymbol: [/spinoff.*symbol/i, /new\s*symbol/i],
   spinoffShareRatio: [/spinoff.*ratio/i, /share\s*ratio/i],
   spinoffBasisRetained: [/basis\s*retained/i, /spinoff.*basis/i],
+  // "Money source" is Empower's own term; "source" alone is last so a column
+  // merely called that is still found, and every pattern is narrow enough not
+  // to claim a description column.
+  taxSource: [/money\s*(source|type)/i, /contribution\s*(source|type)/i, /^tax\s*(source|type)$/i, /^source$/i],
   note: [/description/i, /memo/i, /^note$/i],
 };
 
@@ -188,6 +211,7 @@ export function guessMapping(headers: readonly string[]): ColumnMapping {
     spinoffSymbol: null,
     spinoffShareRatio: null,
     spinoffBasisRetained: null,
+    taxSource: null,
     note: null,
   };
   const claimed = new Set<number>();
@@ -207,6 +231,7 @@ export function guessMapping(headers: readonly string[]): ColumnMapping {
     "spinoffSymbol",
     "spinoffShareRatio",
     "spinoffBasisRetained",
+    "taxSource",
     "note",
   ];
 
@@ -350,17 +375,24 @@ export function buildImportRows(
   table: ParsedTable,
   mapping: ColumnMapping,
   existing: readonly Transaction[] = [],
-  accountId: Id | null = null,
+  target: Id | readonly Id[] | null = null,
 ): ImportRow[] {
+  // One import can land in more than one account: a split workplace account's
+  // file carries a money-source column and its rows fan out across the
+  // sleeves. Sync-written dividends to supersede are looked for across every
+  // account the import can reach, since which sleeve holds the shares is
+  // exactly what the source column is about to decide.
+  const targetIds =
+    target === null ? [] : typeof target === "string" ? [target] : [...target];
   const seen = new Set(existing.map((tx) => tx.sourceHash).filter((h): h is string => h !== null));
 
   // Dividends the sync already wrote into the target account, by symbol --
   // the only thing a statement's own pay-date row can collide with that its
   // hash won't reveal.
   const autoDivEntries = new Map<string, { id: string; date: ISODate }[]>();
-  if (accountId !== null) {
+  if (targetIds.length > 0) {
     for (const tx of existing) {
-      if (tx.accountId !== accountId || tx.symbol === null || !isAutoDividendHash(tx.sourceHash)) continue;
+      if (!targetIds.includes(tx.accountId) || tx.symbol === null || !isAutoDividendHash(tx.sourceHash)) continue;
       const symbol = normalizeSymbol(tx.symbol);
       const entries = autoDivEntries.get(symbol);
       const entry = { id: tx.id, date: tx.date };
@@ -464,6 +496,7 @@ export function buildImportRows(
     return {
       raw,
       draft,
+      taxSourceLabel: cell(raw, mapping.taxSource).trim(),
       issues,
       skip: !date || !type || (needsSymbol && !symbolRaw) || spinoffIncomplete,
       duplicate: seen.has(sourceHash),

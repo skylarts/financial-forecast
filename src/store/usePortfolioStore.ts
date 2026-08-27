@@ -106,8 +106,17 @@ interface PortfolioState {
    * the whole portfolio once per row. Returns how many actually went.
    */
   removeTransactions: (ids: readonly string[]) => number;
-  /** Returns the batch id, so a bad import can be rolled back wholesale. */
-  importTransactions: (accountId: string, drafts: readonly DraftTransaction[]) => string;
+  /**
+   * Writes one import as a single batch, each row carrying the account it was
+   * routed to. Returns the batch id, so a bad import can be rolled back
+   * wholesale.
+   *
+   * Rows name their own account rather than the batch naming one, because a
+   * split workplace account's statement fans out across its sleeves: the money
+   * source printed over each block of fund activity is what decides which pot
+   * the row lands in, and that varies row by row within one file.
+   */
+  importTransactions: (rows: readonly { accountId: string; draft: DraftTransaction }[]) => string;
   undoImport: (batchId: string) => number;
 
   upsertSecurity: (security: Security) => void;
@@ -216,13 +225,18 @@ export const usePortfolioStore = create<PortfolioState>()(
           return before - get().portfolio.transactions.length;
         },
 
-        importTransactions: (accountId, drafts) => {
+        importTransactions: (rows) => {
           const batchId = nanoid();
           mutate((p) => ({
             ...p,
             transactions: [
               ...p.transactions,
-              ...drafts.map((draft) => ({ ...draft, id: nanoid(), accountId, importBatchId: batchId })),
+              ...rows.map(({ accountId, draft }) => ({
+                ...draft,
+                id: nanoid(),
+                accountId,
+                importBatchId: batchId,
+              })),
             ],
           }));
           return batchId;
