@@ -16,6 +16,15 @@ import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { money } from "@/lib/portfolio/format";
 import { ownerOptions } from "@/lib/people";
 import { Btn } from "@/components/ui/controls";
+import {
+  accountFamilyIds,
+  accountTreeRows,
+  assertAssignableParent,
+  hasSleeves,
+  sleevesOf,
+  type AccountTreeRow,
+} from "@/lib/portfolio/accountTree";
+import { TAX_SOURCE_SLEEVES } from "@/lib/portfolio/taxSource";
 
 const INPUT =
   "rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none focus:border-accent";
@@ -23,13 +32,31 @@ const INPUT =
 /**
  * Market value the tracker would push into the forecast: positions plus
  * uninvested cash, which is what the forecast's starting balance means.
+ *
+ * Scoped to a list of ids rather than one, so a split account's parent row can
+ * total itself and its sleeves in the single pass that produces every other
+ * figure on that row.
  */
-function accountValue(portfolio: Portfolio, prices: PriceMap, accountId: string) {
-  const { summary } = analyzePortfolio(portfolio, prices, { accountIds: [accountId] });
+function accountValue(portfolio: Portfolio, prices: PriceMap, accountIds: string[]) {
+  const { summary } = analyzePortfolio(portfolio, prices, { accountIds });
   return { value: summary.totalValue, costBasis: summary.costBasis };
 }
 
 const EMPTY_CASH: AccountCash = { balance: 0, opening: 0, implied: 0, solvent: true };
+
+/** Cash across a whole family, so a parent row reports what its sleeves hold. */
+function familyCash(portfolio: Portfolio, accountIds: string[]): AccountCash {
+  const balances = accountCashBalances(portfolio);
+  return accountIds.reduce<AccountCash>((sum, id) => {
+    const cash = balances.get(id) ?? EMPTY_CASH;
+    return {
+      balance: sum.balance + cash.balance,
+      opening: sum.opening + cash.opening,
+      implied: sum.implied + cash.implied,
+      solvent: sum.solvent && cash.solvent,
+    };
+  }, EMPTY_CASH);
+}
 
 /**
  * Why the cash figure is what it is. Worth spelling out only when the ledger
@@ -48,38 +75,117 @@ function cashTitle(cash: AccountCash): string {
   return "Replayed from every cash movement in the ledger.";
 }
 
-function AccountRow({
+/**
+ * The dollars sitting on a split account's own ledger rather than on one of
+ * its sleeves -- money that has not been attributed to pre-tax or Roth yet.
+ *
+ * Worth its own figure because it is precisely what the forecast is not being
+ * told about: a parent never syncs (see `pendingForecastPushes`), so anything
+ * left here is real money the plan cannot see. Surfacing it turns a silent
+ * omission into a visible to-do.
+ */
+function unassignedValue(portfolio: Portfolio, prices: PriceMap, parentId: string) {
+  const holdsOwnRows = portfolio.transactions.some((tx) => tx.accountId === parentId);
+  if (!holdsOwnRows) return 0;
+  return accountValue(portfolio, prices, [parentId]).value;
+}
+
+/** The select that attaches an account to a parent, or detaches it. */
+function ParentPicker({
   account,
+  accounts,
+}: {
+  account: PortfolioAccount;
+  accounts: readonly PortfolioAccount[];
+}) {
+  const updateAccount = usePortfolioStore((s) => s.updateAccount);
+  const [error, setError] = useState<string | null>(null);
+
+  // Only accounts that could legally take this one as a sleeve, so the list
+  // cannot offer a choice that would just be rejected.
+  const candidates = accounts.filter(
+    (a) => a.id !== account.id && assertAssignableParent(accounts, account.id, a.id) === null,
+  );
+  if (candidates.length === 0 && account.parentAccountId === null) return null;
+
+  return (
+    <>
+      <select
+        value={account.parentAccountId ?? ""}
+        onChange={(e) => {
+          const parentAccountId = e.target.value || null;
+          const problem = assertAssignableParent(accounts, account.id, parentAccountId);
+          setError(problem);
+          if (problem) return;
+          updateAccount(account.id, { parentAccountId });
+        }}
+        className="mt-1 w-40 rounded border border-border bg-panel-2 px-1.5 py-1 text-[11px] text-dim outline-none focus:border-accent"
+        title="Make this account a sleeve of another — how a 401(k) or 457 holding both pre-tax and Roth money is split, so each half can carry its own tax treatment into the forecast."
+      >
+        <option value="">— its own account —</option>
+        {candidates.map((a) => (
+          <option key={a.id} value={a.id}>
+            ↳ part of {a.name}
+          </option>
+        ))}
+      </select>
+      {error && <p className="mt-1 w-40 text-[11px] text-negative">{error}</p>}
+    </>
+  );
+}
+
+function AccountRow({
+  row,
+  accounts,
   portfolio,
   prices,
   forecastAccounts,
   people,
   onPush,
 }: {
-  account: PortfolioAccount;
+  row: AccountTreeRow;
+  accounts: readonly PortfolioAccount[];
   portfolio: Portfolio;
   prices: PriceMap;
   forecastAccounts: Account[];
   people: readonly Person[];
   onPush: (account: PortfolioAccount, value: number, costBasis: number) => void;
 }) {
+  const { account, depth, isParent } = row;
   const updateAccount = usePortfolioStore((s) => s.updateAccount);
   const removeAccount = usePortfolioStore((s) => s.removeAccount);
   const linkForecastAccount = usePortfolioStore((s) => s.linkForecastAccount);
+  const splitByTaxSource = usePortfolioStore((s) => s.splitByTaxSource);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const { value, costBasis } = accountValue(portfolio, prices, account.id);
-  const cash = accountCashBalances(portfolio).get(account.id) ?? EMPTY_CASH;
+  // A parent stands for everything beneath it, so its figures cover the whole
+  // family. Every other row is only ever itself.
+  const scopeIds = isParent ? accountFamilyIds(accounts, account.id) : [account.id];
+  const { value, costBasis } = accountValue(portfolio, prices, scopeIds);
+  const cash = isParent
+    ? familyCash(portfolio, scopeIds)
+    : accountCashBalances(portfolio).get(account.id) ?? EMPTY_CASH;
   const linked = forecastAccounts.find((a) => a.id === account.forecastAccountId) ?? null;
+  const unassigned = isParent ? unassignedValue(portfolio, prices, account.id) : 0;
+
+  // Splitting only makes sense for an account that is neither already split
+  // nor itself a sleeve.
+  const canSplit = !isParent && account.parentAccountId === null;
 
   return (
-    <tr className="border-b border-border-soft">
-      <td className="px-3 py-2">
-        <input
-          value={account.name}
-          onChange={(e) => updateAccount(account.id, { name: e.target.value })}
-          className={`${INPUT} w-40`}
-        />
+    <tr className={`border-b border-border-soft ${depth > 0 ? "bg-panel-2/30" : ""}`}>
+      <td className="px-3 py-2" style={{ paddingLeft: depth > 0 ? 30 : undefined }}>
+        <div className="flex items-start gap-1.5">
+          {depth > 0 && <span className="mt-2 text-dim-2">↳</span>}
+          <div>
+            <input
+              value={account.name}
+              onChange={(e) => updateAccount(account.id, { name: e.target.value })}
+              className={`${INPUT} w-40`}
+            />
+            <ParentPicker account={account} accounts={accounts} />
+          </div>
+        </div>
       </td>
       <td className="px-3 py-2">
         <input
@@ -136,71 +242,113 @@ function AccountRow({
       </td>
       <td className="px-3 py-2 text-right text-[12.5px] font-semibold tabular-nums text-foreground">
         {money(value)}
+        {isParent && <div className="text-[11px] font-normal text-dim">incl. sleeves</div>}
       </td>
       <td className="px-3 py-2">
-        <div className="flex items-center gap-1.5">
-          <select
-            value={account.forecastAccountId ?? ""}
-            onChange={(e) => {
-              const forecastAccountId = e.target.value || null;
-              // An account not yet assigned to anyone here picks up its
-              // forecast counterpart's owner rather than staying blank --
-              // the forecast side already knows whose account this is, and
-              // an owner set explicitly beforehand always wins (only adopted
-              // when account.ownerId is still null, and only when there's an
-              // owner to adopt).
-              const target = forecastAccountId
-                ? forecastAccounts.find((a) => a.id === forecastAccountId)
-                : null;
-              linkForecastAccount(
-                account.id,
-                forecastAccountId,
-                account.ownerId === null && target ? target.ownerId : undefined,
-              );
-            }}
-            className={`${INPUT} w-40`}
+        {isParent ? (
+          <p
+            className="w-40 text-[11px] text-dim"
+            title="A split account's sleeves each carry their own tax treatment, so each one links to its own forecast account. Linking the parent as well would push the same dollars a second time."
           >
-            <option value="">— not linked —</option>
-            {forecastAccounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-          <label
-            className="flex items-center gap-1 text-[11px] text-dim"
-            title="Automatically write this account's value into the forecast whenever it changes. Uncheck to keep the link without the automatic write."
+            Linked per sleeve
+          </p>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <select
+              value={account.forecastAccountId ?? ""}
+              onChange={(e) => {
+                const forecastAccountId = e.target.value || null;
+                // An account not yet assigned to anyone here picks up its
+                // forecast counterpart's owner rather than staying blank --
+                // the forecast side already knows whose account this is, and
+                // an owner set explicitly beforehand always wins (only adopted
+                // when account.ownerId is still null, and only when there's an
+                // owner to adopt).
+                const target = forecastAccountId
+                  ? forecastAccounts.find((a) => a.id === forecastAccountId)
+                  : null;
+                linkForecastAccount(
+                  account.id,
+                  forecastAccountId,
+                  account.ownerId === null && target ? target.ownerId : undefined,
+                );
+              }}
+              className={`${INPUT} w-40`}
+            >
+              <option value="">— not linked —</option>
+              {forecastAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <label
+              className="flex items-center gap-1 text-[11px] text-dim"
+              title="Automatically write this account's value into the forecast whenever it changes. Uncheck to keep the link without the automatic write."
+            >
+              <input
+                type="checkbox"
+                checked={account.syncToForecast}
+                disabled={!account.forecastAccountId}
+                onChange={(e) => updateAccount(account.id, { syncToForecast: e.target.checked })}
+              />
+              Sync
+            </label>
+          </div>
+        )}
+        {unassigned !== 0 && (
+          <p
+            className="mt-1 w-44 text-[11px] text-negative"
+            title="These rows sit on the account itself rather than on one of its sleeves, so nothing says whether they are pre-tax or Roth — and the forecast is not told about them at all. Move them onto a sleeve from the Transactions tab."
           >
-            <input
-              type="checkbox"
-              checked={account.syncToForecast}
-              disabled={!account.forecastAccountId}
-              onChange={(e) => updateAccount(account.id, { syncToForecast: e.target.checked })}
-            />
-            Sync
-          </label>
-        </div>
+            {money(unassigned)} unassigned
+          </p>
+        )}
       </td>
       <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-1.5">
-          <Btn
-            onClick={() => onPush(account, value, costBasis)}
-            title={
-              linked
-                ? `Set "${linked.name}" starting balance to ${money(value)}`
-                : "Link a forecast account first"
-            }
-            className={linked ? "" : "pointer-events-none opacity-40"}
-          >
-            Push to forecast
-          </Btn>
+          {canSplit && (
+            <Btn
+              onClick={() => splitByTaxSource(account.id)}
+              title="Split this account into a pre-tax and a Roth sleeve. Existing transactions stay on the account until you assign them, so nothing is guessed at."
+            >
+              Split pre-tax / Roth
+            </Btn>
+          )}
+          {isParent ? (
+            <span
+              className="text-[11px] text-dim"
+              title="Push each sleeve separately — each one carries its own tax treatment into its own forecast account."
+            >
+              —
+            </span>
+          ) : (
+            <Btn
+              onClick={() => onPush(account, value, costBasis)}
+              title={
+                linked
+                  ? `Set "${linked.name}" starting balance to ${money(value)}`
+                  : "Link a forecast account first"
+              }
+              className={linked ? "" : "pointer-events-none opacity-40"}
+            >
+              Push to forecast
+            </Btn>
+          )}
           {confirmingDelete ? (
             <>
               <Btn onClick={() => removeAccount(account.id)}>Delete</Btn>
               <Btn onClick={() => setConfirmingDelete(false)}>Keep</Btn>
             </>
           ) : (
-            <Btn onClick={() => setConfirmingDelete(true)} title="Remove this account and its transactions">
+            <Btn
+              onClick={() => setConfirmingDelete(true)}
+              title={
+                isParent
+                  ? `Remove this account, its ${sleevesOf(accounts, account.id).length} sleeves, and all their transactions`
+                  : "Remove this account and its transactions"
+              }
+            >
               ✕
             </Btn>
           )}
@@ -224,6 +372,7 @@ export function AccountsPanel({
   onPush: (account: PortfolioAccount, value: number, costBasis: number) => void;
 }) {
   const addAccount = usePortfolioStore((s) => s.addAccount);
+  const anySplit = portfolio.accounts.some((a) => hasSleeves(portfolio.accounts, a.id));
 
   return (
     <div className="p-5">
@@ -233,6 +382,10 @@ export function AccountsPanel({
           <p className="text-[12px] text-dim">
             Link an account to its counterpart in the forecast, then push this tracker&apos;s real
             market value across whenever you want the two to agree.
+          </p>
+          <p className="mt-0.5 text-[12px] text-dim">
+            A 401(k) or 457 holding both pre-tax and Roth money splits into two sleeves — one per
+            tax treatment — so each half reaches the forecast account that taxes it correctly.
           </p>
         </div>
         <Btn
@@ -246,6 +399,7 @@ export function AccountsPanel({
               syncToForecast: true,
               ownerId: null,
               openingCashBalance: 0,
+              parentAccountId: null,
             })
           }
         >
@@ -292,10 +446,11 @@ export function AccountsPanel({
               </tr>
             </thead>
             <tbody>
-              {portfolio.accounts.map((account) => (
+              {accountTreeRows(portfolio.accounts).map((row) => (
                 <AccountRow
-                  key={account.id}
-                  account={account}
+                  key={row.account.id}
+                  row={row}
+                  accounts={portfolio.accounts}
                   portfolio={portfolio}
                   prices={prices}
                   forecastAccounts={forecastAccounts}
@@ -305,6 +460,13 @@ export function AccountsPanel({
               ))}
             </tbody>
           </table>
+          {anySplit && (
+            <p className="mt-3 text-[11px] text-dim">
+              A split account&apos;s value totals its sleeves. Only the sleeves link to the
+              forecast, so the {TAX_SOURCE_SLEEVES.map((s) => s.name).join(" and ")} halves each
+              land in the account that taxes them correctly.
+            </p>
+          )}
         </div>
       )}
     </div>

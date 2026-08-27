@@ -1,4 +1,5 @@
 import type { PortfolioAccount } from "@/domain/portfolio";
+import { accountFamilyIds } from "./accountTree";
 
 /**
  * The header account filter's value. A plain account id scopes to one account
@@ -22,6 +23,10 @@ export function accountScope(accountId: string): string {
  * account" -- the same shape `analyzePortfolio`'s `accountIds` option wants,
  * so a person is just the set of accounts they own.
  *
+ * Naming an account that has sleeves covers the sleeves too: picking a
+ * pre-tax/Roth-split 401(k) means the whole 401(k), which is what the name on
+ * the statement means. Picking one sleeve covers only that sleeve.
+ *
  * A scope that names nothing real (a removed account, a person no longer in
  * the household) resolves to an empty list rather than falling back to "all":
  * silently widening the scope would show data the click didn't ask for.
@@ -40,8 +45,8 @@ export function accountIdsInScope(
   }
   if (scope.startsWith("account:")) {
     const accountId = scope.slice("account:".length);
-    return accounts.some((a) => a.id === accountId) ? [accountId] : [];
+    return accounts.some((a) => a.id === accountId) ? accountFamilyIds(accounts, accountId) : [];
   }
   // Legacy shape: a bare account id, same as `account:<id>`.
-  return accounts.some((a) => a.id === scope) ? [scope] : [];
+  return accounts.some((a) => a.id === scope) ? accountFamilyIds(accounts, scope) : [];
 }

@@ -16,6 +16,8 @@ import {
 import type { DraftTransaction } from "@/lib/portfolio/importer";
 import { withAssignedLotIds } from "@/lib/portfolio/lotAssignment";
 import { withCanonicalSymbols } from "@/lib/portfolio/canonicalSymbols";
+import { accountFamilyIds, hasSleeves } from "@/lib/portfolio/accountTree";
+import { sleeveTypeFor, TAX_SOURCE_SLEEVES } from "@/lib/portfolio/taxSource";
 import { buildLotLedger } from "@/engine/portfolio/lots";
 
 const STORAGE_KEY = "portfolio-tracker";
@@ -82,7 +84,10 @@ interface PortfolioState {
   addAccount: (account: Omit<PortfolioAccount, "id">) => string;
   updateAccount: (id: string, patch: Partial<Omit<PortfolioAccount, "id">>) => void;
   /** Also removes that account's transactions -- orphaned rows would keep
-   *  contributing to totals with nothing on screen explaining them. */
+   *  contributing to totals with nothing on screen explaining them -- and any
+   *  sleeves beneath it, along with theirs. A sleeve only means anything as a
+   *  subdivision of its parent, so leaving one behind would strand an account
+   *  whose name no longer refers to anything. */
   removeAccount: (id: string) => void;
 
   addTransaction: (tx: Omit<Transaction, "id">) => string;
@@ -117,6 +122,19 @@ interface PortfolioState {
     forecastAccountId: string | null,
     adoptOwnerId?: string | null,
   ) => void;
+
+  /**
+   * Turns a workplace account into a split one: two sleeves, pre-tax and Roth,
+   * each typed so it carries the right tax treatment into its own forecast
+   * account.
+   *
+   * Existing transactions stay on the parent rather than being handed to a
+   * sleeve. Which pot an already-imported row belongs to is a fact about the
+   * statement it came from, not something this can infer, and guessing would
+   * put Roth dollars in the pre-tax pot where nothing would ever flag them.
+   * They show up as "unassigned" until they are moved.
+   */
+  splitByTaxSource: (id: string) => void;
 
   loadPortfolio: (portfolio: Portfolio) => void;
   importJson: (raw: unknown) => { ok: true } | { ok: false; error: string };
@@ -154,11 +172,14 @@ export const usePortfolioStore = create<PortfolioState>()(
           })),
 
         removeAccount: (id) =>
-          mutate((p) => ({
-            ...p,
-            accounts: p.accounts.filter((a) => a.id !== id),
-            transactions: p.transactions.filter((tx) => tx.accountId !== id),
-          })),
+          mutate((p) => {
+            const doomed = new Set(accountFamilyIds(p.accounts, id));
+            return {
+              ...p,
+              accounts: p.accounts.filter((a) => !doomed.has(a.id)),
+              transactions: p.transactions.filter((tx) => !doomed.has(tx.accountId)),
+            };
+          }),
 
         addTransaction: (tx) => {
           const id = nanoid();
@@ -246,6 +267,41 @@ export const usePortfolioStore = create<PortfolioState>()(
                 : a,
             ),
           })),
+
+        splitByTaxSource: (id) =>
+          mutate((p) => {
+            const parent = p.accounts.find((a) => a.id === id);
+            // Already split, or itself a sleeve: the tree is one level deep,
+            // and re-splitting would strand the sleeves that exist.
+            if (!parent || parent.parentAccountId !== null || hasSleeves(p.accounts, id)) return p;
+
+            const sleeves = TAX_SOURCE_SLEEVES.map((sleeve) => ({
+              ...parent,
+              id: nanoid(),
+              name: sleeve.name,
+              type: sleeveTypeFor(parent.type, sleeve.source),
+              parentAccountId: parent.id,
+              // Each sleeve links to its own forecast account, and until the
+              // user picks one there is nothing honest to point at.
+              forecastAccountId: null,
+              syncToForecast: true,
+              // Opening cash seeded the parent's ledger and still does; the
+              // sleeves start from their own first rows.
+              openingCashBalance: 0,
+            }));
+
+            return {
+              ...p,
+              accounts: [
+                // The parent stops syncing the moment it has sleeves, so a link
+                // left on it would be stored, invisible, and wrong. Dropping it
+                // costs one dropdown; keeping it risks pushing the whole
+                // account's value into whichever half it happened to name.
+                ...p.accounts.map((a) => (a.id === id ? { ...a, forecastAccountId: null } : a)),
+                ...sleeves,
+              ],
+            };
+          }),
 
         loadPortfolio: (portfolio) =>
           set({ portfolio: tidy(portfolio), lastSavedAt: Date.now() }),

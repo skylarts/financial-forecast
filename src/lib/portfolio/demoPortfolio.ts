@@ -187,6 +187,7 @@ export function buildDemoPortfolio(
     syncToForecast: false,
     ownerId,
     openingCashBalance: 0,
+    parentAccountId: null,
   });
 
   const accounts: PortfolioAccount[] = [

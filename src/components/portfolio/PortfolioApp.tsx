@@ -632,6 +632,7 @@ export function PortfolioApp() {
                   syncToForecast: true,
                   ownerId: null,
                   openingCashBalance: 0,
+                  parentAccountId: null,
                 });
               }
               setImporting(true);

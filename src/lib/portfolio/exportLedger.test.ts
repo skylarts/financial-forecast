@@ -39,6 +39,7 @@ function portfolio(transactions: Transaction[]): Portfolio {
         syncToForecast: true,
         ownerId: null,
         openingCashBalance: 0,
+        parentAccountId: null,
       },
     ],
     transactions,

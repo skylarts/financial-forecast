@@ -17,6 +17,7 @@ function account(patch: Partial<PortfolioAccount> & { id: string }): PortfolioAc
     syncToForecast: true,
     ownerId: null,
     openingCashBalance: 0,
+    parentAccountId: null,
     ...patch,
   };
 }
@@ -48,6 +49,30 @@ describe("accountIdsInScope", () => {
 
   it("a legacy bare account id still resolves to that one account", () => {
     expect(accountIdsInScope(accounts, "a2")).toEqual(["a2"]);
+  });
+
+  it("naming a split account covers its sleeves too", () => {
+    const split: PortfolioAccount[] = [
+      ...accounts,
+      account({ id: "k401", ownerId: "p1", name: "401(k)" }),
+      account({ id: "k401-pre", ownerId: "p1", parentAccountId: "k401" }),
+      account({ id: "k401-roth", ownerId: "p1", parentAccountId: "k401" }),
+    ];
+    expect(accountIdsInScope(split, accountScope("k401"))).toEqual([
+      "k401",
+      "k401-pre",
+      "k401-roth",
+    ]);
+  });
+
+  it("naming one sleeve covers only that sleeve", () => {
+    const split: PortfolioAccount[] = [
+      ...accounts,
+      account({ id: "k401" }),
+      account({ id: "k401-pre", parentAccountId: "k401" }),
+      account({ id: "k401-roth", parentAccountId: "k401" }),
+    ];
+    expect(accountIdsInScope(split, accountScope("k401-roth"))).toEqual(["k401-roth"]);
   });
 
   it("a scope naming nothing real resolves empty rather than everything", () => {

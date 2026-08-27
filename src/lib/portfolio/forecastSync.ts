@@ -1,6 +1,7 @@
 import type { Account } from "@/domain/account";
 import type { Portfolio } from "@/domain/portfolio";
 import { analyzePortfolio, type PriceMap } from "@/engine/portfolio/metrics";
+import { hasSleeves } from "./accountTree";
 
 export interface ForecastPush {
   forecastAccountId: string;
@@ -15,7 +16,12 @@ export interface ForecastPush {
  * portfolio tracker currently shows, so a caller can write just those and
  * skip everything already in sync.
  *
- * Three things keep a portfolio account from producing a push:
+ * Four things keep a portfolio account from producing a push:
+ *  - It is a split account's parent. Its sleeves each push their own half into
+ *    their own forecast account, so pushing the parent as well would write the
+ *    whole account's value a second time -- and into whichever single tax
+ *    treatment the parent happened to be linked to, which is exactly the
+ *    conflation the split exists to undo.
  *  - `syncToForecast` is off, or `forecastAccountId` doesn't resolve to a
  *    real account (a stale link left behind by a deleted forecast account).
  *  - The value hasn't actually changed -- compared post-rounding, the same
@@ -35,6 +41,7 @@ export function pendingForecastPushes(
   const pushes: ForecastPush[] = [];
 
   for (const account of portfolio.accounts) {
+    if (hasSleeves(portfolio.accounts, account.id)) continue;
     if (!account.syncToForecast || !account.forecastAccountId) continue;
     const target = forecastById.get(account.forecastAccountId);
     if (!target) continue;
