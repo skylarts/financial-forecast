@@ -13,6 +13,15 @@ export interface Quote {
   /** The feed's own name for the security, used to auto-fill new holdings. */
   name: string;
   /**
+   * The prior session's close, which is what a day move is measured against.
+   *
+   * Null when the feed didn't report one. A day change is the one figure here
+   * that cannot be reconstructed from the ledger -- the ledger has no idea what
+   * yesterday was worth -- so a missing previous close means the UI shows no
+   * day move for that symbol rather than inventing one from the last trade.
+   */
+  previousClose: number | null;
+  /**
    * True when this came from cache after a live refetch failed. The price is
    * real, just older than it looks -- the UI says so rather than presenting a
    * stale number as current.
@@ -64,8 +73,13 @@ export type QuoteFailure = "unknown_symbol" | "fetch_failed";
  * root, a six-digit expiry, C or P, an eight-digit strike). The previous
  * 12-character limit silently rejected every option contract before it ever
  * reached the feed.
+ *
+ * A leading caret is allowed because that is how the feed names an index --
+ * `^GSPC`, `^DJI`. Requiring the first character to be alphanumeric rejected
+ * every one of them, which is why the market strip quotes indexes directly
+ * rather than standing in ETFs for them.
  */
-const SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.\-^]{0,20}$/;
+const SYMBOL_PATTERN = /^[A-Za-z0-9^][A-Za-z0-9.\-^]{0,20}$/;
 
 export function isValidSymbol(symbol: string): boolean {
   return SYMBOL_PATTERN.test(symbol);
@@ -115,6 +129,10 @@ function isoFromEpochSeconds(seconds: number): ISODate {
 interface ChartMeta {
   regularMarketPrice?: number;
   regularMarketTime?: number;
+  /** The feed's own prior-session close. `chartPreviousClose` is the one that
+   *  tracks the requested range; `previousClose` is the plain quote field. */
+  chartPreviousClose?: number;
+  previousClose?: number;
   longName?: string;
   shortName?: string;
   instrumentType?: string;
@@ -254,11 +272,13 @@ export async function fetchQuoteResult(symbol: string): Promise<QuoteResult> {
     const price = outcome.result.meta?.regularMarketPrice;
     if (typeof price === "number") {
       const meta = outcome.result.meta;
+      const previous = meta?.chartPreviousClose ?? meta?.previousClose;
       const quote: Quote = {
         symbol: key,
         price,
         date: isoFromEpochSeconds(meta?.regularMarketTime ?? Date.now() / 1000),
         name: meta?.longName ?? meta?.shortName ?? "",
+        previousClose: typeof previous === "number" && previous > 0 ? previous : null,
       };
       quoteCache.set(key, { value: quote, fetchedAt: Date.now() });
       return { quote, failure: null };
@@ -332,6 +352,17 @@ export async function fetchHistory(symbol: string, range = "10y"): Promise<Symbo
   const key = `${symbol.toUpperCase()}::${range}`;
   const cached = historyCache.get(key);
   if (cached && Date.now() - cached.fetchedAt < HISTORY_TTL_MS) return cached.value;
+
+  // An option contract past its expiry is gone from the feed for good, so the
+  // request would only buy three doomed retries -- the same short-circuit
+  // `fetchQuoteResult` already makes. It matters more here: a lifetime window
+  // asks for every symbol the ledger ever traded, and on a ledger that writes
+  // options that is mostly dead contracts. The series values them from the
+  // ledger's own prices, which is where a closed position's figures come from
+  // regardless of whether the feed answered.
+  if (isExpiredOption(key.split("::")[0], new Date().toISOString().slice(0, 10) as ISODate)) {
+    return { symbol: symbol.toUpperCase(), points: [], splits: [] };
+  }
 
   // Splits ride along on the request that was already being made. They are not
   // optional detail: every close below is quoted in today's shares, so without

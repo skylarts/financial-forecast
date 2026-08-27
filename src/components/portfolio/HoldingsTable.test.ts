@@ -28,6 +28,8 @@ function holding(
     marketValue,
     unrealizedGain: 0,
     unrealizedGainPct: 0,
+    dayChange: null,
+    dayChangePct: null,
     weight: 0,
     realizedGain: 0,
     income: 0,

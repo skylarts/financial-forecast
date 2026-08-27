@@ -21,6 +21,8 @@ function holding(patch: Partial<Holding> & { symbol: string }): Holding {
     marketValue: 0,
     unrealizedGain: 0,
     unrealizedGainPct: null,
+    dayChange: null,
+    dayChangePct: null,
     weight: 0,
     realizedGain: 0,
     income: 0,
@@ -134,6 +136,85 @@ describe("analyzePortfolio", () => {
     expect(result.summary.realizedShortTerm).toBeCloseTo(500, 6);
     expect(result.summary.realizedGain).toBeCloseTo(1000, 6);
     expect(result.summary.realizedGainYtd).toBeCloseTo(1000, 6);
+  });
+
+  it("measures a day move against the quote's previous close", () => {
+    const result = analyzePortfolio(
+      portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]),
+      { VTI: { price: 150, date: "2026-08-03", previousClose: 140 } },
+      { asOf: "2026-08-04" },
+    );
+
+    expect(result.holdings[0].dayChange).toBeCloseTo(100, 6);
+    expect(result.holdings[0].dayChangePct).toBeCloseTo(150 / 140 - 1, 6);
+    expect(result.summary.dayChange).toBeCloseTo(100, 6);
+    expect(result.summary.dayChangePct).toBeCloseTo(150 / 140 - 1, 6);
+  });
+
+  it("reports no day move at all when the feed gave no previous close", () => {
+    const result = analyzePortfolio(
+      portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]),
+      { VTI: { price: 150, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+
+    // Null rather than zero: an unmoved position and an unmeasurable one are
+    // different answers and must not print the same.
+    expect(result.holdings[0].dayChange).toBeNull();
+    expect(result.summary.dayChange).toBeNull();
+    expect(result.summary.dayChangePct).toBeNull();
+  });
+
+  it("measures the portfolio's day move against only what it could price", () => {
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+        tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, symbol: "VXUS" }),
+      ]),
+      {
+        VTI: { price: 110, date: "2026-08-03", previousClose: 100 },
+        VXUS: { price: 500, date: "2026-08-03" },
+      },
+      { asOf: "2026-08-04" },
+    );
+
+    // VXUS moved the portfolio too, but nothing says by how much. Its $5,000
+    // must stay out of the denominator or the 10% move on VTI reads as 1.8%.
+    expect(result.summary.dayChange).toBeCloseTo(100, 6);
+    expect(result.summary.dayChangePct).toBeCloseTo(0.1, 6);
+  });
+
+  it("gains on a short when the price falls", () => {
+    const result = analyzePortfolio(
+      portfolio([tx({ type: "short_sell", date: "2024-01-10", quantity: 10, price: 100 })]),
+      { VTI: { price: 90, date: "2026-08-03", previousClose: 100 } },
+      { asOf: "2026-08-04" },
+    );
+
+    // The proceeds land as a cash row that outranks a liability by value, so
+    // the position is found rather than taken from the top.
+    const position = result.holdings.find((h) => h.kind === "position");
+    expect(position?.side).toBe("short");
+    expect(position?.dayChange).toBeCloseTo(100, 6);
+  });
+
+  it("counts this year's dividends as YTD income even from a position since sold", () => {
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+        tx({ type: "dividend", date: "2025-04-10", amount: 30 }),
+        tx({ type: "dividend", date: "2026-04-10", amount: 40 }),
+        tx({ type: "interest", date: "2026-05-10", symbol: null, amount: 2 }),
+        tx({ type: "sell", date: "2026-06-10", quantity: 10, price: 120 }),
+      ]),
+      {},
+      { asOf: "2026-08-04" },
+    );
+
+    // The shares are gone, so no holding carries this income any more -- but
+    // the money still arrived this year.
+    expect(result.holdings.filter((h) => h.kind === "position")).toHaveLength(0);
+    expect(result.summary.incomeYtd).toBeCloseTo(42, 6);
   });
 
   it("counts dividends as income without touching share count", () => {

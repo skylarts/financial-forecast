@@ -22,6 +22,8 @@ function holding(patch: Partial<Holding> & { symbol: string }): Holding {
     marketValue: 0,
     unrealizedGain: 0,
     unrealizedGainPct: null,
+    dayChange: null,
+    dayChangePct: null,
     weight: 0,
     realizedGain: 0,
     income: 0,

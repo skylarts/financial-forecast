@@ -16,7 +16,10 @@ export async function GET(request: Request) {
 
   const results = await fetchQuotes(symbols);
 
-  const quotes: Record<string, { price: number; date: string; name: string; stale?: boolean }> = {};
+  const quotes: Record<
+    string,
+    { price: number; date: string; name: string; previousClose: number | null; stale?: boolean }
+  > = {};
   /** Symbols the feed genuinely doesn't know -- a ticker to fix or price by hand. */
   const unknown: string[] = [];
   /** Symbols whose fetch failed. Transient: worth another try, not a bad ticker. */
@@ -25,8 +28,10 @@ export async function GET(request: Request) {
   for (const symbol of symbols) {
     const result = results.get(symbol);
     if (result?.quote) {
-      const { price, date, name, stale } = result.quote;
-      quotes[result.quote.symbol] = stale ? { price, date, name, stale } : { price, date, name };
+      const { price, date, name, previousClose, stale } = result.quote;
+      quotes[result.quote.symbol] = stale
+        ? { price, date, name, previousClose, stale }
+        : { price, date, name, previousClose };
     } else if (result?.failure === "unknown_symbol") {
       unknown.push(symbol);
     } else {

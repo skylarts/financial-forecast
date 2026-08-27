@@ -3,10 +3,12 @@ import type { Transaction, TransactionType } from "@/domain/portfolio";
 import {
   annualizedReturn,
   buildPerformanceSeries,
+  earliestCoveredDate,
   indexPrices,
   indexedReturn,
   symbolsForWindow,
   totalReturn,
+  windowReturn,
   type PricePoint,
 } from "./performance";
 
@@ -989,5 +991,79 @@ describe("the days between a split and the next trade", () => {
     // 100 shares at $5 on the way in, 10 shares at $47 on the way out.
     expect(points[0].value).toBeCloseTo(500, 6);
     expect(points[points.length - 1].value).toBeCloseTo(470, 6);
+  });
+});
+
+describe("windowReturn", () => {
+  /** Four years of a steady 10% a year, so every window has a known answer. */
+  const built = () => {
+    const histories = new Map([
+      [
+        "VTI",
+        history([
+          ["2023-01-03", 100],
+          ["2024-01-03", 110],
+          ["2025-01-03", 121],
+          ["2026-01-03", 133.1],
+          ["2026-08-03", 133.1],
+        ]),
+      ],
+    ]);
+    const { points } = buildPerformanceSeries(
+      [tx({ type: "buy", date: "2023-01-03", quantity: 10, price: 100 })],
+      histories,
+      { from: "2023-01-03", to: "2026-08-03" },
+    );
+    return { points, histories };
+  };
+
+  it("reads a narrower window off a series built once", () => {
+    const { points, histories } = built();
+    const start = earliestCoveredDate(histories);
+
+    // Read off the same chained index a purpose-built series would have
+    // produced for 2024 alone.
+    expect(windowReturn(points, "2024-01-03", "2025-01-03", start).total).toBeCloseTo(0.1, 6);
+    expect(windowReturn(points, "2023-01-03", "2026-01-03", start).total).toBeCloseTo(0.331, 6);
+  });
+
+  it("annualizes a multi-year window and leaves a short one alone", () => {
+    const { points, histories } = built();
+    const start = earliestCoveredDate(histories);
+
+    // Not exact to the last digit: the span is measured in 365-day years, and
+    // the window spans a leap day.
+    expect(windowReturn(points, "2023-01-03", "2026-01-03", start).annualized).toBeCloseTo(0.1, 3);
+    // Under a year, the plain return -- projecting it would invent a forecast.
+    const partial = windowReturn(points, "2026-01-03", "2026-08-03", start);
+    expect(partial.annualized).toBe(partial.total);
+  });
+
+  it("refuses a window that opens before the loaded history does", () => {
+    const { points, histories } = built();
+    const start = earliestCoveredDate(histories);
+
+    // Answering here would report a 3.5-year return under a 10-year label.
+    expect(windowReturn(points, "2016-01-03", "2026-08-03", start).total).toBeNull();
+  });
+
+  it("refuses every window when nothing was loaded at all", () => {
+    const { points } = built();
+    expect(windowReturn(points, "2024-01-03", "2025-01-03", null).total).toBeNull();
+  });
+});
+
+describe("earliestCoveredDate", () => {
+  it("takes the oldest date any symbol reaches back to", () => {
+    const histories = new Map([
+      ["VTI", history([["2020-01-02", 100]])],
+      ["VXUS", history([["2018-01-02", 50]])],
+    ]);
+
+    expect(earliestCoveredDate(histories)).toBe("2018-01-02");
+  });
+
+  it("has no answer for an empty set of histories", () => {
+    expect(earliestCoveredDate(new Map())).toBeNull();
   });
 });
