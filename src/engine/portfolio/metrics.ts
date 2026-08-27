@@ -133,14 +133,16 @@ export interface PortfolioSummary {
   realizedShortTerm: number;
   realizedLongTerm: number;
   realizedGainYtd: number;
-  income: number;
   /**
-   * Dividends and interest received since January 1st.
+   * Dividends and interest received over the portfolio's whole life.
    *
    * Read straight off the ledger rather than summed from holdings, so a
    * dividend from a position that has since been sold still counts -- the
-   * money was received this year either way.
+   * money was received either way, and a position closed out entirely
+   * shouldn't erase what it paid out along the way.
    */
+  income: number;
+  /** Same, but since January 1st. */
   incomeYtd: number;
   totalGain: number;
   /**
@@ -523,7 +525,14 @@ export function analyzePortfolio(
   // actually at risk, not diluted by a balance that was never invested.
   const costBasis = holdings.reduce((sum, h) => sum + h.costBasis, 0);
   const unrealizedGain = holdings.reduce((sum, h) => sum + h.unrealizedGain, 0);
-  const income = holdings.reduce((sum, h) => sum + h.income, 0);
+  // Read off the ledger directly, not summed from `holdings` -- a holding
+  // exists only for a symbol still open, so a position closed out entirely
+  // would drop every dividend it ever paid. Lifetime income is exactly the
+  // case where that matters: it's supposed to answer what dividends brought
+  // in over the portfolio's whole life, not just from what's left of it.
+  const income = transactions
+    .filter((tx) => tx.type === "dividend" || tx.type === "interest")
+    .reduce((sum, tx) => sum + signedCashFlow(tx), 0);
 
   // Replayed from the ledger, not read off the account: cash is derived here for
   // the same reason every other total is, so importing a row moves it.
