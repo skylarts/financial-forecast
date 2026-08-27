@@ -114,7 +114,7 @@ export function BySymbolPanel({
   /** Both owned by the shared filter bar above the tabs. */
   search: string;
   facets: HoldingFacets;
-  /** Jumps to the holdings view filtered to this ticker. */
+  /** Opens the detail drawer on this ticker. */
   onSelectSymbol: (symbol: string) => void;
   /** The over-time / by-stock switch, handed down so it sits in this panel's
    *  own first control row rather than in a second bar above it. */
@@ -270,7 +270,7 @@ export function BySymbolPanel({
                   <tr
                     key={row.symbol}
                     onClick={() => onSelectSymbol(row.symbol)}
-                    title={`Show ${row.symbol} in Holdings`}
+                    title={`Open ${row.symbol}`}
                     className="cursor-pointer border-b border-border-soft transition-colors hover:bg-panel-2"
                   >
                     <td className={`${CELL} text-left`}>
