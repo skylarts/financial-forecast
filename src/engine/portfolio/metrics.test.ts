@@ -1,6 +1,35 @@
 import { describe, expect, it } from "vitest";
 import type { Portfolio, Transaction, TransactionType } from "@/domain/portfolio";
-import { analyzePortfolio, buildAllocation, xirr } from "./metrics";
+import { analyzePortfolio, buildAllocation, buildThemeAllocation, explodeExposures, xirr, type Holding } from "./metrics";
+
+function holding(patch: Partial<Holding> & { symbol: string }): Holding {
+  return {
+    key: `${patch.accountId ?? "acct-1"}::${patch.symbol}::long`,
+    accountId: "acct-1",
+    kind: "position",
+    name: patch.symbol,
+    assetClass: "us_equity",
+    exposures: [],
+    instrumentType: "other",
+    themes: [],
+    side: "long",
+    quantity: 0,
+    costBasis: 0,
+    avgCostPerShare: 0,
+    price: null,
+    priceDate: null,
+    marketValue: 0,
+    unrealizedGain: 0,
+    unrealizedGainPct: null,
+    weight: 0,
+    realizedGain: 0,
+    income: 0,
+    totalGain: 0,
+    irr: null,
+    lots: [],
+    ...patch,
+  };
+}
 
 let seq = 0;
 function tx(partial: Partial<Transaction> & { type: TransactionType; date: string }): Transaction {
@@ -144,6 +173,10 @@ describe("analyzePortfolio", () => {
             name: "Total Market",
             assetClass: "us_equity",
             assetClassSource: "manual",
+            exposures: [],
+            instrumentType: "other",
+            instrumentTypeSource: "manual",
+            themes: [],
             manualPrice: 200,
             manualPriceDate: "2026-08-01",
             lastKnownPrice: null,
@@ -255,8 +288,8 @@ describe("analyzePortfolio", () => {
         ],
         {
           securities: [
-            { symbol: "VTI", name: "", assetClass: "us_equity", assetClassSource: "manual", manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
-            { symbol: "BND", name: "", assetClass: "bond", assetClassSource: "manual", manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
+            { symbol: "VTI", name: "", assetClass: "us_equity", assetClassSource: "manual", exposures: [], instrumentType: "other", instrumentTypeSource: "manual", themes: [], manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
+            { symbol: "BND", name: "", assetClass: "bond", assetClassSource: "manual", exposures: [], instrumentType: "other", instrumentTypeSource: "manual", themes: [], manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
           ],
         },
       ),
@@ -267,6 +300,64 @@ describe("analyzePortfolio", () => {
     expect(result.byAssetClass[0]).toMatchObject({ label: "us_equity", value: 3000 });
     expect(result.byAssetClass[1]).toMatchObject({ label: "bond", value: 1000 });
     expect(result.byAssetClass[0].weight).toBeCloseTo(0.75, 6);
+  });
+
+  it("splits a multi-class holding's allocation across every class it spans", () => {
+    const result = analyzePortfolio(
+      portfolio(
+        [
+          tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, symbol: "VT" }),
+          tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100, symbol: "BND" }),
+        ],
+        {
+          securities: [
+            {
+              symbol: "VT",
+              name: "",
+              assetClass: "intl_equity",
+              assetClassSource: "manual",
+              exposures: [
+                { assetClass: "us_equity", weight: 0.6 },
+                { assetClass: "intl_equity", weight: 0.4 },
+              ],
+              instrumentType: "etf",
+              instrumentTypeSource: "manual",
+              themes: [],
+              manualPrice: null,
+              manualPriceDate: null,
+              lastKnownPrice: null,
+              lastKnownPriceDate: null,
+            },
+            {
+              symbol: "BND",
+              name: "",
+              assetClass: "bond",
+              assetClassSource: "manual",
+              exposures: [],
+              instrumentType: "other",
+              instrumentTypeSource: "manual",
+              themes: [],
+              manualPrice: null,
+              manualPriceDate: null,
+              lastKnownPrice: null,
+              lastKnownPriceDate: null,
+            },
+          ],
+        },
+      ),
+      { VT: { price: 100, date: "2026-08-03" }, BND: { price: 100, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+
+    // $1000 of VT splits 600/400, plus $1000 of BND, all single-class.
+    const byLabel = new Map(result.byAssetClass.map((s) => [s.label, s]));
+    expect(byLabel.get("us_equity")?.value).toBe(600);
+    expect(byLabel.get("intl_equity")?.value).toBe(400);
+    expect(byLabel.get("bond")?.value).toBe(1000);
+    // The exploded rows still sum to the portfolio's real total -- nothing is
+    // invented or lost by splitting a holding across classes.
+    const total = result.byAssetClass.reduce((sum, s) => sum + s.value, 0);
+    expect(total).toBe(2000);
   });
 
   it("renormalizes an allocation when cash is excluded", () => {
@@ -486,5 +577,61 @@ describe("option contracts", () => {
     );
 
     expect(result.summary.realizedGain).toBeCloseTo(4154, 6);
+  });
+});
+
+describe("explodeExposures", () => {
+  it("passes a single-class holding through as one row, unchanged", () => {
+    const h = holding({ symbol: "VTI", marketValue: 1000, costBasis: 800, unrealizedGain: 200, weight: 0.5 });
+    const rows = explodeExposures([h]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ assetClass: "us_equity", exposureCount: 1, exposureWeight: 1, marketValue: 1000 });
+    expect(rows[0].source).toBe(h);
+  });
+
+  it("splits a multi-class holding's dollar figures proportionally", () => {
+    const h = holding({
+      symbol: "VT",
+      assetClass: "intl_equity",
+      exposures: [
+        { assetClass: "us_equity", weight: 0.6 },
+        { assetClass: "intl_equity", weight: 0.4 },
+      ],
+      marketValue: 1000,
+      costBasis: 800,
+      unrealizedGain: 200,
+      weight: 0.5,
+    });
+    const rows = explodeExposures([h]);
+    expect(rows).toHaveLength(2);
+    const us = rows.find((r) => r.exposureClass === "us_equity")!;
+    const intl = rows.find((r) => r.exposureClass === "intl_equity")!;
+    expect(us).toMatchObject({ marketValue: 600, costBasis: 480, unrealizedGain: 120, weight: 0.3, exposureCount: 2 });
+    expect(intl).toMatchObject({ marketValue: 400, costBasis: 320, unrealizedGain: 80, weight: 0.2, exposureCount: 2 });
+    // Splitting keys them uniquely, and both point back to the real holding.
+    expect(us.key).not.toBe(intl.key);
+    expect(us.source).toBe(h);
+    expect(intl.source).toBe(h);
+    // Per-share figures describe the whole position, not a slice of it.
+    expect(us.quantity).toBe(h.quantity);
+  });
+});
+
+describe("buildThemeAllocation", () => {
+  it("puts an untagged holding in its own bucket", () => {
+    const slices = buildThemeAllocation([holding({ symbol: "VTI", marketValue: 1000 })]);
+    expect(slices).toEqual([{ label: "Untagged", value: 1000, weight: 1 }]);
+  });
+
+  it("counts a holding tagged more than once at full value in each of its tags", () => {
+    const h = holding({ symbol: "VT", themes: ["Core", "Global"], marketValue: 1000 });
+    const other = holding({ symbol: "BND", themes: ["Core"], marketValue: 500, accountId: "acct-1" });
+    const slices = buildThemeAllocation([h, other]);
+    const byLabel = new Map(slices.map((s) => [s.label, s]));
+    // Core sums both holdings; Global only the one. The two aren't required
+    // to sum to the portfolio total the way a partition would.
+    expect(byLabel.get("Core")?.value).toBe(1500);
+    expect(byLabel.get("Global")?.value).toBe(1000);
+    expect(byLabel.get("Global")?.weight).toBeCloseTo(1000 / 1500, 6);
   });
 });

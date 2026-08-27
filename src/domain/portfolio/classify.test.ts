@@ -66,4 +66,42 @@ describe("classifySecurity", () => {
       "Large Blend",
     );
   });
+
+  it("splits a world-stock fund across US and international, not just one", () => {
+    // VT's actual Morningstar category.
+    const result = classifySecurity(profile({ quoteType: "ETF", category: "World Large Stock" }));
+    expect(result.assetClass).toBe("intl_equity");
+    expect(result.exposures).toEqual([
+      { assetClass: "us_equity", weight: 0.6 },
+      { assetClass: "intl_equity", weight: 0.4 },
+    ]);
+  });
+
+  it("keeps a region-specific fund single-class even when it says 'global'", () => {
+    // Names a region (emerging markets) alongside "global", so it isn't a
+    // whole-planet fund the way a plain "World Stock" category is.
+    const result = classifySecurity(
+      profile({ quoteType: "ETF", category: "Global Emerging Markets Stock" }),
+    );
+    expect(result.assetClass).toBe("intl_equity");
+    expect(result.exposures).toEqual([{ assetClass: "intl_equity", weight: 1 }]);
+  });
+
+  it("gives every single-class result one full-weight exposure", () => {
+    expect(classifySecurity(profile({ quoteType: "ETF", category: "Large Blend" })).exposures).toEqual([
+      { assetClass: "us_equity", weight: 1 },
+    ]);
+    expect(classifySecurity(profile({ quoteType: "CRYPTOCURRENCY" })).exposures).toEqual([
+      { assetClass: "crypto", weight: 1 },
+    ]);
+  });
+
+  it("reads the instrument type off the quote type", () => {
+    expect(classifySecurity(profile({ quoteType: "EQUITY" })).instrumentType).toBe("stock");
+    expect(classifySecurity(profile({ quoteType: "ETF" })).instrumentType).toBe("etf");
+    expect(classifySecurity(profile({ quoteType: "MUTUALFUND" })).instrumentType).toBe("mutual_fund");
+    expect(classifySecurity(profile({ quoteType: "CRYPTOCURRENCY" })).instrumentType).toBe("crypto");
+    expect(classifySecurity(profile({ quoteType: "CURRENCY" })).instrumentType).toBe("cash");
+    expect(classifySecurity(profile({ quoteType: "INDEX" })).instrumentType).toBe("other");
+  });
 });

@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ASSET_CLASS_LABELS, type AssetClass } from "@/domain/portfolio";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { Holding } from "@/engine/portfolio/metrics";
 import {
@@ -14,7 +13,17 @@ import {
 } from "@/engine/portfolio/bySymbol";
 import { money, percent, price, shares, toneFor } from "@/lib/portfolio/format";
 import { Segmented } from "@/components/ui/controls";
+import { FacetMenu } from "@/components/ui/FacetMenu";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
+import {
+  assetClassFacetOptions,
+  emptyHoldingFacets,
+  holdingFacetsActive,
+  instrumentTypeFacetOptions,
+  matchesHoldingFacets,
+  themeFacetOptions,
+  type HoldingFacets,
+} from "./filters";
 
 const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
@@ -148,7 +157,7 @@ export function BySymbolPanel({
   const [scope, setScope] = useState<RollupScope>("both");
   const [outcome, setOutcome] = useState<Outcome>("all");
   const [search, setSearch] = useState("");
-  const [assetClassFilter, setAssetClassFilter] = useState<AssetClass | "all">("all");
+  const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
 
   const all = useMemo(() => rollUpBySymbol(holdings, closedLots), [holdings, closedLots]);
 
@@ -157,13 +166,13 @@ export function BySymbolPanel({
     return all.filter((row) => {
       if (!inScope(row, scope)) return false;
       if (query && !row.symbol.includes(query) && !row.name.toUpperCase().includes(query)) return false;
-      if (assetClassFilter !== "all" && row.assetClass !== assetClassFilter) return false;
+      if (!matchesHoldingFacets(row, facets)) return false;
       const gain = gainForScope(row, scope);
       if (outcome === "winners" && gain <= 0) return false;
       if (outcome === "losers" && gain >= 0) return false;
       return true;
     });
-  }, [all, scope, search, assetClassFilter, outcome]);
+  }, [all, scope, search, facets, outcome]);
 
   const accessors = useMemo<SortAccessors<SymbolRollup, Column>>(
     () => ({
@@ -184,10 +193,9 @@ export function BySymbolPanel({
   const { sort, toggle, apply } = useSort<SymbolRollup, Column>(accessors, "gain");
   const sorted = useMemo(() => apply(rows), [apply, rows]);
 
-  const presentAssetClasses = useMemo(
-    () => [...new Set(all.map((r) => r.assetClass))].sort(),
-    [all],
-  );
+  const assetClassOptions = useMemo(() => assetClassFacetOptions(all, facets), [all, facets]);
+  const themeOptions = useMemo(() => themeFacetOptions(all, facets), [all, facets]);
+  const instrumentTypeOptions = useMemo(() => instrumentTypeFacetOptions(all, facets), [all, facets]);
 
   // Ranked on the scope's own gain, so switching to Trades reshuffles these to
   // the best and worst round trips rather than leaving position figures behind.
@@ -205,7 +213,7 @@ export function BySymbolPanel({
   const winnerCount = rows.filter((r) => gainForScope(r, scope) > 0).length;
   const loserCount = rows.filter((r) => gainForScope(r, scope) < 0).length;
 
-  const filtersActive = search !== "" || assetClassFilter !== "all" || outcome !== "all";
+  const filtersActive = search !== "" || holdingFacetsActive(facets) || outcome !== "all";
 
   if (all.length === 0) {
     return (
@@ -247,20 +255,24 @@ export function BySymbolPanel({
           placeholder="Search symbol or name"
           className="w-52 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
         />
-        {presentAssetClasses.length > 1 && (
-          <select
-            value={assetClassFilter}
-            onChange={(e) => setAssetClassFilter(e.target.value as AssetClass | "all")}
-            className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
-          >
-            <option value="all">All asset classes</option>
-            {presentAssetClasses.map((cls) => (
-              <option key={cls} value={cls}>
-                {ASSET_CLASS_LABELS[cls]}
-              </option>
-            ))}
-          </select>
-        )}
+        <FacetMenu
+          label="Class"
+          options={assetClassOptions}
+          state={facets.assetClass}
+          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
+        />
+        <FacetMenu
+          label="Theme"
+          options={themeOptions}
+          state={facets.theme}
+          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
+        />
+        <FacetMenu
+          label="Type"
+          options={instrumentTypeOptions}
+          state={facets.instrumentType}
+          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
+        />
         <Segmented
           options={OUTCOMES}
           value={outcome}
@@ -275,7 +287,7 @@ export function BySymbolPanel({
               type="button"
               onClick={() => {
                 setSearch("");
-                setAssetClassFilter("all");
+                setFacets(emptyHoldingFacets());
                 setOutcome("all");
               }}
               className="ml-2 underline hover:text-foreground"

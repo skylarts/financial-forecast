@@ -2,12 +2,22 @@
 
 import { Fragment, useMemo } from "react";
 import { ASSET_CLASS_LABELS } from "@/domain/portfolio";
-import type { Holding } from "@/engine/portfolio/metrics";
+import { explodeExposures, type Holding } from "@/engine/portfolio/metrics";
 import { money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { sortMarker, useSort, type SortAccessors } from "./useSort";
-import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups } from "./grouping";
+import { buildGroups, GroupHeaderRow, GroupToggles, useCollapsedGroups, type Group } from "./grouping";
+import { UNTAGGED } from "./filters";
 
-export type HoldingGrouping = "none" | "account" | "assetClass" | "side";
+export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "side";
+
+/** A row as actually rendered. Grouping by class or theme can turn one
+ *  holding into several of these -- `source` is always the real, whole
+ *  holding behind the row, which is what a click should open. */
+type Row = Holding & { source: Holding; sliceNote?: string };
+
+function toRow(holding: Holding): Row {
+  return { ...holding, source: holding };
+}
 
 type Column =
   | "symbol"
@@ -117,20 +127,52 @@ export function HoldingsTable({
   );
 
   const { sort, toggle, apply } = useSort<Holding, Column>(accessors, "value");
+  // Sorted before any grouping-driven explosion, so "sort by value" orders by
+  // each holding's whole position, not by whatever fraction of it a class
+  // split happens to land in first.
   const sorted = useMemo(() => apply(holdings), [apply, holdings]);
 
-  const groups = useMemo(() => {
-    if (grouping === "none") return [{ key: "", label: "", rows: sorted }];
+  const groups = useMemo((): Group<Row>[] => {
+    if (grouping === "none") return [{ key: "", label: "", rows: sorted.map(toRow) }];
+
+    if (grouping === "assetClass") {
+      // A single-class holding explodes into one row identical to itself; a
+      // fund like VT explodes into one row per class it spans, each carrying
+      // only its own slice of the value -- see `explodeExposures`.
+      const rows: Row[] = explodeExposures(sorted).map((r) => ({
+        ...r,
+        source: r.source,
+        sliceNote: r.exposureCount > 1 ? `${Math.round(r.exposureWeight * 100)}% of position` : undefined,
+      }));
+      return buildGroups(rows, (r) => ASSET_CLASS_LABELS[r.assetClass]);
+    }
+
+    if (grouping === "theme") {
+      // Unlike a class split, a theme tag doesn't divide the holding's value
+      // -- a position tagged both "Core" and "AI" shows its full value under
+      // each, which is why the grand total below is computed off the
+      // unexploded list rather than off these groups.
+      const buckets = new Map<string, Row[]>();
+      for (const holding of sorted) {
+        const tags = holding.themes.length > 0 ? holding.themes : [UNTAGGED];
+        for (const tag of tags) {
+          const row: Row = { ...holding, key: tags.length > 1 ? `${holding.key}::${tag}` : holding.key, source: holding };
+          const bucket = buckets.get(tag);
+          if (bucket) bucket.push(row);
+          else buckets.set(tag, [row]);
+        }
+      }
+      return [...buckets.entries()].map(([label, rows]) => ({ key: label, label, rows }));
+    }
+
     const labelFor = (h: Holding) =>
       grouping === "account"
         ? accountNames.get(h.accountId) ?? "Unknown account"
-        : grouping === "assetClass"
-          ? ASSET_CLASS_LABELS[h.assetClass]
-          : h.side === "short"
-            ? "Short positions"
-            : "Long positions";
+        : h.side === "short"
+          ? "Short positions"
+          : "Long positions";
 
-    return buildGroups(sorted, labelFor);
+    return buildGroups(sorted.map(toRow), labelFor);
   }, [sorted, grouping, accountNames]);
 
   const collapse = useCollapsedGroups(grouping);
@@ -214,7 +256,7 @@ export function HoldingsTable({
                   return (
                 <tr
                   key={holding.key}
-                  onClick={isCash ? undefined : () => onSelect(holding)}
+                  onClick={isCash ? undefined : () => onSelect(holding.source)}
                   className={`border-b border-border-soft transition-colors hover:bg-panel-2 ${
                     isCash ? "" : "cursor-pointer"
                   }`}
@@ -223,6 +265,9 @@ export function HoldingsTable({
                     <span className="font-semibold text-foreground">
                       {isCash ? "Cash" : holding.symbol}
                     </span>
+                    {holding.sliceNote && (
+                      <span className="ml-1.5 text-[10.5px] text-dim-2">({holding.sliceNote})</span>
+                    )}
                     {isCash && (
                       <span
                         title="Uninvested cash. Counted in your allocation, but it has no basis and no return."

@@ -3,15 +3,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
+  allThemes,
   ASSET_CLASS_LABELS,
   assetClassSchema,
   formatOptionSymbol,
   normalizeSymbol,
-  type AssetClass,
   type PortfolioAccount,
   type TransactionType,
 } from "@/domain/portfolio";
 import { analyzePortfolio, type Holding, type PriceMap } from "@/engine/portfolio/metrics";
+import {
+  assetClassFacetOptions,
+  emptyHoldingFacets,
+  instrumentTypeFacetOptions,
+  matchesHoldingFacets,
+  themeFacetOptions,
+  type HoldingFacets,
+} from "./filters";
+import { FacetMenu } from "@/components/ui/FacetMenu";
+import { SecurityEditorRow } from "./SecurityEditor";
 import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
 import { usePortfolioCloudSync } from "@/store/usePortfolioCloudSync";
@@ -81,6 +91,7 @@ const GROUPINGS = [
   { value: "none", label: "None" },
   { value: "account", label: "By account" },
   { value: "assetClass", label: "By class" },
+  { value: "theme", label: "By theme" },
   { value: "side", label: "By side" },
 ] as const;
 
@@ -171,7 +182,7 @@ export function PortfolioApp() {
   const [flash, setFlash] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [assetClassFilter, setAssetClassFilter] = useState<AssetClass | "all">("all");
+  const [holdingFacets, setHoldingFacets] = useState<HoldingFacets>(emptyHoldingFacets());
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
   const [hideSmall, setHideSmall] = useState(false);
   const [grouping, setGrouping] = useState<HoldingGrouping>("none");
@@ -210,6 +221,10 @@ export function PortfolioApp() {
         name: security?.name ?? quote.name ?? "",
         assetClass: security?.assetClass ?? "other",
         assetClassSource: security?.assetClassSource ?? "auto",
+        exposures: security?.exposures ?? [],
+        instrumentType: security?.instrumentType ?? "other",
+        instrumentTypeSource: security?.instrumentTypeSource ?? "auto",
+        themes: security?.themes ?? [],
         manualPrice: security?.manualPrice ?? null,
         manualPriceDate: security?.manualPriceDate ?? null,
         lastKnownPrice: quote.price,
@@ -298,18 +313,30 @@ export function PortfolioApp() {
     const threshold = hideSmall ? 0.005 : 0;
     return analysis.holdings.filter((h) => {
       if (query && !h.symbol.includes(query) && !h.name.toUpperCase().includes(query)) return false;
-      if (assetClassFilter !== "all" && h.assetClass !== assetClassFilter) return false;
+      if (!matchesHoldingFacets(h, holdingFacets)) return false;
       if (sideFilter !== "all" && h.side !== sideFilter) return false;
       if (Math.abs(h.weight) < threshold) return false;
       return true;
     });
-  }, [analysis.holdings, search, assetClassFilter, sideFilter, hideSmall]);
+  }, [analysis.holdings, search, holdingFacets, sideFilter, hideSmall]);
 
-  /** Only offer classes actually present, so the filter never lists dead ends. */
-  const presentAssetClasses = useMemo(
-    () => [...new Set(analysis.holdings.map((h) => h.assetClass))].sort(),
-    [analysis.holdings],
+  // Options and counts for each facet menu, computed against the whole
+  // account scope -- filters narrow the table, not the menus that build the
+  // filter, so a class this scope holds none of after other filters apply
+  // still shows up as an option at 0.
+  const assetClassOptions = useMemo(
+    () => assetClassFacetOptions(analysis.holdings, holdingFacets),
+    [analysis.holdings, holdingFacets],
   );
+  const themeOptions = useMemo(
+    () => themeFacetOptions(analysis.holdings, holdingFacets),
+    [analysis.holdings, holdingFacets],
+  );
+  const instrumentTypeOptions = useMemo(
+    () => instrumentTypeFacetOptions(analysis.holdings, holdingFacets),
+    [analysis.holdings, holdingFacets],
+  );
+  const knownThemes = useMemo(() => allThemes(portfolio.securities.map((s) => s.themes)), [portfolio.securities]);
   const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
 
   const securityFor = (symbol: string) =>
@@ -393,7 +420,13 @@ export function PortfolioApp() {
     switch (dimension) {
       case "assetClass": {
         const match = assetClassSchema.options.find((cls) => ASSET_CLASS_LABELS[cls] === label);
-        if (match) setAssetClassFilter(match);
+        if (match) {
+          setHoldingFacets((f) => ({ ...f, assetClass: { mode: "include", selected: new Set([match]) } }));
+        }
+        break;
+      }
+      case "theme": {
+        setHoldingFacets((f) => ({ ...f, theme: { mode: "include", selected: new Set([label]) } }));
         break;
       }
       case "account": {
@@ -593,20 +626,24 @@ export function PortfolioApp() {
                 placeholder="Search symbol or name"
                 className="w-52 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
               />
-              {presentAssetClasses.length > 1 && (
-                <select
-                  value={assetClassFilter}
-                  onChange={(e) => setAssetClassFilter(e.target.value as AssetClass | "all")}
-                  className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
-                >
-                  <option value="all">All asset classes</option>
-                  {presentAssetClasses.map((cls) => (
-                    <option key={cls} value={cls}>
-                      {ASSET_CLASS_LABELS[cls]}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <FacetMenu
+                label="Class"
+                options={assetClassOptions}
+                state={holdingFacets.assetClass}
+                onChange={(next) => setHoldingFacets((f) => ({ ...f, assetClass: next }))}
+              />
+              <FacetMenu
+                label="Theme"
+                options={themeOptions}
+                state={holdingFacets.theme}
+                onChange={(next) => setHoldingFacets((f) => ({ ...f, theme: next }))}
+              />
+              <FacetMenu
+                label="Type"
+                options={instrumentTypeOptions}
+                state={holdingFacets.instrumentType}
+                onChange={(next) => setHoldingFacets((f) => ({ ...f, instrumentType: next }))}
+              />
               {hasShorts && (
                 <Segmented
                   options={SIDE_FILTERS}
@@ -643,7 +680,7 @@ export function PortfolioApp() {
                     type="button"
                     onClick={() => {
                       setSearch("");
-                      setAssetClassFilter("all");
+                      setHoldingFacets(emptyHoldingFacets());
                       setSideFilter("all");
                       setHideSmall(false);
                     }}
@@ -689,10 +726,10 @@ export function PortfolioApp() {
                 <span className="text-[11.5px] text-dim-2">
                   {classifying
                     ? "Reading classes from the feed…"
-                    : "Classes come from the feed. Change one and your choice sticks."}
+                    : "Classes come from the feed. Edit a symbol to split its class, tag it, or fix its type."}
                 </span>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-col gap-1.5">
                 {/* Positions only -- cash is already a class, and offering to
                     reclassify it as an equity is an invitation to a wrong
                     allocation with no way to tell afterwards. */}
@@ -700,103 +737,17 @@ export function PortfolioApp() {
                   ...new Set(
                     analysis.holdings.filter((h) => h.kind === "position").map((h) => h.symbol),
                   ),
-                ].map((symbol) => {
-                  const security = securityFor(symbol);
-                  // The feed's answer, if this session asked it. A holding
-                  // classified on an earlier visit won't have one -- the hook
-                  // skips re-asking about a symbol it already has a settled
-                  // answer for -- so the badge below falls back to what's on
-                  // the security record rather than requiring a fresh fetch.
-                  const profile = securityProfiles[symbol];
-                  const isManual = security?.assetClassSource === "manual";
-                  const isAuto = security?.assetClassSource === "auto";
-                  return (
-                    <label
-                      key={symbol}
-                      title={formatOptionSymbol(symbol)}
-                      className="flex items-center gap-1.5 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px]"
-                    >
-                      <span className="font-semibold text-foreground">{symbol}</span>
-                      <select
-                        value={security?.assetClass ?? profile?.assetClass ?? "other"}
-                        onChange={(e) =>
-                          upsertSecurity({
-                            symbol,
-                            name: security?.name ?? profile?.name ?? "",
-                            assetClass: e.target.value as AssetClass,
-                            // Picking from this list is the disagreement that
-                            // pins a class: nothing re-derives it afterwards.
-                            assetClassSource: "manual",
-                            manualPrice: security?.manualPrice ?? null,
-                            manualPriceDate: security?.manualPriceDate ?? null,
-                            lastKnownPrice: security?.lastKnownPrice ?? null,
-                            lastKnownPriceDate: security?.lastKnownPriceDate ?? null,
-                          })
-                        }
-                        className="rounded border border-border bg-panel px-1.5 py-0.5 text-[11.5px] text-foreground"
-                      >
-                        {assetClassSchema.options.map((cls) => (
-                          <option key={cls} value={cls}>
-                            {ASSET_CLASS_LABELS[cls]}
-                          </option>
-                        ))}
-                      </select>
-                      {isManual ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            profile
-                              ? upsertSecurity({
-                                  symbol,
-                                  name: security?.name || profile.name,
-                                  assetClass: profile.assetClass,
-                                  assetClassSource: "auto",
-                                  manualPrice: security?.manualPrice ?? null,
-                                  manualPriceDate: security?.manualPriceDate ?? null,
-                                  lastKnownPrice: security?.lastKnownPrice ?? null,
-                                  lastKnownPriceDate: security?.lastKnownPriceDate ?? null,
-                                })
-                              : // No answer from this session to revert to --
-                                // "other" is what an unclassified symbol reads
-                                // as, so this hands it back to the feed to
-                                // re-derive on the next check.
-                                upsertSecurity({
-                                  symbol,
-                                  name: security?.name ?? "",
-                                  assetClass: "other",
-                                  assetClassSource: "auto",
-                                  manualPrice: security?.manualPrice ?? null,
-                                  manualPriceDate: security?.manualPriceDate ?? null,
-                                  lastKnownPrice: security?.lastKnownPrice ?? null,
-                                  lastKnownPriceDate: security?.lastKnownPriceDate ?? null,
-                                })
-                          }
-                          title={
-                            profile
-                              ? `Go back to the feed's answer: ${
-                                  ASSET_CLASS_LABELS[profile.assetClass]
-                                }, ${profile.basis}.`
-                              : "Go back to the feed's answer -- it'll be re-checked."
-                          }
-                          className="text-[11px] text-dim-2 hover:text-foreground"
-                        >
-                          ↺
-                        </button>
-                      ) : isAuto ? (
-                        <span
-                          title={
-                            profile
-                              ? `Read from the feed: ${profile.basis}.`
-                              : "Read from the feed."
-                          }
-                          className="text-[10.5px] uppercase tracking-wide text-dim-2"
-                        >
-                          auto
-                        </span>
-                      ) : null}
-                    </label>
-                  );
-                })}
+                ].map((symbol) => (
+                  <SecurityEditorRow
+                    key={symbol}
+                    symbol={symbol}
+                    security={securityFor(symbol)}
+                    profile={securityProfiles[symbol]}
+                    fetching={classifying}
+                    knownThemes={knownThemes}
+                    onSave={upsertSecurity}
+                  />
+                ))}
               </div>
             </div>
           </AllocationPanel>
