@@ -5,6 +5,8 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import {
   ASSET_CLASS_LABELS,
   assetClassSchema,
+  INSTRUMENT_TYPE_LABELS,
+  instrumentTypeSchema,
   PORTFOLIO_ACCOUNT_TYPE_LABELS,
   type AssetClass,
   type PortfolioAccount,
@@ -24,6 +26,7 @@ import { holdingFacetsActive, matchesHoldingFacets, type HoldingFacets } from ".
 const DIMENSIONS = [
   { value: "assetClass", label: "Asset class" },
   { value: "theme", label: "Theme" },
+  { value: "instrumentType", label: "Type" },
   { value: "account", label: "Account" },
   { value: "owner", label: "Person" },
   { value: "symbol", label: "Holding" },
@@ -205,6 +208,8 @@ export function AllocationPanel({
           return h.kind === "cash" ? "Cash" : h.symbol;
         case "accountType":
           return accountTypes.get(h.accountId) ?? "Unknown";
+        case "instrumentType":
+          return INSTRUMENT_TYPE_LABELS[h.instrumentType] ?? h.instrumentType;
         case "side":
           // Cash isn't a bet in either direction, so it says so rather than
           // padding the long side with money that isn't invested.
@@ -224,8 +229,8 @@ export function AllocationPanel({
   const hasNegativeSlice = slices.some((s) => s.value < 0);
 
   /**
-   * Clicking a class or theme slice narrows this same view rather than
-   * jumping to Holdings -- those two facets live here now, so drilling into
+   * Clicking a class, theme, or type slice narrows this same view rather than
+   * jumping to Holdings -- those three facets live here now, so drilling into
    * one means seeing the rest of the breakdown recompute for just that
    * slice, not leaving to a different tab to read it.
    */
@@ -238,6 +243,11 @@ export function AllocationPanel({
     }
     if (dimension === "theme") {
       onFacetsChange((f) => ({ ...f, theme: { mode: "include", selected: new Set([label]) } }));
+      return;
+    }
+    if (dimension === "instrumentType") {
+      const match = instrumentTypeSchema.options.find((t) => INSTRUMENT_TYPE_LABELS[t] === label);
+      if (match) onFacetsChange((f) => ({ ...f, instrumentType: { mode: "include", selected: new Set([match]) } }));
       return;
     }
     onDrillDown(dimension, label);
@@ -344,7 +354,7 @@ export function AllocationPanel({
               slices={slices}
               onSelect={drillLabel}
               titleFor={(label) =>
-                dimension === "assetClass" || dimension === "theme"
+                dimension === "assetClass" || dimension === "theme" || dimension === "instrumentType"
                   ? `Filter this breakdown to ${label}`
                   : `Show ${label} in Holdings`
               }
