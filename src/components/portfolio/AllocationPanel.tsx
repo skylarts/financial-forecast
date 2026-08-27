@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import {
   ASSET_CLASS_LABELS,
+  assetClassSchema,
   PORTFOLIO_ACCOUNT_TYPE_LABELS,
   type AssetClass,
   type PortfolioAccount,
@@ -19,6 +20,16 @@ import {
 import { money } from "@/lib/portfolio/format";
 import { ownerLabel } from "@/lib/people";
 import { Segmented } from "@/components/ui/controls";
+import { FacetMenu } from "@/components/ui/FacetMenu";
+import {
+  assetClassFacetOptions,
+  emptyHoldingFacets,
+  holdingFacetsActive,
+  instrumentTypeFacetOptions,
+  matchesHoldingFacets,
+  themeFacetOptions,
+  type HoldingFacets,
+} from "./filters";
 
 const DIMENSIONS = [
   { value: "assetClass", label: "Asset class" },
@@ -82,9 +93,13 @@ function SliceTooltip({
 function AllocationBars({
   slices,
   onSelect,
+  titleFor,
 }: {
   slices: AllocationSlice[];
   onSelect?: (label: string) => void;
+  /** What clicking a slice does, for the tooltip -- narrows this same
+   *  breakdown for class and theme, jumps to Holdings for everything else. */
+  titleFor: (label: string) => string;
 }) {
   if (slices.length === 0) {
     return <p className="text-[12.5px] text-dim">Nothing to show yet.</p>;
@@ -100,7 +115,7 @@ function AllocationBars({
             className={`flex items-center gap-3 rounded px-1 py-0.5 ${
               clickable ? "cursor-pointer hover:bg-panel-2" : ""
             }`}
-            title={clickable ? `Show ${slice.label} in Holdings` : undefined}
+            title={clickable ? titleFor(slice.label) : undefined}
           >
             <span
               aria-hidden
@@ -149,6 +164,7 @@ export function AllocationPanel({
 }) {
   const [dimension, setDimension] = useState<AllocationDimension>("assetClass");
   const [includeCash, setIncludeCash] = useState(true);
+  const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
 
   const accountTypes = useMemo(
     () => new Map(accounts.map((a) => [a.id, PORTFOLIO_ACCOUNT_TYPE_LABELS[a.type]])),
@@ -159,7 +175,20 @@ export function AllocationPanel({
     [accounts, people],
   );
 
+  const filtersActive = holdingFacetsActive(facets);
+  const assetClassOptions = useMemo(() => assetClassFacetOptions(holdings, facets), [holdings, facets]);
+  const themeOptions = useMemo(() => themeFacetOptions(holdings, facets), [holdings, facets]);
+  const instrumentTypeOptions = useMemo(
+    () => instrumentTypeFacetOptions(holdings, facets),
+    [holdings, facets],
+  );
+  const filteredHoldings = useMemo(
+    () => (filtersActive ? holdings.filter((h) => matchesHoldingFacets(h, facets)) : holdings),
+    [holdings, facets, filtersActive],
+  );
+
   const slices = useMemo(() => {
+    const holdings = filteredHoldings;
     // A fund that spans classes splits its dollars across each one it
     // touches, so this dimension runs over exploded rows rather than picking
     // one label per holding the way every other dimension does.
@@ -194,9 +223,9 @@ export function AllocationPanel({
       }
     };
     return buildAllocation(holdings, pick, { includeCash });
-  }, [holdings, dimension, includeCash, accountNames, accountTypes, accountOwners]);
+  }, [filteredHoldings, dimension, includeCash, accountNames, accountTypes, accountOwners]);
 
-  const hasCash = useMemo(() => holdings.some((h) => h.kind === "cash"), [holdings]);
+  const hasCash = useMemo(() => filteredHoldings.some((h) => h.kind === "cash"), [filteredHoldings]);
   const total = slices.reduce((sum, s) => sum + s.value, 0);
 
   // A short's negative value would sweep an entire wedge below zero, and a ring
@@ -205,8 +234,23 @@ export function AllocationPanel({
   // steps aside and says why.
   const hasNegativeSlice = slices.some((s) => s.value < 0);
 
+  /**
+   * Clicking a class or theme slice narrows this same view rather than
+   * jumping to Holdings -- those two facets live here now, so drilling into
+   * one means seeing the rest of the breakdown recompute for just that
+   * slice, not leaving to a different tab to read it.
+   */
   const drillLabel = (label: string) => {
     if (label === "Cash") return;
+    if (dimension === "assetClass") {
+      const match = assetClassSchema.options.find((cls) => ASSET_CLASS_LABELS[cls] === label);
+      if (match) setFacets((f) => ({ ...f, assetClass: { mode: "include", selected: new Set([match]) } }));
+      return;
+    }
+    if (dimension === "theme") {
+      setFacets((f) => ({ ...f, theme: { mode: "include", selected: new Set([label]) } }));
+      return;
+    }
     onDrillDown(dimension, label);
   };
 
@@ -220,6 +264,33 @@ export function AllocationPanel({
           size="sm"
           ariaLabel="Break allocation down by"
         />
+        <FacetMenu
+          label="Class"
+          options={assetClassOptions}
+          state={facets.assetClass}
+          onChange={(next) => setFacets((f) => ({ ...f, assetClass: next }))}
+        />
+        <FacetMenu
+          label="Theme"
+          options={themeOptions}
+          state={facets.theme}
+          onChange={(next) => setFacets((f) => ({ ...f, theme: next }))}
+        />
+        <FacetMenu
+          label="Type"
+          options={instrumentTypeOptions}
+          state={facets.instrumentType}
+          onChange={(next) => setFacets((f) => ({ ...f, instrumentType: next }))}
+        />
+        {filtersActive && (
+          <button
+            type="button"
+            onClick={() => setFacets(emptyHoldingFacets())}
+            className="text-[11.5px] text-dim-2 underline hover:text-foreground"
+          >
+            Clear filters
+          </button>
+        )}
         {hasCash && (
           <label className="flex items-center gap-1.5 text-[12px] text-dim">
             <input
@@ -251,7 +322,9 @@ export function AllocationPanel({
 
       {slices.length === 0 ? (
         <p className="py-8 text-center text-[13px] text-dim">
-          Nothing to allocate yet. Import a transaction history or add a buy.
+          {filtersActive
+            ? "No holdings match those filters."
+            : "Nothing to allocate yet. Import a transaction history or add a buy."}
         </p>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
@@ -297,7 +370,15 @@ export function AllocationPanel({
           </div>
 
           <div className="h-[280px] overflow-y-auto pr-1">
-            <AllocationBars slices={slices} onSelect={drillLabel} />
+            <AllocationBars
+              slices={slices}
+              onSelect={drillLabel}
+              titleFor={(label) =>
+                dimension === "assetClass" || dimension === "theme"
+                  ? `Filter this breakdown to ${label}`
+                  : `Show ${label} in Holdings`
+              }
+            />
           </div>
         </div>
       )}

@@ -4,23 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   allThemes,
-  ASSET_CLASS_LABELS,
-  assetClassSchema,
   formatOptionSymbol,
   normalizeSymbol,
   type PortfolioAccount,
   type TransactionType,
 } from "@/domain/portfolio";
 import { analyzePortfolio, type Holding, type PriceMap } from "@/engine/portfolio/metrics";
-import {
-  assetClassFacetOptions,
-  emptyHoldingFacets,
-  instrumentTypeFacetOptions,
-  matchesHoldingFacets,
-  themeFacetOptions,
-  type HoldingFacets,
-} from "./filters";
-import { FacetMenu } from "@/components/ui/FacetMenu";
 import { SecurityEditorRow } from "./SecurityEditor";
 import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
@@ -182,7 +171,6 @@ export function PortfolioApp() {
   const [flash, setFlash] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [holdingFacets, setHoldingFacets] = useState<HoldingFacets>(emptyHoldingFacets());
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
   const [hideSmall, setHideSmall] = useState(false);
   const [grouping, setGrouping] = useState<HoldingGrouping>("none");
@@ -313,29 +301,12 @@ export function PortfolioApp() {
     const threshold = hideSmall ? 0.005 : 0;
     return analysis.holdings.filter((h) => {
       if (query && !h.symbol.includes(query) && !h.name.toUpperCase().includes(query)) return false;
-      if (!matchesHoldingFacets(h, holdingFacets)) return false;
       if (sideFilter !== "all" && h.side !== sideFilter) return false;
       if (Math.abs(h.weight) < threshold) return false;
       return true;
     });
-  }, [analysis.holdings, search, holdingFacets, sideFilter, hideSmall]);
+  }, [analysis.holdings, search, sideFilter, hideSmall]);
 
-  // Options and counts for each facet menu, computed against the whole
-  // account scope -- filters narrow the table, not the menus that build the
-  // filter, so a class this scope holds none of after other filters apply
-  // still shows up as an option at 0.
-  const assetClassOptions = useMemo(
-    () => assetClassFacetOptions(analysis.holdings, holdingFacets),
-    [analysis.holdings, holdingFacets],
-  );
-  const themeOptions = useMemo(
-    () => themeFacetOptions(analysis.holdings, holdingFacets),
-    [analysis.holdings, holdingFacets],
-  );
-  const instrumentTypeOptions = useMemo(
-    () => instrumentTypeFacetOptions(analysis.holdings, holdingFacets),
-    [analysis.holdings, holdingFacets],
-  );
   const knownThemes = useMemo(() => allThemes(portfolio.securities.map((s) => s.themes)), [portfolio.securities]);
   const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
 
@@ -414,27 +385,25 @@ export function PortfolioApp() {
    * Each dimension lands on the filter that actually narrows to it, rather than
    * dropping the label into the search box and hoping it matches: an account
    * name isn't a ticker, and a class isn't either.
+   *
+   * Class and theme are the exception: Allocation owns those facets itself
+   * now, and narrows a slice's own click without ever calling this, so those
+   * two cases never actually fire -- they're here only because the dimension
+   * type still has to name every value.
    */
   const handleDrillDown = (dimension: AllocationDimension, label: string) => {
-    setTab("holdings");
     switch (dimension) {
-      case "assetClass": {
-        const match = assetClassSchema.options.find((cls) => ASSET_CLASS_LABELS[cls] === label);
-        if (match) {
-          setHoldingFacets((f) => ({ ...f, assetClass: { mode: "include", selected: new Set([match]) } }));
-        }
-        break;
-      }
-      case "theme": {
-        setHoldingFacets((f) => ({ ...f, theme: { mode: "include", selected: new Set([label]) } }));
-        break;
-      }
+      case "assetClass":
+      case "theme":
+        return;
       case "account": {
+        setTab("holdings");
         const match = portfolio.accounts.find((a) => a.name === label);
         if (match) setScope(accountScope(match.id));
         break;
       }
       case "owner": {
+        setTab("holdings");
         const person = people.find((p) => p.name === label);
         setScope(person ? ownerScope(person.id) : JOINT_OWNER_SCOPE);
         break;
@@ -442,13 +411,16 @@ export function PortfolioApp() {
       case "accountType": {
         // No single-type scope exists, so this groups by account instead --
         // the rows land together, which is what the click was asking for.
+        setTab("holdings");
         setGrouping("account");
         break;
       }
       case "symbol":
+        setTab("holdings");
         setSearch(label);
         break;
       case "side":
+        setTab("holdings");
         setSideFilter(label === "Short" ? "short" : "long");
         break;
     }
@@ -626,24 +598,6 @@ export function PortfolioApp() {
                 placeholder="Search symbol or name"
                 className="w-52 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
               />
-              <FacetMenu
-                label="Class"
-                options={assetClassOptions}
-                state={holdingFacets.assetClass}
-                onChange={(next) => setHoldingFacets((f) => ({ ...f, assetClass: next }))}
-              />
-              <FacetMenu
-                label="Theme"
-                options={themeOptions}
-                state={holdingFacets.theme}
-                onChange={(next) => setHoldingFacets((f) => ({ ...f, theme: next }))}
-              />
-              <FacetMenu
-                label="Type"
-                options={instrumentTypeOptions}
-                state={holdingFacets.instrumentType}
-                onChange={(next) => setHoldingFacets((f) => ({ ...f, instrumentType: next }))}
-              />
               {hasShorts && (
                 <Segmented
                   options={SIDE_FILTERS}
@@ -680,7 +634,6 @@ export function PortfolioApp() {
                     type="button"
                     onClick={() => {
                       setSearch("");
-                      setHoldingFacets(emptyHoldingFacets());
                       setSideFilter("all");
                       setHideSmall(false);
                     }}
