@@ -12,10 +12,20 @@ import type { MoneyFlow } from "@/domain";
  */
 function buildScenario(
   moneyFlow: (extraSavingsId: string, checkingId: string, brokerageId: string) => MoneyFlow,
-  overrides?: { incomeAmount?: number; expenseAmount?: number }
+  overrides?: { incomeAmount?: number; expenseAmount?: number; checkingCeiling?: number }
 ) {
   const extraSavings = makeAccount({ class: "cash", name: "Extra Savings", startingBalance: 0, growthRatePct: 0, isSpendingAccount: true });
-  const checking = makeAccount({ class: "cash", name: "Checking", startingBalance: 0, growthRatePct: 0 });
+  const checking = makeAccount({
+    class: "cash",
+    name: "Checking",
+    startingBalance: 0,
+    growthRatePct: 0,
+    // A balance bound is a property of the account, not of the routing stop
+    // that happens to fill it -- see accountObjectSchema.balanceCeiling.
+    ...(overrides?.checkingCeiling != null
+      ? { balanceCeiling: overrides.checkingCeiling, balanceCeilingGrowthRatePct: 0 }
+      : {}),
+  });
   const brokerage = makeAccount({
     class: "taxable_investment",
     name: "Joint Brokerage",
@@ -104,12 +114,12 @@ describe("Extra Savings split: balance caps still apply", () => {
     const { scenario, checking } = buildScenario(
       (extraSavingsId, checkingId, brokerageId) => ({
         splitOrder: [
-          { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 5_000, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+          { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
           { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
         ],
         drainOrder: [],
       }),
-      { incomeAmount: 30_000, expenseAmount: 20_000 }
+      { incomeAmount: 30_000, expenseAmount: 20_000, checkingCeiling: 5_000 }
     );
     const result = projectScenario(scenario);
     const y2026 = result.years.find((y) => y.year === 2026)!;
@@ -204,5 +214,95 @@ describe("Extra Savings deficit cascade", () => {
     const result = projectScenario(scenario);
     const trace = traceYear(result, 2026);
     expect(trace).toContain("money-flow trace");
+  });
+});
+
+/**
+ * Rate limits bound how much moves THROUGH a routing stop per period, as
+ * distinct from the account-level balanceCeiling/balanceFloor that bound the
+ * resulting balance. The two are not interchangeable: a rate limit can't see
+ * the balance, and a bound can't see the speed.
+ */
+describe("routing stop rate limits", () => {
+  it("caps a split stop at its annual limit and spills the rest onward", () => {
+    const { scenario, checking, brokerage } = buildScenario(
+      (extraSavingsId, checkingId, brokerageId) => ({
+        splitOrder: [
+          // $7k/yr into checking (an IRA-style contribution room), everything
+          // else onward to brokerage. Growth pinned to 0 so the limit stays a
+          // flat $7,000 in both years and the assertion reads cleanly.
+          { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, limitAmount: 7_000, limitPeriod: "annual", limitGrowthRatePct: 0, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+          { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+        ],
+        drainOrder: [],
+      }),
+      { incomeAmount: 30_000, expenseAmount: 20_000 } // $10k/mo surplus, far above the limit
+    );
+    const result = projectScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+    const y2027 = result.years.find((y) => y.year === 2027)!;
+
+    // Checking (growthRatePct 0) takes exactly its $7k allowance in 2026, then
+    // a fresh $7k in 2027 -- the allowance resets with the calendar year.
+    expect(y2026.accountBalances[checking.id]).toBeCloseTo(7_000, 0);
+    expect(y2027.accountBalances[checking.id]).toBeCloseTo(14_000, 0);
+    // The other $113k of 2026's surplus wasn't stranded -- it spilled onward.
+    expect(y2026.accountBalances[brokerage.id]).toBeGreaterThan(3_000_000);
+  });
+
+  it("measures a monthly limit per month, not per year", () => {
+    const { scenario, checking } = buildScenario(
+      (extraSavingsId, checkingId, brokerageId) => ({
+        splitOrder: [
+          { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, limitAmount: 1_000, limitPeriod: "monthly", limitGrowthRatePct: 0, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+          { id: "s2", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+        ],
+        drainOrder: [],
+      }),
+      { incomeAmount: 30_000, expenseAmount: 20_000 }
+    );
+    const result = projectScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+    // $1k a month, twelve months -- the same number an annual limit of $12k
+    // would give here, but reached by refilling every month.
+    expect(y2026.accountBalances[checking.id]).toBeCloseTo(12_000, 0);
+  });
+
+  it("caps how fast a drain stop can be drawn down, spilling the rest to the next source", () => {
+    const { scenario, brokerage, extraSavings } = buildScenario(
+      (extraSavingsId, checkingId, brokerageId) => ({
+        splitOrder: [],
+        drainOrder: [
+          // Brokerage may only send $60k/yr -- bracket management, not a floor.
+          { id: "d1", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, limitAmount: 60_000, limitPeriod: "annual", limitGrowthRatePct: 0, startDate: null, endDate: null, minBalance: null, minBalanceGrowthRatePct: null },
+        ],
+      }),
+      { incomeAmount: 5_000, expenseAmount: 20_000 } // $15k/mo = $180k/yr shortfall
+    );
+    const result = projectScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+
+    // Only $60k of the $180k shortfall may come from the brokerage; with no
+    // other source, the rest leaves Extra Savings genuinely negative rather
+    // than quietly over-draining the one capped account.
+    const drawn = y2026.cashFlow.withdrawalsByAccount.find((w) => w.id === brokerage.id);
+    expect(drawn?.gross ?? 0).toBeLessThanOrEqual(60_001);
+    expect(y2026.accountBalances[extraSavings.id]).toBeLessThan(0);
+  });
+
+  it("leaves routing unbounded when no limit is set", () => {
+    const { scenario, checking } = buildScenario(
+      (extraSavingsId, checkingId) => ({
+        splitOrder: [
+          { id: "s1", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
+        ],
+        drainOrder: [],
+      }),
+      { incomeAmount: 30_000, expenseAmount: 20_000 }
+    );
+    const result = projectScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+    // A full year of $10k/mo surplus, none of it held back.
+    expect(y2026.accountBalances[checking.id]).toBeCloseTo(120_000, 0);
   });
 });

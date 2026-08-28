@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { nanoid } from "nanoid";
-import type { Account, ForecastSettings, MoneyFlow } from "@/domain";
+import type { Account, FlowLimitPeriod, ForecastSettings, MoneyFlow } from "@/domain";
 import { forecastSettingsSchema } from "@/domain";
 import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
@@ -130,7 +130,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       <section className="flex flex-col gap-2">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
           When there&rsquo;s extra cash, split it
-          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total). Whatever the list doesn't claim stays in Extra Savings. Each stop can also have a Start/End date -- leave either blank for 'always'." />
+          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total). Whatever the list doesn't claim stays in Extra Savings. A stop can also have a per-period Limit (how much it may add) and a Start/End date -- leave either blank for 'always'. An account's balance cap lives on the account itself, over on the Accounts tab." />
         </h3>
         {moneyFlow.splitOrder.length === 0 && <p className="text-xs text-dim">No surplus targets configured yet.</p>}
         {moneyFlow.splitOrder.map((stop, i) => (
@@ -190,28 +190,13 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   % of remainder
                 </label>
               )}
-              <label className="flex items-center gap-1">
-                Cap
-                <InfoTooltip text="How much this account absorbs before overflow spills to the next stop. Leave the last stop uncapped as a catch-all." />
-                <span className="w-28">
-                  <MoneyInput
-                    placeholder="no cap"
-                    defaultValue={stop.maxBalance == null ? "" : moneyToStr(stop.maxBalance)}
-                    onBlur={(e) => updateSplitStop(stop.id, { maxBalance: moneyStrToNumber(e.target.value) })}
-                  />
-                </span>
-              </label>
-              <label className="flex items-center gap-1">
-                Cap grows
-                <span className="w-24">
-                  <PercentInput
-                    placeholder="inflation"
-                    defaultValue={fractionToPercentStr(stop.maxBalanceGrowthRatePct)}
-                    onBlur={(e) => updateSplitStop(stop.id, { maxBalanceGrowthRatePct: percentStrToFraction(e.target.value) })}
-                  />
-                </span>
-                /yr
-              </label>
+              <FlowLimitFields
+                label="Limit"
+                tooltip="The most this stop may add to the account per period, resetting each period -- e.g. $7,000/year for an IRA's contribution room. Anything over it spills to the next stop. Separate from the account's own cap: this bounds how much goes IN, the cap bounds what it may HOLD."
+                stop={stop}
+                onChange={(patch) => updateSplitStop(stop.id, patch)}
+              />
+              <BalanceBoundNote account={accounts.find((a) => a.id === stop.accountId)} kind="ceiling" />
               <label className="flex items-center gap-1">
                 Start
                 <input
@@ -244,7 +229,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
       <section className="flex flex-col gap-2">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
           When I&rsquo;m short, drain in this order
-          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total shortfall). A stop's floor stops it from being drained below that amount, so whatever it can't cover spills to the next stop. Each stop can also have a Start/End date -- leave either blank for 'always'. The same account can be added more than once with different windows for a phased drawdown." />
+          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total shortfall). A stop can also have a per-period Max draw (how fast it may drain) and a Start/End date -- leave either blank for 'always'. The same account can be added more than once with different windows for a phased drawdown. An account's balance floor lives on the account itself, over on the Accounts tab." />
         </h3>
         {moneyFlow.drainOrder.length === 0 && <p className="text-xs text-dim">No drain sources configured yet.</p>}
         {moneyFlow.drainOrder.map((stop, i) => (
@@ -304,28 +289,13 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   % of remainder
                 </label>
               )}
-              <label className="flex items-center gap-1">
-                Floor
-                <InfoTooltip text="Today's dollars, grown by the rate below (or inflation, if left blank). Stops this source draining below that floor -- whatever it can't cover spills to the next stop." />
-                <span className="w-28">
-                  <MoneyInput
-                    placeholder="0"
-                    defaultValue={stop.minBalance == null ? "" : moneyToStr(stop.minBalance)}
-                    onBlur={(e) => updateDrainStop(stop.id, { minBalance: moneyStrToNumber(e.target.value) })}
-                  />
-                </span>
-              </label>
-              <label className="flex items-center gap-1">
-                Floor grows
-                <span className="w-24">
-                  <PercentInput
-                    placeholder="inflation"
-                    defaultValue={fractionToPercentStr(stop.minBalanceGrowthRatePct)}
-                    onBlur={(e) => updateDrainStop(stop.id, { minBalanceGrowthRatePct: percentStrToFraction(e.target.value) })}
-                  />
-                </span>
-                /yr
-              </label>
+              <FlowLimitFields
+                label="Max draw"
+                tooltip="The most this source may send per period, resetting each period -- e.g. $40,000/year to keep realized gains inside a tax bracket. Once it's used up, the rest of the shortfall spills to the next stop. Separate from the account's floor: this bounds how FAST it drains, the floor bounds how far DOWN it may go."
+                stop={stop}
+                onChange={(patch) => updateDrainStop(stop.id, patch)}
+              />
+              <BalanceBoundNote account={accounts.find((a) => a.id === stop.accountId)} kind="floor" />
               <label className="flex items-center gap-1">
                 Start
                 <input
@@ -354,6 +324,84 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
         />
       </section>
     </div>
+  );
+}
+
+/**
+ * The rate-limit controls shared by both lists: how much may move through this
+ * stop per period. Distinct from the account's own balance ceiling/floor,
+ * which is edited on the account and shown here only as context -- a limit
+ * bounds the FLOW, a bound the resulting BALANCE, and both apply.
+ */
+function FlowLimitFields({
+  label,
+  tooltip,
+  stop,
+  onChange,
+}: {
+  label: string;
+  tooltip: string;
+  stop: { limitAmount?: number | null; limitPeriod?: FlowLimitPeriod; limitGrowthRatePct?: number | null };
+  onChange: (patch: { limitAmount?: number | null; limitPeriod?: FlowLimitPeriod; limitGrowthRatePct?: number | null }) => void;
+}) {
+  return (
+    <>
+      <label className="flex items-center gap-1">
+        {label}
+        <InfoTooltip text={tooltip} />
+        <span className="w-28">
+          <MoneyInput
+            placeholder="no limit"
+            defaultValue={stop.limitAmount == null ? "" : moneyToStr(stop.limitAmount)}
+            onBlur={(e) => onChange({ limitAmount: moneyStrToNumber(e.target.value) })}
+          />
+        </span>
+      </label>
+      {/* Only meaningful once a limit exists -- hidden otherwise so an
+          unlimited stop stays a single empty box rather than three controls. */}
+      {stop.limitAmount != null && (
+        <>
+          <label className="flex items-center gap-1">
+            per
+            <select
+              className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+              value={stop.limitPeriod ?? "annual"}
+              onChange={(e) => onChange({ limitPeriod: e.target.value as FlowLimitPeriod })}
+            >
+              <option value="monthly">month</option>
+              <option value="quarterly">quarter</option>
+              <option value="annual">year</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1">
+            Limit grows
+            <span className="w-24">
+              <PercentInput
+                placeholder="inflation"
+                defaultValue={fractionToPercentStr(stop.limitGrowthRatePct ?? null)}
+                onBlur={(e) => onChange({ limitGrowthRatePct: percentStrToFraction(e.target.value) })}
+              />
+            </span>
+            /yr
+          </label>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Read-only reminder of the target/source account's balance bound, so the
+ * Routing tab still tells you the whole story after the bound moved to the
+ * account form. Renders nothing when the account has no bound set.
+ */
+function BalanceBoundNote({ account, kind }: { account: Account | undefined; kind: "ceiling" | "floor" }) {
+  const value = kind === "ceiling" ? account?.balanceCeiling : account?.balanceFloor;
+  if (value == null) return null;
+  return (
+    <span className="italic">
+      {kind === "ceiling" ? "Cap" : "Floor"} {moneyToStr(value)} (set on the account)
+    </span>
   );
 }
 

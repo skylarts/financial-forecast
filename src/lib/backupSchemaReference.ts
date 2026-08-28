@@ -88,6 +88,10 @@ Every scenario must contain exactly one account with \`"isExtraSavings": true\` 
   "subjectToRMD": boolean,                     // default false; only meaningful for tax_deferred accounts with an ownerId
   "noEarlyWithdrawalPenalty": boolean,         // optional; true = exempt from the 10% under-59½ penalty (72(t)/rule of 55)
   "startDate": "YYYY-MM-DD",                   // optional; account doesn't exist before this date (startingBalance is its value as of this date)
+  "balanceCeiling": number >= 0 | null,        // optional; most this account should hold — surplus routing stops here and anything over spills onward. null/omitted = uncapped
+  "balanceCeilingGrowthRatePct": number | null,// optional; null = follows plan inflation, keeping the cap a today's-dollars amount
+  "balanceFloor": number >= 0 | null,          // optional; shortfall routing won't draw below this. null/omitted = drainable to zero
+  "balanceFloorGrowthRatePct": number | null,  // optional; null = follows plan inflation
   "loanTerms": LoanTerms,                      // present ONLY for class credit_card | loan | mortgage
   "propertyGrowthRatePct": number,             // present ONLY for class real_estate; overrides growthRatePct
   "linkedLiabilityId": string,                 // present ONLY for class real_estate; points at its mortgage account's id
@@ -307,14 +311,17 @@ Use this for anything that moves money between two of the household's own accoun
   "kind": "flat" | "percent_of_remainder",   // default "percent_of_remainder"
   "amount": number >= 0 | null,               // used when kind = "flat"; today's dollars, grown by inflation
   "pct": number | null, 0..1,                 // used when kind = "percent_of_remainder"; share of what's left after stops above it (NOT a share of the original total)
-  "maxBalance": number >= 0 | null,           // ceiling on the target account; null = uncapped (a catch-all)
-  "maxBalanceGrowthRatePct": number | null,   // null = follows plan inflation
+  "limitAmount": number >= 0 | null,          // most this stop may route per limitPeriod; null/omitted = unlimited
+  "limitPeriod": "monthly" | "quarterly" | "annual",  // omitted = "annual"; ignored when limitAmount is null
+  "limitGrowthRatePct": number | null,        // null = follows plan inflation
   "startDate": "YYYY-MM-DD" | null,           // null = active from plan start
-  "endDate": "YYYY-MM-DD" | null              // null = active through plan end
+  "endDate": "YYYY-MM-DD" | null,             // null = active through plan end
+  "maxBalance": null,                         // DEPRECATED -- use the target account's balanceCeiling; a legacy value here is migrated onto the account on load
+  "maxBalanceGrowthRatePct": null             // DEPRECATED -- see maxBalance
 }
 \`\`\`
 
-**DrainStop** (shortfall routing — same cascading model, plus a floor):
+**DrainStop** (shortfall routing — same cascading model):
 \`\`\`
 {
   "id": string,
@@ -322,13 +329,18 @@ Use this for anything that moves money between two of the household's own accoun
   "kind": "flat" | "percent_of_remainder",
   "amount": number >= 0 | null,
   "pct": number | null, 0..1,                 // defaults to 1 if omitted (drain this stop fully before the next)
+  "limitAmount": number >= 0 | null,          // most this stop may draw per limitPeriod; null/omitted = unlimited
+  "limitPeriod": "monthly" | "quarterly" | "annual",  // omitted = "annual"; ignored when limitAmount is null
+  "limitGrowthRatePct": number | null,        // null = follows plan inflation
   "startDate": "YYYY-MM-DD" | null,
   "endDate": "YYYY-MM-DD" | null,
-  "minBalance": number >= 0 | null,           // floor this stop won't be drained below; null = no floor
-  "minBalanceGrowthRatePct": number | null    // null = follows plan inflation
+  "minBalance": null,                         // DEPRECATED -- use the source account's balanceFloor; a legacy value here is migrated onto the account on load
+  "minBalanceGrowthRatePct": null             // DEPRECATED -- see minBalance
 }
 \`\`\`
 The same accountId may appear in multiple drain stops with different date windows (e.g. drain account A, then B, then back to A).
+
+**Balance bounds vs. rate limits.** A stop's \`limitAmount\` bounds the FLOW through that rule per period (e.g. \`$7,000/year\` of contribution room, or \`$40,000/year\` of drawdown to manage realized gains). An account's \`balanceCeiling\`/\`balanceFloor\` bound the resulting BALANCE, and apply however the money arrived or left. Both are enforced, whichever binds first — a rate limit can't see the balance, so on its own it will drain straight through a floor.
 
 ## Values that commonly trip up a hand-written file
 

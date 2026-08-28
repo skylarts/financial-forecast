@@ -127,10 +127,12 @@ function deriveMoneyFlow(
         surplusRoutingRule?.mode === "fixed_split"
           ? surplusRoutingRule.splits.find((s) => s.accountId === a.id)?.pct ?? 0
           : 1,
-      maxBalance: a.maxBalance ?? null,
-      maxBalanceGrowthRatePct: a.maxBalanceGrowthRatePct ?? null,
       startDate: null,
       endDate: null,
+      // Legacy stop-level bounds, always null now -- balance bounds live on the
+      // account (cleanAccount maps the maxBalance hint onto balanceCeiling).
+      maxBalance: null,
+      maxBalanceGrowthRatePct: null,
     }));
   const drainOrder = accounts
     .filter((a) => a.withdrawalPriority != null)
@@ -162,12 +164,24 @@ const MONEY_FLOW_HINT_KEYS = [
   "maxBalanceGrowthRatePct",
 ] as const satisfies readonly (keyof MoneyFlowHints)[];
 
-/** Strips the test-only money-flow hints back off, translating isSpendingAccount into isExtraSavings on the real Account. */
+/**
+ * Strips the test-only money-flow hints back off, translating isSpendingAccount
+ * into isExtraSavings and the maxBalance hints into the account's real
+ * balanceCeiling. The hints were always written per-account in these tests;
+ * they used to be copied onto the split stop, and now land where the schema
+ * actually keeps a balance bound.
+ */
 function cleanAccount(a: TestAccount): Account {
   const account = { ...a };
   const isExtraSavings = account.isSpendingAccount === true;
+  const balanceCeiling = account.maxBalance ?? null;
+  const balanceCeilingGrowthRatePct = account.maxBalanceGrowthRatePct ?? null;
   for (const key of MONEY_FLOW_HINT_KEYS) delete account[key];
-  return isExtraSavings ? { ...account, isExtraSavings: true } : account;
+  return {
+    ...account,
+    ...(isExtraSavings ? { isExtraSavings: true } : {}),
+    ...(balanceCeiling != null ? { balanceCeiling, balanceCeilingGrowthRatePct } : {}),
+  };
 }
 
 /** A blank, always-eligible Extra Savings account -- mirrors scenarioSchema's
