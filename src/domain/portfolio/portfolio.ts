@@ -94,6 +94,18 @@ export const portfolioAccountSchema = z.object({
    * is the one place that rule is enforced.
    */
   parentAccountId: idSchema.nullable().default(null),
+  /**
+   * Schwab's own id for this account (`SchwabAccount.hashValue`), so a fetch
+   * knows which internal account its rows belong to instead of leaving that to
+   * whoever is importing to pick correctly, fetch after fetch. Null means this
+   * account has no Schwab counterpart, or it simply hasn't been linked yet.
+   *
+   * Only ever set on a plain account or a split account's parent -- Schwab has
+   * no notion of the pre-tax/Roth sleeves this app draws inside one of its
+   * accounts, so the account number corresponds to the family as a whole, and
+   * routing into a sleeve still happens by tax-source label at import time.
+   */
+  schwabAccountHash: z.string().nullable().default(null),
 });
 export type PortfolioAccount = z.infer<typeof portfolioAccountSchema>;
 

@@ -25,6 +25,7 @@ import {
   type AccountTreeRow,
 } from "@/lib/portfolio/accountTree";
 import { TAX_SOURCE_SLEEVES } from "@/lib/portfolio/taxSource";
+import { useSchwabAccounts, type SchwabAccountOption } from "@/lib/portfolio/useSchwabAccounts";
 
 const INPUT =
   "rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none focus:border-accent";
@@ -141,6 +142,7 @@ function AccountRow({
   prices,
   forecastAccounts,
   people,
+  schwabAccounts,
   onPush,
 }: {
   row: AccountTreeRow;
@@ -149,6 +151,7 @@ function AccountRow({
   prices: PriceMap;
   forecastAccounts: Account[];
   people: readonly Person[];
+  schwabAccounts: SchwabAccountOption[] | null;
   onPush: (account: PortfolioAccount, value: number, costBasis: number) => void;
 }) {
   const { account, depth, isParent } = row;
@@ -167,6 +170,12 @@ function AccountRow({
     : accountCashBalances(portfolio).get(account.id) ?? EMPTY_CASH;
   const linked = forecastAccounts.find((a) => a.id === account.forecastAccountId) ?? null;
   const unassigned = isParent ? unassignedValue(portfolio, prices, account.id) : 0;
+  // Hides an already-linked Schwab account from every other row's picker, so
+  // two internal accounts can't end up pointed at the same brokerage account
+  // by mistake -- a mistake here means a fetch lands rows in the wrong place.
+  const claimedSchwabHashes = new Set(
+    accounts.filter((a) => a.id !== account.id && a.schwabAccountHash).map((a) => a.schwabAccountHash),
+  );
 
   // Splitting only makes sense for an account that is neither already split
   // nor itself a sleeve.
@@ -296,6 +305,28 @@ function AccountRow({
             />
           </div>
         )}
+        {/* A sleeve has no Schwab account of its own -- the account number
+            belongs to the family as a whole, and rows reach a sleeve by
+            tax-source routing at import time instead. Offered on a parent for
+            exactly that reason: the account number sits one level up from
+            where the split happens. */}
+        {schwabAccounts && schwabAccounts.length > 0 && account.parentAccountId === null && (
+          <select
+            value={account.schwabAccountHash ?? ""}
+            onChange={(e) => updateAccount(account.id, { schwabAccountHash: e.target.value || null })}
+            className={`${INPUT} mt-1.5 w-40`}
+            title="Which Schwab account this one is. Fetching from that account lands its rows here without asking each time."
+          >
+            <option value="">— Schwab: not linked —</option>
+            {schwabAccounts
+              .filter((s) => s.hashValue === account.schwabAccountHash || !claimedSchwabHashes.has(s.hashValue))
+              .map((s) => (
+                <option key={s.hashValue} value={s.hashValue}>
+                  Schwab {s.masked}
+                </option>
+              ))}
+          </select>
+        )}
         {unassigned !== 0 && (
           <p
             className="mt-1 w-36 text-[11px] text-negative"
@@ -372,6 +403,7 @@ export function AccountsPanel({
 }) {
   const addAccount = usePortfolioStore((s) => s.addAccount);
   const anySplit = portfolio.accounts.some((a) => hasSleeves(portfolio.accounts, a.id));
+  const schwabAccounts = useSchwabAccounts();
 
   return (
     <div className="p-5">
@@ -399,6 +431,7 @@ export function AccountsPanel({
               ownerId: null,
               openingCashBalance: 0,
               parentAccountId: null,
+              schwabAccountHash: null,
             })
           }
         >
@@ -423,7 +456,7 @@ export function AccountsPanel({
                   "Opening cash",
                   "Cash",
                   "Value",
-                  "Forecast account",
+                  "Linked accounts",
                   "",
                 ].map((h, i) => (
                   <th
@@ -454,6 +487,7 @@ export function AccountsPanel({
                   prices={prices}
                   forecastAccounts={forecastAccounts}
                   people={people}
+                  schwabAccounts={schwabAccounts}
                   onPush={onPush}
                 />
               ))}

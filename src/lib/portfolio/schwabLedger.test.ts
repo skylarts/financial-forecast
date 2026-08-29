@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
+import type { PortfolioAccount } from "@/domain/portfolio";
 import { buildImportRows, guessMapping, parseDelimited } from "./importer";
-import { resolveSymbolByName, schwabRowsToCsv } from "./schwabLedger";
+import { accountForSchwabHash, resolveSymbolByName, schwabRowsToCsv } from "./schwabLedger";
 import type { SchwabLedgerRow } from "./schwabTransactions";
+
+const account = (patch: Partial<PortfolioAccount> & { id: string }): PortfolioAccount => ({
+  name: patch.id,
+  institution: "",
+  type: "taxable",
+  forecastAccountId: null,
+  syncToForecast: true,
+  ownerId: null,
+  openingCashBalance: 0,
+  parentAccountId: null,
+  schwabAccountHash: null,
+  ...patch,
+});
 
 const row = (over: Partial<SchwabLedgerRow>): SchwabLedgerRow => ({
   activityId: "1",
@@ -126,5 +140,22 @@ describe("schwabRowsToCsv", () => {
     ];
     const again = buildImportRows(table, guessMapping(table.headers), existing);
     expect(again[0].duplicate).toBe(true);
+  });
+});
+
+describe("accountForSchwabHash", () => {
+  it("finds the account linked to a Schwab account", () => {
+    const accounts = [
+      account({ id: "a1", schwabAccountHash: "hash-1" }),
+      account({ id: "a2", schwabAccountHash: "hash-2" }),
+    ];
+    expect(accountForSchwabHash(accounts, "hash-2")?.id).toBe("a2");
+  });
+
+  it("returns null when nothing is linked to that account yet", () => {
+    // The normal state for a fetch nobody has connected to a destination on
+    // the Accounts tab -- not an error, just "ask instead of guess".
+    const accounts = [account({ id: "a1", schwabAccountHash: null })];
+    expect(accountForSchwabHash(accounts, "hash-1")).toBeNull();
   });
 });
