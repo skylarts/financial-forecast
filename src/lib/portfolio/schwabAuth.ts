@@ -1,3 +1,4 @@
+import { resolveSchwabApp, type AppSource, type ResolvedApp } from "./schwabApp";
 import { readTokens, storageMode, writeTokens, type StoredTokens } from "./schwabTokenStore";
 
 /**
@@ -15,6 +16,10 @@ import { readTokens, storageMode, writeTokens, type StoredTokens } from "./schwa
  * disconnection as a normal resting state rather than an error -- everything
  * degrades to "Schwab is not available right now", and the feeds fall back to
  * Yahoo instead of failing.
+ *
+ * Which *application* a flow runs against is not decided here; see
+ * `schwabApp`. Every function that talks to Schwab resolves it per caller,
+ * because on a shared deployment each person brings their own.
  */
 
 const AUTH_BASE = "https://api.schwabapi.com/v1/oauth";
@@ -26,7 +31,8 @@ const ACCESS_TOKEN_TTL_MS = 25 * 60 * 1000;
 export const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface SchwabStatus {
-  /** App key and secret are present -- the integration is installed. */
+  /** This caller has an application to connect through -- their own or, where
+   *  the operator allows it, the deployment's. */
   configured: boolean;
   /** A refresh token is on hand and has not aged out. */
   connected: boolean;
@@ -40,18 +46,12 @@ export interface SchwabStatus {
    * price feed and offers a Connect button that cannot succeed.
    */
   signInRequired: boolean;
+  /** Whose application the connection runs through, or null when there is none. */
+  appSource: AppSource | null;
   /** ISO timestamp the refresh token dies, or null when not connected. */
   expiresAt: string | null;
   /** Whole days left before a re-login is required, floored at 0. */
   daysRemaining: number | null;
-}
-
-function appKey(): string {
-  return process.env.SCHWAB_APP_KEY ?? "";
-}
-
-function appSecret(): string {
-  return process.env.SCHWAB_APP_SECRET ?? "";
 }
 
 /**
@@ -59,17 +59,54 @@ function appSecret(): string {
  * registered on the app at developer.schwab.com character for character, and
  * Schwab only accepts https -- for local work that means
  * `next dev --experimental-https` and a `https://127.0.0.1:3001` callback.
+ *
+ * One address for the whole deployment even when every user brings their own
+ * application: each of them registers *this* URL on their own app. It is not
+ * a secret and it is the same for everybody, which is what makes the
+ * bring-your-own model a form to fill in rather than a redeploy.
  */
 export function callbackUrl(): string {
   return process.env.SCHWAB_CALLBACK_URL ?? "https://127.0.0.1:3001/api/schwab/callback";
 }
 
+/**
+ * Whether Schwab is reachable *in principle* on this install.
+ *
+ * Deliberately cheap and synchronous: it is called per symbol by the price
+ * feed to skip a provider without a request. It cannot tell whether this
+ * particular caller has an application, because that is a database read -- so
+ * it answers the broader question, and the real gate stays where it has always
+ * been, in `schwabAccessToken` returning null and the feed falling back.
+ */
+/**
+ * The origin to send a browser back to after the Schwab round trip.
+ *
+ * Taken from the registered callback URL rather than from the incoming
+ * request, because `new URL(request.url).origin` in Next is ultimately the
+ * `Host` header -- something the client sends. Behind a proxy that does not
+ * pin it, a forged `Host` turns every redirect in the OAuth flow into a
+ * redirect to the attacker's domain. The callback URL is already required to
+ * match Schwab's registration character for character, so it is the one origin
+ * this app knows to be its own.
+ */
+export function appOrigin(requestUrl: string): string {
+  try {
+    return new URL(callbackUrl()).origin;
+  } catch {
+    return new URL(requestUrl).origin;
+  }
+}
+
 export function schwabConfigured(): boolean {
-  return appKey() !== "" && appSecret() !== "";
+  const envApp = Boolean(process.env.SCHWAB_APP_KEY && process.env.SCHWAB_APP_SECRET);
+  const perUserPossible = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  );
+  return envApp || perUserPossible;
 }
 
 /* -------------------------------------------------------------------------- */
-/* Token storage                                                              */
+/* Status                                                                     */
 /* -------------------------------------------------------------------------- */
 
 function isLive(tokens: StoredTokens | null): tokens is StoredTokens {
@@ -77,19 +114,23 @@ function isLive(tokens: StoredTokens | null): tokens is StoredTokens {
 }
 
 export async function schwabStatus(): Promise<SchwabStatus> {
-  const configured = schwabConfigured();
   const { mode } = await storageMode();
-  const signInRequired = configured && mode === "none";
+  const signInRequired = mode === "none";
 
-  const tokens = configured && !signInRequired ? await readTokens() : null;
+  const app = signInRequired ? null : await resolveSchwabApp();
+  const configured = app !== null;
+  const appSource = app?.source ?? null;
+
+  const tokens = configured ? await readTokens() : null;
   if (!isLive(tokens)) {
-    return { configured, connected: false, signInRequired, expiresAt: null, daysRemaining: null };
+    return { configured, connected: false, signInRequired, appSource, expiresAt: null, daysRemaining: null };
   }
   const expiry = tokens.obtainedAt + REFRESH_TOKEN_TTL_MS;
   return {
     configured,
     connected: true,
     signInRequired: false,
+    appSource,
     expiresAt: new Date(expiry).toISOString(),
     daysRemaining: Math.max(0, Math.floor((expiry - Date.now()) / (24 * 60 * 60 * 1000))),
   };
@@ -97,8 +138,7 @@ export async function schwabStatus(): Promise<SchwabStatus> {
 
 /** Forgets the stored token, so the next request falls back to Yahoo. */
 export async function disconnectSchwab(): Promise<void> {
-  const key = await cacheKey();
-  if (key) accessTokens.delete(key);
+  await forgetAccessToken();
   await writeTokens(null);
 }
 
@@ -113,9 +153,13 @@ export async function disconnectSchwab(): Promise<void> {
  */
 export const STATE_COOKIE = "schwab_oauth_state";
 
-export function authorizeUrl(state: string): string {
+/** Where to send the browser to consent, or null when there is no app to use. */
+export async function authorizeUrl(state: string): Promise<string | null> {
+  const app = await resolveSchwabApp();
+  if (!app) return null;
+
   const params = new URLSearchParams({
-    client_id: appKey(),
+    client_id: app.appKey,
     redirect_uri: callbackUrl(),
     response_type: "code",
     state,
@@ -134,16 +178,16 @@ interface TokenResponse {
  * not with body parameters. Sending them in the body returns a 401 whose body
  * says nothing useful about why.
  */
-function basicAuth(): string {
-  return `Basic ${Buffer.from(`${appKey()}:${appSecret()}`).toString("base64")}`;
+function basicAuth(app: ResolvedApp): string {
+  return `Basic ${Buffer.from(`${app.appKey}:${app.appSecret}`).toString("base64")}`;
 }
 
-async function postToken(body: URLSearchParams): Promise<TokenResponse | null> {
+async function postToken(app: ResolvedApp, body: URLSearchParams): Promise<TokenResponse | null> {
   try {
     const response = await fetch(`${AUTH_BASE}/token`, {
       method: "POST",
       headers: {
-        authorization: basicAuth(),
+        authorization: basicAuth(app),
         "content-type": "application/x-www-form-urlencoded",
       },
       body,
@@ -162,18 +206,21 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse | null> {
  * into a "couldn't connect, try again" rather than a stack trace.
  */
 export async function exchangeCode(code: string): Promise<boolean> {
+  const app = await resolveSchwabApp();
+  if (!app) return false;
+
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
     redirect_uri: callbackUrl(),
   });
-  const token = await postToken(body);
+  const token = await postToken(app, body);
   if (!token?.refresh_token) return false;
 
   // A refused write is a real failure, not something to paper over: it means
   // there is nowhere safe to put this credential -- no signed-in user, or no
-  // encryption key on a shared database. Reporting success would leave the
-  // user believing they had connected something that was never stored.
+  // encryption key. Reporting success would leave the user believing they had
+  // connected something that was never stored.
   const saved = await writeTokens({ refreshToken: token.refresh_token, obtainedAt: Date.now() });
   if (!saved) return false;
 
@@ -212,11 +259,29 @@ async function cacheAccessToken(value: string): Promise<void> {
   if (key) accessTokens.set(key, { value, expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS });
 }
 
+/**
+ * Drops the caller's cached access token.
+ *
+ * Called when the connection is torn down and when the application behind it
+ * changes. An access token outlives the refresh token it came from by up to
+ * half an hour, so without this a user who had just switched apps or
+ * disconnected would keep reading their brokerage from a token nothing on
+ * disk could account for any more.
+ */
+export async function forgetAccessToken(): Promise<void> {
+  const key = await cacheKey();
+  if (key) accessTokens.delete(key);
+}
+
 async function refreshAccessToken(): Promise<string | null> {
+  const app = await resolveSchwabApp();
+  if (!app) return null;
+
   const tokens = await readTokens();
   if (!isLive(tokens)) return null;
 
   const token = await postToken(
+    app,
     new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refreshToken }),
   );
 
@@ -246,8 +311,6 @@ async function refreshAccessToken(): Promise<string | null> {
  * failed. Every caller treats it as "use the other feed".
  */
 export async function schwabAccessToken(): Promise<string | null> {
-  if (!schwabConfigured()) return null;
-
   const key = await cacheKey();
   // No key means there is no connection this caller may use -- a deployment
   // with nobody signed in. Falling back to any stored token here is exactly

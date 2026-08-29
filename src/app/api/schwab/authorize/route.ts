@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { authorizeUrl, schwabConfigured, STATE_COOKIE } from "@/lib/portfolio/schwabAuth";
+import { appOrigin, authorizeUrl, STATE_COOKIE } from "@/lib/portfolio/schwabAuth";
 import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
 
 /**
@@ -13,20 +13,23 @@ import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
  */
 
 export async function GET(request: Request) {
-  const { origin } = new URL(request.url);
-  if (!schwabConfigured()) {
-    return NextResponse.redirect(`${origin}/portfolio?schwab=unconfigured`);
-  }
+  const origin = appOrigin(request.url);
 
   // A connection has to belong to someone. Starting the flow while signed out
   // on a deployment would mint a credential with nowhere to put it.
   const guard = await requireSchwabAccess();
   if (!guard.ok) return NextResponse.redirect(`${origin}/portfolio?schwab=sign_in_required`);
 
+  // Resolved per caller: their own registered Schwab app, or the deployment's
+  // where the operator lends it out. Null means this person has no application
+  // to connect through and the answer is the settings form, not a retry.
+  const state = randomBytes(16).toString("hex");
+  const target = await authorizeUrl(state);
+  if (!target) return NextResponse.redirect(`${origin}/portfolio?schwab=unconfigured`);
+
   // A single-use value echoed back by Schwab and compared on return, so a
   // callback the user never initiated cannot bind someone else's brokerage
   // to this install.
-  const state = randomBytes(16).toString("hex");
   (await cookies()).set(STATE_COOKIE, state, {
     httpOnly: true,
     sameSite: "lax",
@@ -35,5 +38,5 @@ export async function GET(request: Request) {
     maxAge: 10 * 60,
   });
 
-  return NextResponse.redirect(authorizeUrl(state));
+  return NextResponse.redirect(target);
 }
