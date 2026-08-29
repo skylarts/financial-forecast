@@ -1,13 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-
-interface SchwabStatus {
-  configured: boolean;
-  connected: boolean;
-  expiresAt: string | null;
-  daysRemaining: number | null;
-}
+import { useSchwabStatus } from "@/lib/portfolio/useSchwabStatus";
 
 /** How close to expiry the banner starts asking for a re-login. */
 const WARN_WITHIN_DAYS = 2;
@@ -26,21 +19,14 @@ const WARN_WITHIN_DAYS = 2;
  * logging in, so the connection lapses on a fixed clock no matter how well
  * everything is working. Prices quietly revert to the public feed when it does,
  * which is survivable but not something to discover by accident.
+ *
+ * Staying silent while healthy is only defensible because `SchwabBadge` states
+ * the connection outright in the header. On its own this component made
+ * "connected" and "the status check never answered" look identical, which left
+ * a working login with no way to confirm itself.
  */
 export function SchwabConnection() {
-  const [status, setStatus] = useState<SchwabStatus | null>(null);
-
-  const load = useCallback(() => {
-    fetch("/api/schwab/status")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body: SchwabStatus | null) => setStatus(body))
-      // A status check that fails is not worth surfacing: the feeds fall back
-      // on their own and the banner has nothing useful to say about it.
-      .catch(() => setStatus(null));
-  }, []);
-
-  useEffect(load, [load]);
-
+  const { status } = useSchwabStatus();
   if (!status?.configured) return null;
 
   const expiringSoon =

@@ -44,6 +44,7 @@ import { RealizedPanel } from "./RealizedPanel";
 import type { AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
+import { SchwabBadge } from "./SchwabBadge";
 import { SchwabConnection } from "./SchwabConnection";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 import { FilterStatus } from "./FilterStatus";
@@ -613,6 +614,9 @@ export function PortfolioApp() {
           <Btn onClick={refreshPrices} title="Refetch quotes now">
             {pricesLoading ? "Refreshing…" : "Refresh prices"}
           </Btn>
+          {/* Beside the refresh control because it answers the question that
+              control raises: refreshed from where. */}
+          <SchwabBadge />
           {portfolio.transactions.length === 0 && (
             <Btn onClick={handleLoadDemo} title="Fill the tracker with a fictional ledger to look at">
               Load sample data

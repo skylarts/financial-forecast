@@ -128,6 +128,25 @@ function isoFromEpochMs(ms: number): ISODate {
   return new Date(ms).toISOString().slice(0, 10) as ISODate;
 }
 
+/**
+ * Schwab's `closePrice` does not mean the same thing for every asset type, and
+ * the difference is silent.
+ *
+ * On an equity it is the *previous* session's close, which is exactly the
+ * figure a day move is measured against. On an index it is *today's* close --
+ * identical to `lastPrice` once the session ends, with `netChange` reported as
+ * 0. Reading it the same way for both is what made every benchmark in the
+ * market strip print 0.00%: a real -0.25% day rendered as no move at all.
+ *
+ * Rather than guess a prior close for indexes from fields that do not carry
+ * one, they are handed back to the chain unanswered so the public feed prices
+ * them -- it tracks indexes correctly and is the only consumer of them here.
+ * Schwab keeps everything a portfolio can actually hold.
+ */
+function isIndex(entry: SchwabQuoteEntry): boolean {
+  return entry.assetMainType === "INDEX";
+}
+
 function quoteFrom(entry: SchwabQuoteEntry, symbol: string): Quote | null {
   const quote = entry.quote ?? {};
   // A fund quotes its NAV and nothing else on a day it hasn't struck one; the
@@ -162,6 +181,10 @@ async function fetchQuote(symbol: string): Promise<ProviderOutcome<Quote>> {
   // the dollar-prefixed index come back exactly as they were sent.
   const entry = body[schwabSymbol] ?? body[symbol.toUpperCase()];
   if (!entry) return { status: "unknown_symbol" };
+
+  // Declining an index is not a failure -- it is a deferral to the feed that
+  // reports one properly. See `isIndex`.
+  if (isIndex(entry)) return { status: "unknown_symbol" };
 
   const quote = quoteFrom(entry, symbol.toUpperCase());
   return quote ? { status: "ok", value: quote } : { status: "unknown_symbol" };
