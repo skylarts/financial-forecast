@@ -44,4 +44,6 @@ next-env.d.ts
 # personal financial data -- never commit backups of a real plan
 /backups/*.json
 /data/*.db
+# brokerage refresh token -- a live credential, never commit it
+/data/schwab-tokens.json*
 .claude/

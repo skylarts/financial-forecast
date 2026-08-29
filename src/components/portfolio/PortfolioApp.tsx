@@ -44,6 +44,7 @@ import { RealizedPanel } from "./RealizedPanel";
 import type { AllocationDimension } from "./AllocationPanel";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
+import { SchwabConnection } from "./SchwabConnection";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 import { FilterStatus } from "./FilterStatus";
 import { FilterChips, FilterMenu, type FilterSection } from "./FilterMenu";
@@ -694,6 +695,8 @@ export function PortfolioApp() {
         contracts={analysis.expiredContracts}
         onRecord={handleRecordExpiry}
       />
+
+      <SchwabConnection />
 
       <PriceFeedNotice
         unknown={displayUnknown}

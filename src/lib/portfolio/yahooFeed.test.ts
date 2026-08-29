@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { priorSessionClose, type ChartResult } from "./priceFeed";
+import { priorSessionClose, type ChartResult } from "./yahooFeed";
 
 /** Epoch seconds for a US session's open on the given day. */
 const at = (day: string) => Math.floor(Date.parse(`${day}T13:30:00Z`) / 1000);
