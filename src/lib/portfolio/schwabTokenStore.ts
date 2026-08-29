@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { decryptSecret, encryptSecret, encryptionConfigured } from "./schwabCrypto";
 
@@ -80,14 +81,7 @@ function singleUserAllowed(): boolean {
   return process.env.SCHWAB_ALLOW_SINGLE_USER === "true";
 }
 
-/**
- * The signed-in user's id, or null when nobody is signed in.
- *
- * Returns null rather than throwing outside a request, which is what lets the
- * price feed ask for a token from contexts that have no cookies to read.
- */
-async function currentUserId(): Promise<string | null> {
-  if (!supabaseConfigured()) return null;
+async function askSupabaseWhoIsCalling(): Promise<string | null> {
   try {
     const supabase = await createClient();
     const { data } = await supabase.auth.getUser();
@@ -95,6 +89,52 @@ async function currentUserId(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * The signed-in user, resolved at most once per request.
+ *
+ * `storageMode` is asked three or four times over the course of a single
+ * route -- the guard asks, then the app resolver, then the token read, then
+ * the access-token cache key -- and each of those used to be its own
+ * round trip to Supabase's auth server before any real work started. On a
+ * quote refresh it was five. That is latency stacked on the one path that
+ * also has to reach Schwab within the platform's request limit, and it is the
+ * likeliest reason a signed-in `/api/schwab/authorize` could take long enough
+ * to be killed while the signed-out one answers in 250ms.
+ *
+ * Keyed on the request's own cookie store, which Next hands back as the same
+ * object for every `cookies()` call within a request and a fresh one for the
+ * next. That makes the memo request-scoped by construction rather than by
+ * discipline: there is no key one request could share with another, so no
+ * amount of concurrency can serve one person's identity to someone else.
+ *
+ * The promise is stored rather than the resolved value, so callers that
+ * overlap await one lookup instead of starting several.
+ */
+const userIdByRequest = new WeakMap<object, Promise<string | null>>();
+
+async function currentUserId(): Promise<string | null> {
+  if (!supabaseConfigured()) return null;
+
+  let scope: object | null = null;
+  try {
+    scope = await cookies();
+  } catch {
+    // No request to scope a memo to. Rare, and not an error: the price feed
+    // may be reached from a context with no cookies to read, which simply
+    // means nobody is signed in and the answer would be null anyway. Ask
+    // directly rather than caching under a key that outlives the request.
+    scope = null;
+  }
+  if (!scope) return askSupabaseWhoIsCalling();
+
+  const memoized = userIdByRequest.get(scope);
+  if (memoized) return memoized;
+
+  const pending = askSupabaseWhoIsCalling();
+  userIdByRequest.set(scope, pending);
+  return pending;
 }
 
 /**

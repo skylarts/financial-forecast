@@ -182,9 +182,28 @@ function basicAuth(app: ResolvedApp): string {
   return `Basic ${Buffer.from(`${app.appKey}:${app.appSecret}`).toString("base64")}`;
 }
 
-async function postToken(app: ResolvedApp, body: URLSearchParams): Promise<TokenResponse | null> {
+/**
+ * What the token endpoint said, in the only three flavours a caller cares
+ * about.
+ *
+ * The distinction between `rejected` and `unavailable` is the whole reason
+ * this is not just `TokenResponse | null`. A refresh token is expensive to
+ * replace -- Schwab issues no unattended path to a new one, so losing one
+ * costs the user a manual login -- and collapsing "Schwab says this credential
+ * is dead" together with "Schwab did not answer" is what made a rate limit
+ * indistinguishable from a revocation. See `refreshAccessToken`.
+ */
+type TokenOutcome =
+  | { status: "ok"; token: TokenResponse }
+  /** Schwab considered the credential and refused it. Nothing to retry. */
+  | { status: "rejected" }
+  /** No verdict: a timeout, a rate limit, a 5xx, a dropped connection. */
+  | { status: "unavailable" };
+
+async function postToken(app: ResolvedApp, body: URLSearchParams): Promise<TokenOutcome> {
+  let response: Response;
   try {
-    const response = await fetch(`${AUTH_BASE}/token`, {
+    response = await fetch(`${AUTH_BASE}/token`, {
       method: "POST",
       headers: {
         authorization: basicAuth(app),
@@ -193,11 +212,32 @@ async function postToken(app: ResolvedApp, body: URLSearchParams): Promise<Token
       body,
       signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) return null;
-    return (await response.json()) as TokenResponse;
   } catch {
-    return null;
+    // A throw here is the network, not Schwab: a DNS failure, a reset, or the
+    // 15-second timeout above firing. The credential has not been judged.
+    return { status: "unavailable" };
   }
+
+  if (response.ok) {
+    try {
+      return { status: "ok", token: (await response.json()) as TokenResponse };
+    } catch {
+      // A 200 whose body will not parse is a broken answer, not a verdict.
+      return { status: "unavailable" };
+    }
+  }
+
+  // 400 is what OAuth 2.0 reserves for a grant the server has looked at and
+  // refused -- `invalid_grant` for a refresh token that is expired or revoked.
+  // That is the one status worth destroying a stored credential over.
+  //
+  // Everything else is explicitly not: 401 means this app's key and secret
+  // were rejected, which says nothing about the refresh token; 429 and 5xx
+  // mean Schwab is busy or broken. Treating those as a revocation is what
+  // silently disconnected a healthy account mid-session -- the token endpoint
+  // is rate-limited harder than the data endpoints, and the price feed calls
+  // it on every cold instance.
+  return response.status === 400 ? { status: "rejected" } : { status: "unavailable" };
 }
 
 /**
@@ -214,18 +254,21 @@ export async function exchangeCode(code: string): Promise<boolean> {
     code,
     redirect_uri: callbackUrl(),
   });
-  const token = await postToken(app, body);
-  if (!token?.refresh_token) return false;
+  const outcome = await postToken(app, body);
+  if (outcome.status !== "ok") return false;
+
+  const refreshToken = outcome.token.refresh_token;
+  if (!refreshToken) return false;
 
   // A refused write is a real failure, not something to paper over: it means
   // there is nowhere safe to put this credential -- no signed-in user, or no
   // encryption key. Reporting success would leave the user believing they had
   // connected something that was never stored.
-  const saved = await writeTokens({ refreshToken: token.refresh_token, obtainedAt: Date.now() });
+  const saved = await writeTokens({ refreshToken, obtainedAt: Date.now() });
   if (!saved) return false;
 
-  if (token.access_token) {
-    await cacheAccessToken(token.access_token);
+  if (outcome.token.access_token) {
+    await cacheAccessToken(outcome.token.access_token);
   }
   return true;
 }
@@ -280,27 +323,39 @@ async function refreshAccessToken(): Promise<string | null> {
   const tokens = await readTokens();
   if (!isLive(tokens)) return null;
 
-  const token = await postToken(
+  const outcome = await postToken(
     app,
     new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refreshToken }),
   );
 
-  if (!token?.access_token) {
-    // A refresh that fails inside the seven days is usually the user having
-    // revoked the app at Schwab. Drop the stored token so the UI says
-    // "disconnected" instead of retrying a dead credential every 30 minutes.
+  // Schwab looked at the credential and refused it -- revoked at Schwab, or
+  // aged out early. Drop it so the UI says "disconnected" and asks for a
+  // login, instead of retrying a dead credential every 30 minutes.
+  if (outcome.status === "rejected") {
     await writeTokens(null);
     return null;
   }
 
+  // No verdict. The connection is still whatever it was: this call falls back
+  // to the public price feed and the next one tries again.
+  //
+  // Deleting here is what the previous version did, and it meant a single
+  // rate-limited or timed-out refresh cost the user a manual Schwab login --
+  // a week's connection thrown away over one slow request.
+  if (outcome.status !== "ok") return null;
+
+  const accessToken = outcome.token.access_token;
+  if (!accessToken) return null;
+
   // Schwab normally hands back the same refresh token, but persist it when it
   // differs so a rotation doesn't silently strand the connection.
-  if (token.refresh_token && token.refresh_token !== tokens.refreshToken) {
-    await writeTokens({ refreshToken: token.refresh_token, obtainedAt: tokens.obtainedAt });
+  const rotated = outcome.token.refresh_token;
+  if (rotated && rotated !== tokens.refreshToken) {
+    await writeTokens({ refreshToken: rotated, obtainedAt: tokens.obtainedAt });
   }
 
-  await cacheAccessToken(token.access_token);
-  return token.access_token;
+  await cacheAccessToken(accessToken);
+  return accessToken;
 }
 
 /**
