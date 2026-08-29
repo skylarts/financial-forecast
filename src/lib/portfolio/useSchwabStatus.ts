@@ -12,6 +12,11 @@ export interface SchwabStatus {
   signInRequired: boolean;
   /** Whose Schwab application the connection runs through. */
   appSource: "user" | "deployment" | null;
+  /**
+   * Whether Schwab is answering right now, as opposed to whether a credential
+   * is on file. Null when there is no connection to say anything about.
+   */
+  reachable: boolean | null;
   expiresAt: string | null;
   daysRemaining: number | null;
 }

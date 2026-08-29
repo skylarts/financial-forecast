@@ -84,6 +84,24 @@ export function SchwabConnection() {
   const expiringSoon =
     status.connected && status.daysRemaining !== null && status.daysRemaining <= WARN_WITHIN_DAYS;
 
+  // Signed in to Schwab, but Schwab is not answering. Called out explicitly
+  // because every other unhappy state here is fixed by the user doing
+  // something, and this one is fixed by waiting -- offering a Connect button
+  // would invite them to spend a Schwab login on a problem it cannot solve.
+  if (status.connected && status.reachable === false) {
+    return (
+      <Bar>
+        {outcome && <span className="w-full text-dim">{outcome}</span>}
+        <span className="text-dim">Schwab isn&apos;t answering right now</span>
+        <span className="text-dim-2">
+          — your connection is still signed in, so there is nothing to reconnect. This is usually a
+          temporary limit on Schwab&apos;s side. Prices are on the public feed until it clears.
+        </span>
+        <SchwabAppSettings onChanged={reload} />
+      </Bar>
+    );
+  }
+
   // Connected and healthy. The banner stays quiet -- the standing badge in the
   // header is what reports this state -- except for the one collapsed link,
   // which is the only way to rotate or remove a live app secret without first

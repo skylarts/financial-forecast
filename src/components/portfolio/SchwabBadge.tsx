@@ -31,19 +31,32 @@ export function SchwabBadge() {
   const days = status.daysRemaining;
   const expiringSoon = status.connected && days !== null && days <= WARN_WITHIN_DAYS;
 
+  /**
+   * Signed in to Schwab, but Schwab is not answering.
+   *
+   * Its own state rather than either neighbour, because it is the one the
+   * badge used to get wrong in both directions at once: it read as a healthy
+   * "● Schwab" while every actual request was failing, and the fix for it is
+   * neither "connect" nor "sign in again" but "wait". Usually Schwab
+   * rate-limiting the token endpoint, which clears on its own.
+   */
+  const stalled = status.connected && status.reachable === false;
+
   const tone = !status.connected
     ? "text-dim-2"
-    : expiringSoon
+    : stalled || expiringSoon
       ? "text-negative"
       : "text-positive";
 
-  const title = status.connected
-    ? `Prices are coming from your Schwab account. The sign-in expires in ${
-        days === null ? "under a week" : expiryWording(days)
-      }${status.expiresAt ? ` (${new Date(status.expiresAt).toLocaleDateString()})` : ""}, after which prices fall back to the public feed until you sign in again.`
-    : status.signInRequired
-      ? "Prices are coming from the public feed. Sign in to this app to use your Schwab connection."
-      : "Prices are coming from the public feed. Connect Schwab to use your broker's own prices.";
+  const title = stalled
+    ? "Your Schwab connection is signed in, but Schwab is not answering right now -- usually a temporary limit on their side. Prices are on the public feed until it clears; nothing needs re-connecting."
+    : status.connected
+      ? `Prices are coming from your Schwab account. The sign-in expires in ${
+          days === null ? "under a week" : expiryWording(days)
+        }${status.expiresAt ? ` (${new Date(status.expiresAt).toLocaleDateString()})` : ""}, after which prices fall back to the public feed until you sign in again.`
+      : status.signInRequired
+        ? "Prices are coming from the public feed. Sign in to this app to use your Schwab connection."
+        : "Prices are coming from the public feed. Connect Schwab to use your broker's own prices.";
 
   return (
     <span
@@ -51,9 +64,9 @@ export function SchwabBadge() {
       className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12px] text-dim"
     >
       <span aria-hidden className={tone}>
-        {status.connected ? "●" : "○"}
+        {status.connected && !stalled ? "●" : "○"}
       </span>
-      {status.connected ? "Schwab" : "Public feed"}
+      {stalled ? "Schwab not answering" : status.connected ? "Schwab" : "Public feed"}
       {/* The countdown appears only once it is close enough to act on. Showing
           "6 days" every day of the week would train it to be ignored by the
           time it said "1". */}

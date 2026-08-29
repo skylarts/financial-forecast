@@ -48,7 +48,7 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 
-const { exchangeCode, resetSchwabAuthCache, schwabAccessToken, schwabStatus } =
+const { disconnectSchwab, exchangeCode, resetSchwabAuthCache, schwabAccessToken, schwabStatus } =
   await import("./schwabAuth");
 const { encryptSecret } = await import("./schwabCrypto");
 
@@ -174,6 +174,72 @@ describe("a refresh that worked", () => {
 
     expect(upsert).toHaveBeenCalled();
     expect(tokenWasDestroyed()).toBe(false);
+  });
+});
+
+describe("the access token is shared across server instances", () => {
+  /**
+   * The failure this exists to stop. A process-local cache is per instance,
+   * and serverless instances are made and thrown away constantly -- so
+   * "cached for 25 minutes" meant "fetched again on every cold start",
+   * against the endpoint Schwab rate-limits hardest. The account went quiet a
+   * few minutes after connecting while its refresh token was perfectly fine.
+   */
+  it("a cold instance reuses the stored token instead of calling Schwab", async () => {
+    schwabAnswers({ status: 200 }, { access_token: "minted-once" });
+    expect(await schwabAccessToken()).toBe("minted-once");
+    const callsToMintIt = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // A different instance: no process memory, same database row.
+    resetSchwabAuthCache();
+
+    expect(await schwabAccessToken()).toBe("minted-once");
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsToMintIt);
+  });
+
+  it("mints a new one once the stored token has expired", async () => {
+    schwabAnswers({ status: 200 }, { access_token: "first" });
+    await schwabAccessToken();
+
+    // Age the stored token past its expiry.
+    row.current!.access_token_expires_at = new Date(Date.now() - 1000).toISOString();
+    resetSchwabAuthCache();
+
+    schwabAnswers({ status: 200 }, { access_token: "second" });
+    expect(await schwabAccessToken()).toBe("second");
+  });
+
+  it("does not leave a usable token behind after disconnecting", async () => {
+    schwabAnswers({ status: 200 }, { access_token: "minted-once" });
+    await schwabAccessToken();
+
+    await disconnectSchwab();
+    resetSchwabAuthCache();
+
+    expect(row.current?.access_token ?? null).toBeNull();
+  });
+});
+
+describe("what the status route reports", () => {
+  it("separates 'signed in' from 'Schwab is answering'", async () => {
+    schwabAnswers({ status: 429 });
+
+    // The credential is on file and inside its seven days, so the connection
+    // is real -- but nothing can be fetched with it right now, and saying only
+    // "connected" is what put "● Schwab" above "no connected accounts".
+    expect(await schwabStatus()).toMatchObject({ connected: true, reachable: false });
+  });
+
+  it("reports both when Schwab is answering", async () => {
+    schwabAnswers({ status: 200 }, { access_token: "fresh" });
+
+    expect(await schwabStatus()).toMatchObject({ connected: true, reachable: true });
+  });
+
+  it("has nothing to say about reachability when there is no connection", async () => {
+    row.current = null;
+
+    expect(await schwabStatus()).toMatchObject({ connected: false, reachable: null });
   });
 });
 
