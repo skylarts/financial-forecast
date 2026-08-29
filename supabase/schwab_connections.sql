@@ -38,6 +38,21 @@ create table if not exists schwab_connections (
   app_key text,
   app_secret text,
 
+  -- The short-lived access token, encrypted like everything else here, shared
+  -- across server instances.
+  --
+  -- This is not a cache for speed. Schwab's access tokens last 30 minutes, and
+  -- holding one only in a server's memory means holding it once per *instance*
+  -- -- which on a serverless host is once per cold start, several times a
+  -- minute under any real use. Each of those is a call to the token endpoint,
+  -- which Schwab rate-limits far harder than the data endpoints. The account
+  -- then stops answering a few minutes after connecting, with a refresh token
+  -- that is perfectly valid, and nothing on screen able to say why.
+  --
+  -- Kept here, one token serves every instance for its full half hour.
+  access_token text,
+  access_token_expires_at timestamptz,
+
   updated_at timestamptz not null default now()
 );
 
@@ -45,6 +60,8 @@ create table if not exists schwab_connections (
 -- table that already matches.
 alter table schwab_connections add column if not exists app_key text;
 alter table schwab_connections add column if not exists app_secret text;
+alter table schwab_connections add column if not exists access_token text;
+alter table schwab_connections add column if not exists access_token_expires_at timestamptz;
 alter table schwab_connections alter column refresh_token drop not null;
 alter table schwab_connections alter column obtained_at drop not null;
 

@@ -163,6 +163,9 @@ interface FileContents {
   /** Encrypted. Absent when the app credentials are saved but nothing is connected. */
   refreshToken?: string;
   obtainedAt?: number;
+  /** Encrypted. The 30-minute access token, shared the same way as above. */
+  accessToken?: string;
+  accessTokenExpiresAt?: number;
   /** Encrypted. Absent when this install uses the deployment's own app. */
   appKey?: string;
   appSecret?: string;
@@ -206,7 +209,12 @@ interface ConnectionRow {
   obtained_at: string | null;
   app_key: string | null;
   app_secret: string | null;
+  access_token: string | null;
+  access_token_expires_at: string | null;
 }
+
+const ROW_COLUMNS =
+  "refresh_token, obtained_at, app_key, app_secret, access_token, access_token_expires_at";
 
 async function readRow(userId: string): Promise<ConnectionRow | null> {
   try {
@@ -218,7 +226,7 @@ async function readRow(userId: string): Promise<ConnectionRow | null> {
     // handing back whichever row the database happened to return first.
     const { data, error } = await supabase
       .from("schwab_connections")
-      .select("refresh_token, obtained_at, app_key, app_secret")
+      .select(ROW_COLUMNS)
       .eq("user_id", userId)
       .maybeSingle();
     if (error || !data) return null;
@@ -282,7 +290,17 @@ export async function writeTokens(tokens: StoredTokens | null): Promise<boolean>
         // reconnecting does not mean re-entering it.
         await supabase
           .from("schwab_connections")
-          .update({ refresh_token: null, obtained_at: null, updated_at: new Date().toISOString() })
+          .update({
+            refresh_token: null,
+            obtained_at: null,
+            // The access token was minted by the credential being dropped and
+            // outlives it by up to half an hour. Left behind, it would keep
+            // one instance reading a brokerage the user believes they have
+            // disconnected.
+            access_token: null,
+            access_token_expires_at: null,
+            updated_at: new Date().toISOString(),
+          })
           .eq("user_id", userId);
         return true;
       }
@@ -290,6 +308,10 @@ export async function writeTokens(tokens: StoredTokens | null): Promise<boolean>
         user_id: userId,
         refresh_token: encryptSecret(tokens.refreshToken),
         obtained_at: new Date(tokens.obtainedAt).toISOString(),
+        // Any access token on file belongs to the credential being replaced.
+        // The caller stores the new one immediately after this.
+        access_token: null,
+        access_token_expires_at: null,
         updated_at: new Date().toISOString(),
       });
       return !error;
@@ -300,14 +322,19 @@ export async function writeTokens(tokens: StoredTokens | null): Promise<boolean>
 
   if (mode === "file") {
     if (tokens === null) {
-      await updateFileContents({}, ["refreshToken", "obtainedAt"]).catch(() => {});
+      await updateFileContents({}, [
+        "refreshToken",
+        "obtainedAt",
+        "accessToken",
+        "accessTokenExpiresAt",
+      ]).catch(() => {});
       return true;
     }
     if (!encryptionConfigured()) return false;
     try {
       await updateFileContents(
         { refreshToken: encryptSecret(tokens.refreshToken), obtainedAt: tokens.obtainedAt },
-        [],
+        ["accessToken", "accessTokenExpiresAt"],
       );
       return true;
     } catch {
@@ -316,6 +343,102 @@ export async function writeTokens(tokens: StoredTokens | null): Promise<boolean>
   }
 
   return false;
+}
+
+/* -------------------------------------------------------------------------- */
+/* The shared access token                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface StoredAccessToken {
+  accessToken: string;
+  /** Epoch ms. Schwab's own 30 minutes, shortened a little by the caller. */
+  expiresAt: number;
+}
+
+/**
+ * The access token, shared by every server instance rather than each holding
+ * its own.
+ *
+ * A process-local cache is the obvious place for a 30-minute token and it is
+ * the wrong one here. Serverless instances are created and discarded
+ * constantly, so "cached for thirty minutes" in practice meant "fetched again
+ * on every cold start" -- and the endpoint it is fetched from is the one
+ * Schwab rate-limits hardest, shared with the transaction sync. The visible
+ * result was an account that worked for a few minutes after connecting and
+ * then started reporting no accounts and no transactions, while the stored
+ * refresh token behind it was in perfect health the whole time.
+ *
+ * Encrypted like the refresh token. It is shorter-lived but no less powerful
+ * while it lasts -- Schwab issues no read-only variant of either.
+ */
+export async function readAccessToken(): Promise<StoredAccessToken | null> {
+  const { mode, userId } = await storageMode();
+
+  if (mode === "supabase" && userId) {
+    const row = await readRow(userId);
+    if (!row?.access_token || !row.access_token_expires_at) return null;
+    const accessToken = decryptSecret(row.access_token);
+    if (!accessToken) return null;
+    return { accessToken, expiresAt: Date.parse(row.access_token_expires_at) };
+  }
+
+  if (mode === "file") {
+    const contents = await readFileContents();
+    if (!contents?.accessToken || typeof contents.accessTokenExpiresAt !== "number") return null;
+    const accessToken = decryptSecret(contents.accessToken);
+    if (!accessToken) return null;
+    return { accessToken, expiresAt: contents.accessTokenExpiresAt };
+  }
+
+  return null;
+}
+
+/**
+ * Stores or clears the shared access token.
+ *
+ * Returns nothing and swallows failures on purpose, unlike `writeTokens`. This
+ * is an optimisation, not a credential the user would have to re-create: a
+ * write that does not land costs one extra call to Schwab later, where
+ * reporting it as an error would turn a slow path into a broken one.
+ */
+export async function writeAccessToken(token: StoredAccessToken | null): Promise<void> {
+  const { mode, userId } = await storageMode();
+  if (token !== null && !encryptionConfigured()) return;
+
+  if (mode === "supabase" && userId) {
+    try {
+      const supabase = await createClient();
+      await supabase
+        .from("schwab_connections")
+        .update({
+          access_token: token === null ? null : encryptSecret(token.accessToken),
+          access_token_expires_at: token === null ? null : new Date(token.expiresAt).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("user_id", userId);
+    } catch {
+      // See above: losing this costs a round trip, not a connection.
+    }
+    return;
+  }
+
+  if (mode === "file") {
+    try {
+      if (token === null) {
+        await updateFileContents({}, ["accessToken", "accessTokenExpiresAt"]);
+        return;
+      }
+      await updateFileContents(
+        {
+          accessToken: encryptSecret(token.accessToken),
+          accessTokenExpiresAt: token.expiresAt,
+        },
+        [],
+      );
+    } catch {
+      // As above.
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -371,6 +494,8 @@ export async function writeAppCredentials(app: StoredApp | null): Promise<boolea
         app_secret: app === null ? null : encryptSecret(app.appSecret),
         refresh_token: null,
         obtained_at: null,
+        access_token: null,
+        access_token_expires_at: null,
         updated_at: new Date().toISOString(),
       });
       return !error;
@@ -381,14 +506,21 @@ export async function writeAppCredentials(app: StoredApp | null): Promise<boolea
 
   if (mode === "file") {
     if (app === null) {
-      await updateFileContents({}, ["appKey", "appSecret", "refreshToken", "obtainedAt"]).catch(() => {});
+      await updateFileContents({}, [
+        "appKey",
+        "appSecret",
+        "refreshToken",
+        "obtainedAt",
+        "accessToken",
+        "accessTokenExpiresAt",
+      ]).catch(() => {});
       return true;
     }
     if (!encryptionConfigured()) return false;
     try {
       await updateFileContents(
         { appKey: encryptSecret(app.appKey), appSecret: encryptSecret(app.appSecret) },
-        ["refreshToken", "obtainedAt"],
+        ["refreshToken", "obtainedAt", "accessToken", "accessTokenExpiresAt"],
       );
       return true;
     } catch {

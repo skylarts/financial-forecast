@@ -1,5 +1,12 @@
 import { resolveSchwabApp, type AppSource, type ResolvedApp } from "./schwabApp";
-import { readTokens, storageMode, writeTokens, type StoredTokens } from "./schwabTokenStore";
+import {
+  readAccessToken,
+  readTokens,
+  storageMode,
+  writeAccessToken,
+  writeTokens,
+  type StoredTokens,
+} from "./schwabTokenStore";
 
 /**
  * OAuth against Schwab's developer platform, shared by every Schwab-backed
@@ -27,6 +34,17 @@ const AUTH_BASE = "https://api.schwabapi.com/v1/oauth";
 /** Access tokens last 30 minutes; refresh a little early to avoid a race. */
 const ACCESS_TOKEN_TTL_MS = 25 * 60 * 1000;
 
+/**
+ * How long to wait on the token endpoint.
+ *
+ * The consent exchange is generous: a person is watching a redirect and would
+ * rather wait than start the whole Schwab login again. A refresh is not --
+ * it happens behind an ordinary page load, the fallback price feed is right
+ * there, and a slow one held a request open long enough to matter.
+ */
+const CODE_EXCHANGE_TIMEOUT_MS = 15_000;
+const REFRESH_TIMEOUT_MS = 8_000;
+
 /** Schwab's fixed refresh-token lifetime. Not configurable, not extendable. */
 export const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -48,6 +66,19 @@ export interface SchwabStatus {
   signInRequired: boolean;
   /** Whose application the connection runs through, or null when there is none. */
   appSource: AppSource | null;
+  /**
+   * Whether Schwab will actually answer with the stored credential right now.
+   *
+   * Reported separately from `connected` because they are different questions
+   * and only one of them used to be asked. `connected` means a refresh token
+   * is on file and inside its seven days; this means a request made with it
+   * would currently succeed. They diverge whenever Schwab is rate-limiting or
+   * down, and the gap is what let the header claim "Schwab" while the import
+   * panel reported no connected accounts in the same breath.
+   *
+   * Null when there is no connection to say anything about.
+   */
+  reachable: boolean | null;
   /** ISO timestamp the refresh token dies, or null when not connected. */
   expiresAt: string | null;
   /** Whole days left before a re-login is required, floored at 0. */
@@ -123,14 +154,29 @@ export async function schwabStatus(): Promise<SchwabStatus> {
 
   const tokens = configured ? await readTokens() : null;
   if (!isLive(tokens)) {
-    return { configured, connected: false, signInRequired, appSource, expiresAt: null, daysRemaining: null };
+    return {
+      configured,
+      connected: false,
+      signInRequired,
+      appSource,
+      reachable: null,
+      expiresAt: null,
+      daysRemaining: null,
+    };
   }
+
+  // Cheap in the ordinary case -- the access token is shared across instances,
+  // so this is a read rather than a call to Schwab for all but the first
+  // request in each half hour.
+  const reachable = (await schwabAccessToken()) !== null;
+
   const expiry = tokens.obtainedAt + REFRESH_TOKEN_TTL_MS;
   return {
     configured,
     connected: true,
     signInRequired: false,
     appSource,
+    reachable,
     expiresAt: new Date(expiry).toISOString(),
     daysRemaining: Math.max(0, Math.floor((expiry - Date.now()) / (24 * 60 * 60 * 1000))),
   };
@@ -200,7 +246,11 @@ type TokenOutcome =
   /** No verdict: a timeout, a rate limit, a 5xx, a dropped connection. */
   | { status: "unavailable" };
 
-async function postToken(app: ResolvedApp, body: URLSearchParams): Promise<TokenOutcome> {
+async function postToken(
+  app: ResolvedApp,
+  body: URLSearchParams,
+  timeoutMs: number,
+): Promise<TokenOutcome> {
   let response: Response;
   try {
     response = await fetch(`${AUTH_BASE}/token`, {
@@ -210,7 +260,7 @@ async function postToken(app: ResolvedApp, body: URLSearchParams): Promise<Token
         "content-type": "application/x-www-form-urlencoded",
       },
       body,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     // A throw here is the network, not Schwab: a DNS failure, a reset, or the
@@ -254,7 +304,7 @@ export async function exchangeCode(code: string): Promise<boolean> {
     code,
     redirect_uri: callbackUrl(),
   });
-  const outcome = await postToken(app, body);
+  const outcome = await postToken(app, body, CODE_EXCHANGE_TIMEOUT_MS);
   if (outcome.status !== "ok") return false;
 
   const refreshToken = outcome.token.refresh_token;
@@ -298,8 +348,13 @@ async function cacheKey(): Promise<string | null> {
 }
 
 async function cacheAccessToken(value: string): Promise<void> {
+  const expiresAt = Date.now() + ACCESS_TOKEN_TTL_MS;
   const key = await cacheKey();
-  if (key) accessTokens.set(key, { value, expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS });
+  if (key) accessTokens.set(key, { value, expiresAt });
+  // Written through so the next instance to serve this user does not have to
+  // go back to Schwab for a token this one already holds. See
+  // `readAccessToken` for why a process-local cache alone is not enough.
+  await writeAccessToken({ accessToken: value, expiresAt });
 }
 
 /**
@@ -314,6 +369,7 @@ async function cacheAccessToken(value: string): Promise<void> {
 export async function forgetAccessToken(): Promise<void> {
   const key = await cacheKey();
   if (key) accessTokens.delete(key);
+  await writeAccessToken(null);
 }
 
 async function refreshAccessToken(): Promise<string | null> {
@@ -326,6 +382,7 @@ async function refreshAccessToken(): Promise<string | null> {
   const outcome = await postToken(
     app,
     new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refreshToken }),
+    REFRESH_TIMEOUT_MS,
   );
 
   // Schwab looked at the credential and refused it -- revoked at Schwab, or
@@ -374,6 +431,16 @@ export async function schwabAccessToken(): Promise<string | null> {
 
   const cached = accessTokens.get(key);
   if (cached && Date.now() < cached.expiresAt) return cached.value;
+
+  // Then the shared one. This is the step that keeps a serverless deployment
+  // off Schwab's token endpoint: without it every new instance starts cold and
+  // mints its own, which is how an account that had just connected began
+  // reporting no accounts and no transactions a few minutes later.
+  const shared = await readAccessToken();
+  if (shared && Date.now() < shared.expiresAt) {
+    accessTokens.set(key, { value: shared.accessToken, expiresAt: shared.expiresAt });
+    return shared.accessToken;
+  }
 
   // A burst of quote requests arriving on a cold token must produce one
   // refresh, not one per symbol -- Schwab rate-limits the token endpoint

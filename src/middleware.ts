@@ -32,6 +32,26 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+/**
+ * Pages only.
+ *
+ * This used to run on every request that was not a static asset, which meant
+ * every `/api/*` call too -- and a single portfolio load makes several. Each
+ * one arrived here and made its own round trip to Supabase's auth server
+ * before the route it was actually for had started, and several of those
+ * landed at once, each willing to refresh the same session cookie
+ * concurrently. Supabase rotates refresh tokens, so a burst of simultaneous
+ * refreshes is also the shape of request that gets sessions revoked out from
+ * under a working page.
+ *
+ * The API routes never needed it. Every one of them resolves the session for
+ * itself through `createClient`, which reads the same cookies and can refresh
+ * them just as well from a route handler. Excluding them takes an ordinary
+ * page load from several session refreshes down to one, and leaves this doing
+ * the single job it is for: keeping the cookie fresh across navigations.
+ */
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  matcher: [
+    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };
