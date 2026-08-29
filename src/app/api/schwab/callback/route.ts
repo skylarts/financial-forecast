@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { exchangeCode, STATE_COOKIE } from "@/lib/portfolio/schwabAuth";
+import { appOrigin, exchangeCode, STATE_COOKIE } from "@/lib/portfolio/schwabAuth";
 import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
 
 /**
@@ -12,18 +12,19 @@ import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
  * throughout.
  */
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  const origin = appOrigin(request.url);
   const jar = await cookies();
   const expected = jar.get(STATE_COOKIE)?.value;
   jar.delete(STATE_COOKIE);
 
   const back = (outcome: string) => NextResponse.redirect(`${origin}/portfolio?schwab=${outcome}`);
 
-  // Schwab reports a refusal by redirecting here with an error rather than a
-  // code -- most often the user simply declining on the consent screen.
   const guard = await requireSchwabAccess();
   if (!guard.ok) return back("sign_in_required");
 
+  // Schwab reports a refusal by redirecting here with an error rather than a
+  // code -- most often the user simply declining on the consent screen.
   if (searchParams.get("error")) return back("denied");
 
   const state = searchParams.get("state");

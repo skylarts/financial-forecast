@@ -1,3 +1,4 @@
+import { appOrigin } from "./schwabAuth";
 import { storageMode } from "./schwabTokenStore";
 
 /**
@@ -31,6 +32,34 @@ export async function requireSchwabAccess(): Promise<Guard> {
     response: Response.json(
       { error: "sign_in_required" },
       { status: 401, headers: { "Cache-Control": "no-store" } },
+    ),
+  };
+}
+
+/**
+ * Refuses a state-changing request that did not come from this app's own page.
+ *
+ * The session lives in a cookie, so anything a browser sends to these routes
+ * arrives authenticated whether or not the user meant to send it. A form on
+ * another site posting here would otherwise be able to replace the Schwab
+ * application behind someone's connection, or tear the connection down,
+ * entirely from a page they merely visited.
+ *
+ * `Origin` is set by the browser on exactly the requests that matter here --
+ * every cross-origin one, and every same-origin one that isn't a plain
+ * navigation -- and cannot be forged by page script. A missing header is
+ * treated as a refusal rather than a pass, because the alternative is a rule
+ * that any caller can opt out of by omitting a header.
+ */
+export function requireSameOrigin(request: Request): Guard {
+  const origin = request.headers.get("origin");
+  if (origin && origin === appOrigin(request.url)) return { ok: true };
+
+  return {
+    ok: false,
+    response: Response.json(
+      { error: "bad_origin" },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
     ),
   };
 }

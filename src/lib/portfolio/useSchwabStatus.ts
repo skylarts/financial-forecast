@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 
 export interface SchwabStatus {
-  /** App key and secret are present -- the integration is installed. */
+  /** This caller has an application to connect through -- their own, or the
+   *  deployment's where the operator lends it out. */
   configured: boolean;
   /** A refresh token is on hand and has not aged out. */
   connected: boolean;
   /** Installed, but nobody is signed in -- the fix is a login, not a connect. */
   signInRequired: boolean;
+  /** Whose Schwab application the connection runs through. */
+  appSource: "user" | "deployment" | null;
   expiresAt: string | null;
   daysRemaining: number | null;
 }
