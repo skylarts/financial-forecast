@@ -81,6 +81,7 @@ function portfolio(transactions: Transaction[], overrides: Partial<Portfolio> = 
         ownerId: null,
         openingCashBalance: 0,
         parentAccountId: null,
+        schwabAccountHash: null,
       },
     ],
     transactions,
@@ -294,6 +295,7 @@ describe("analyzePortfolio", () => {
       ownerId: null,
       openingCashBalance: 0,
       parentAccountId: null,
+      schwabAccountHash: null,
     });
     // $1,500 in, $1,000 spent on the position: the $500 left is the cash.
     base.transactions.push(deposit(1500, "acct-2"));

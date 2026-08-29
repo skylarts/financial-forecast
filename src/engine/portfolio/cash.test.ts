@@ -43,6 +43,7 @@ function portfolio(transactions: Transaction[], opening = 0): Portfolio {
         ownerId: null,
         openingCashBalance: opening,
         parentAccountId: null,
+        schwabAccountHash: null,
       },
     ],
     transactions,
@@ -135,6 +136,7 @@ describe("accountCashBalances", () => {
       ownerId: null,
       openingCashBalance: 0,
       parentAccountId: null,
+      schwabAccountHash: null,
     });
     p.transactions.push(cash("cash_deposit", "2025-01-02", 7000, "acct-2"));
 

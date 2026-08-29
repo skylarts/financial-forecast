@@ -636,6 +636,7 @@ export function PortfolioApp() {
                   ownerId: null,
                   openingCashBalance: 0,
                   parentAccountId: null,
+                  schwabAccountHash: null,
                 });
               }
               setImporting(true);

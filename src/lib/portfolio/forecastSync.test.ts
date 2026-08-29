@@ -14,6 +14,7 @@ function account(patch: Partial<PortfolioAccount> & { id: string }): PortfolioAc
     ownerId: null,
     openingCashBalance: 0,
     parentAccountId: null,
+    schwabAccountHash: null,
     ...patch,
   };
 }

@@ -1,14 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { schwabRowsToCsv, type KnownSecurity } from "@/lib/portfolio/schwabLedger";
+import { useCallback, useState } from "react";
+import type { PortfolioAccount } from "@/domain/portfolio";
+import { accountForSchwabHash, schwabRowsToCsv, type KnownSecurity } from "@/lib/portfolio/schwabLedger";
 import type { SchwabLedgerRow } from "@/lib/portfolio/schwabTransactions";
+import { useSchwabAccounts } from "@/lib/portfolio/useSchwabAccounts";
 import { useSchwabStatus } from "@/lib/portfolio/useSchwabStatus";
-
-interface SchwabAccountOption {
-  hashValue: string;
-  masked: string;
-}
 
 interface FetchOutcome {
   rowCount: number;
@@ -34,37 +31,33 @@ const WINDOWS = [
  * import path has to keep working for someone who has no Schwab app at all.
  */
 export function SchwabFetchPanel({
+  accounts,
   securities,
   onFetched,
 }: {
+  /** The ledger's own accounts, used to find which one this Schwab account is
+   *  linked to (see `PortfolioAccount.schwabAccountHash`), if any. */
+  accounts: readonly PortfolioAccount[];
   securities: readonly KnownSecurity[];
-  onFetched: (csv: string) => void;
+  /** `linkedAccountId` is set when the fetched Schwab account is linked to one
+   *  of `accounts`, so the caller can land the import there without asking. */
+  onFetched: (csv: string, linkedAccountId: string | null) => void;
 }) {
   const { status } = useSchwabStatus();
-  const [accounts, setAccounts] = useState<SchwabAccountOption[] | null>(null);
-  const [account, setAccount] = useState("");
+  const schwabAccounts = useSchwabAccounts();
+  const [chosenAccount, setChosenAccount] = useState("");
   const [days, setDays] = useState(90);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<FetchOutcome | null>(null);
 
   const connected = status?.connected === true;
+  // Falls back to the first account the list arrives with, rather than
+  // syncing that default into state -- there is nothing to reset if the list
+  // reloads, and a manual pick always wins once one exists.
+  const account = chosenAccount || schwabAccounts?.[0]?.hashValue || "";
 
-  useEffect(() => {
-    if (!connected) return;
-    let active = true;
-    fetch("/api/schwab/accounts")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body: { accounts?: SchwabAccountOption[] } | null) => {
-        if (!active || !body?.accounts) return;
-        setAccounts(body.accounts);
-        setAccount((current) => current || (body.accounts?.[0]?.hashValue ?? ""));
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [connected]);
+  const linked = account ? accountForSchwabHash(accounts, account) : null;
 
   const run = useCallback(async () => {
     if (!account) return;
@@ -87,14 +80,14 @@ export function SchwabFetchPanel({
         rows: SchwabLedgerRow[];
         ignored: { description: string; reason: string }[];
       };
-      onFetched(schwabRowsToCsv(body.rows, securities));
+      onFetched(schwabRowsToCsv(body.rows, securities), linked?.id ?? null);
       setOutcome({ rowCount: body.rows.length, ignored: body.ignored });
     } catch {
       setError("Schwab didn't answer. Try again in a moment.");
     } finally {
       setBusy(false);
     }
-  }, [account, days, onFetched, securities]);
+  }, [account, days, linked, onFetched, securities]);
 
   if (!connected) return null;
 
@@ -105,10 +98,10 @@ export function SchwabFetchPanel({
           <span className="mb-1 block text-dim-2">Fetch from Schwab</span>
           <select
             value={account}
-            onChange={(e) => setAccount(e.target.value)}
+            onChange={(e) => setChosenAccount(e.target.value)}
             className="rounded-md border border-border bg-panel px-2 py-1 text-[12px] text-foreground outline-none focus:border-accent"
           >
-            {(accounts ?? []).map((a) => (
+            {(schwabAccounts ?? []).map((a) => (
               <option key={a.hashValue} value={a.hashValue}>
                 {a.masked}
               </option>
@@ -138,6 +131,18 @@ export function SchwabFetchPanel({
         >
           {busy ? "Fetching…" : "Fetch"}
         </button>
+
+        {/* Tells the user where this is about to land, or that it doesn't know
+            yet -- silently guessing the wrong account is worse than asking. */}
+        <span className="text-[11.5px] text-dim-2">
+          {linked ? (
+            <>
+              → <span className="text-foreground">{linked.name}</span>
+            </>
+          ) : (
+            "not linked — set this on the Accounts tab"
+          )}
+        </span>
       </div>
 
       {error && <p className="mt-2 text-[11.5px] text-negative">{error}</p>}

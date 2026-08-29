@@ -35,7 +35,13 @@ export async function GET() {
       appSource: resolved?.source ?? null,
       /** Enough of the key to recognise it by, never the whole thing. */
       appKeyHint: own ? `…${own.appKey.slice(-4)}` : null,
-      /** Every user registers this same address on their own Schwab app. */
+      /** Every user registers this same address on their own Schwab app. The
+       *  literal env var, not its localhost fallback -- the fallback answers
+       *  the OAuth flow's own question of "where do I send the browser back
+       *  to", not "what should a user without a running local server type
+       *  into Schwab's dashboard". A deployment that has not set this yet
+       *  wants that surfaced, not silently patched over with a URL that only
+       *  resolves on someone's laptop. */
       callbackUrl: process.env.SCHWAB_CALLBACK_URL ?? null,
       /** Without a key there is nowhere safe to put a secret, so saving is refused. */
       canStore: encryptionConfigured(),
