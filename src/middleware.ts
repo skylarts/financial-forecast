@@ -1,6 +1,32 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+/**
+ * How long a page load will wait for the session cookie to be refreshed.
+ *
+ * This number is the entire point of the file, so it is worth saying why it
+ * exists rather than trusting the library to be quick.
+ *
+ * `supabase.auth.getUser()` refreshes an expired session, and when that
+ * request fails in a way that looks transient -- a dropped connection, or any
+ * 5xx from the auth server -- `auth-js` retries it with exponential backoff.
+ * Its budget for that is `AUTO_REFRESH_TICK_DURATION_MS`, which is **30
+ * seconds**. The platform kills a middleware invocation at **25**. So a single
+ * unlucky stretch of trouble reaching Supabase does not degrade a page load;
+ * it guarantees the whole request is killed, and the visitor gets a 504 rather
+ * than the site.
+ *
+ * That is the failure this app kept hitting, and it is only ever visible to
+ * someone signed in: with no session in the cookie there is nothing to
+ * refresh, `getUser()` answers locally without a network call at all, and the
+ * same routes return in a quarter of a second.
+ *
+ * Three seconds is far more than a healthy refresh needs and far less than the
+ * platform allows. Losing the race costs a slightly stale session cookie for
+ * one request, which every consumer already handles -- see below.
+ */
+const SESSION_REFRESH_BUDGET_MS = 3_000;
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -25,9 +51,26 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refreshes the auth session cookie (if expired) on every request so
-  // client components always see an up-to-date session.
-  await supabase.auth.getUser();
+  /**
+   * Refreshes the auth session cookie so client components see a current
+   * session -- but never at the cost of the page itself.
+   *
+   * Giving up here is safe, and that is what makes the deadline the right
+   * answer rather than a papered-over timeout. Refreshing the cookie is an
+   * optimisation: nothing is authorised on the strength of having happened.
+   * Every route handler resolves the session for itself through
+   * `createClient`, reading the same cookies and refreshing them if it needs
+   * to, and the whole app is built to work signed out -- prices fall back to
+   * the public feed, and a Schwab connection reports `signInRequired` rather
+   * than failing. A visitor whose refresh was slow sees the page, and the next
+   * request picks the session up.
+   *
+   * The alternative, which is what this replaced, is a blank 504.
+   */
+  await Promise.race([
+    supabase.auth.getUser(),
+    new Promise((resolve) => setTimeout(resolve, SESSION_REFRESH_BUDGET_MS)),
+  ]);
 
   return response;
 }
