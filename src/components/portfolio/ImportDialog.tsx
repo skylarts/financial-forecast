@@ -45,6 +45,35 @@ const SAMPLE = `Run Date,Action,Symbol,Quantity,Price,Amount
 01/10/2024,YOU BOUGHT,VTI,10,220.50,-2205.00
 04/15/2024,DIVIDEND RECEIVED,VTI,,,42.10`;
 
+/**
+ * Which pile a row is in. Exactly one each, so the tab counts add up to the
+ * file's length and a row can never hide from every filter.
+ */
+type Bucket = "ready" | "flagged" | "duplicate" | "error";
+
+function bucketOf(row: ImportRow): Bucket {
+  if (row.skip) return "error";
+  if (row.duplicate) return "duplicate";
+  return row.issues.length > 0 ? "flagged" : "ready";
+}
+
+const BUCKET_LABELS: Record<Bucket, string> = {
+  ready: "Ready",
+  flagged: "Needs a look",
+  duplicate: "Already imported",
+  error: "Can't import",
+};
+
+const BUCKET_ORDER: Bucket[] = ["ready", "flagged", "duplicate", "error"];
+
+/**
+ * Rows drawn before the "show more" controls appear. A statement backfill runs
+ * to thousands of rows and putting them all in the DOM at once locks the
+ * dialog up, but the filters are what make a long file navigable anyway --
+ * this is the starting window, not a cap on what can be reviewed.
+ */
+const PAGE = 250;
+
 export function ImportDialog({
   accounts,
   existingTransactions,
@@ -111,7 +140,72 @@ export function ImportDialog({
   const accountForRow = (row: ImportRow) =>
     (routable && resolvedRouting[row.taxSourceLabel]) || accountId;
 
-  const importable = rows.filter((row) => !row.skip && !(skipDuplicates && row.duplicate));
+  /**
+   * How the user is reviewing this file: which group they are filtering to,
+   * what they have ticked or unticked by hand (only the rows they actually
+   * touched -- everything else follows the default), and how far down the list
+   * they have asked to see.
+   *
+   * All of it is held against the row list it was chosen for. A new file, a
+   * remapped column or a different target account rebuilds every row, and
+   * none of those choices point at anything any more -- a filter least of all,
+   * which would otherwise leave the next file looking empty. Comparing here
+   * drops them in the same render, rather than an effect clearing them a
+   * render too late with a stale table drawn in between.
+   */
+  interface Review {
+    rows: ImportRow[];
+    filter: Bucket | "all";
+    picks: Record<number, boolean>;
+    visible: number;
+  }
+  const fresh: Review = { rows, filter: "all", picks: {}, visible: PAGE };
+  const [review, setReview] = useState<Review>(fresh);
+  const { filter, picks: selection, visible } = review.rows === rows ? review : fresh;
+
+  const amend = (change: (current: Review) => Partial<Review>) =>
+    setReview((prev) => {
+      const base = prev.rows === rows ? prev : fresh;
+      return { ...base, ...change(base) };
+    });
+  const setFilter = (next: Bucket | "all") => amend(() => ({ filter: next, visible: PAGE }));
+  const setPicks = (next: (picks: Record<number, boolean>) => Record<number, boolean>) =>
+    amend((base) => ({ picks: next(base.picks) }));
+  const setVisible = (next: (n: number) => number) =>
+    amend((base) => ({ visible: next(base.visible) }));
+
+  const defaultChecked = (row: ImportRow) => !row.skip && !(skipDuplicates && row.duplicate);
+  // A row that couldn't be read has nothing to import, so it can't be ticked
+  // back on -- no override survives that.
+  const isChecked = (row: ImportRow, index: number) =>
+    !row.skip && (selection[index] ?? defaultChecked(row));
+
+  const indexed = useMemo(() => rows.map((row, index) => ({ row, index })), [rows]);
+  const chosen = indexed.filter(({ row, index }) => isChecked(row, index));
+  const importable = chosen.map(({ row }) => row);
+
+  const counts = useMemo(() => {
+    const tally: Record<Bucket, number> = { ready: 0, flagged: 0, duplicate: 0, error: 0 };
+    for (const row of rows) tally[bucketOf(row)] += 1;
+    return tally;
+  }, [rows]);
+
+  const filtered = useMemo(
+    () => (filter === "all" ? indexed : indexed.filter(({ row }) => bucketOf(row) === filter)),
+    [indexed, filter],
+  );
+  // The header checkbox acts on what is filtered, not on what is drawn, so
+  // "untick every duplicate" is one click on a file of any length.
+  const togglable = filtered.filter(({ row }) => !row.skip);
+  const allChecked =
+    togglable.length > 0 && togglable.every(({ row, index }) => isChecked(row, index));
+  const setAll = (on: boolean) =>
+    setPicks((prev) => {
+      const next = { ...prev };
+      for (const { index } of togglable) next[index] = on;
+      return next;
+    });
+
   const unrouted = routable
     ? importable.filter((row) => !resolvedRouting[row.taxSourceLabel]).length
     : 0;
@@ -170,7 +264,13 @@ export function ImportDialog({
               <input
                 type="checkbox"
                 checked={skipDuplicates}
-                onChange={(e) => setSkipDuplicates(e.target.checked)}
+                onChange={(e) => {
+                  setSkipDuplicates(e.target.checked);
+                  // Read as a bulk action rather than a change of default, so
+                  // it visibly moves every duplicate -- including ones already
+                  // ticked by hand, which would otherwise sit there ignoring it.
+                  setPicks(() => ({}));
+                }}
               />
               Skip rows already imported
             </label>
@@ -275,21 +375,57 @@ export function ImportDialog({
                 </div>
               )}
 
-              <div className="mt-4 flex items-center justify-between">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-[12.5px] font-semibold text-foreground">
-                  Preview
+                  Review
                   <span className="ml-2 font-normal text-dim-2">
                     {importable.length} to import
                     {skipped > 0 && `, ${skipped} skipped`}
                     {flagged > 0 && `, ${flagged} needing a look`}
                   </span>
                 </h3>
+                <div className="flex flex-wrap items-center gap-1">
+                  {(["all", ...BUCKET_ORDER] as const).map((key) => {
+                    const count = key === "all" ? rows.length : counts[key];
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        disabled={count === 0 && key !== "all"}
+                        onClick={() => {
+                          setFilter(key);
+                        }}
+                        className={`rounded-md border px-2 py-1 text-[11px] disabled:opacity-40 ${
+                          filter === key
+                            ? "border-accent bg-panel-2 text-foreground"
+                            : "border-border text-dim hover:text-foreground"
+                        }`}
+                      >
+                        {key === "all" ? "All" : BUCKET_LABELS[key]}{" "}
+                        <span className="tabular-nums text-dim-2">{count}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="mt-2 max-h-72 overflow-auto rounded-md border border-border">
+              <div className="mt-2 max-h-[26rem] overflow-auto rounded-md border border-border">
                 <table className="w-full border-collapse">
                   <thead className="sticky top-0 bg-panel-2">
                     <tr className="border-b border-border">
+                      <th className={`${HEAD} w-8 text-left`}>
+                        <input
+                          type="checkbox"
+                          checked={allChecked}
+                          disabled={togglable.length === 0}
+                          onChange={(e) => setAll(e.target.checked)}
+                          title={
+                            allChecked
+                              ? `Untick all ${togglable.length} shown`
+                              : `Tick all ${togglable.length} shown`
+                          }
+                        />
+                      </th>
                       <th className={`${HEAD} text-left`}>Date</th>
                       <th className={`${HEAD} text-left`}>Type</th>
                       <th className={`${HEAD} text-left`}>Symbol</th>
@@ -301,13 +437,24 @@ export function ImportDialog({
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.slice(0, 200).map((row, index) => {
-                      const dropped = row.skip || (skipDuplicates && row.duplicate);
+                    {filtered.slice(0, visible).map(({ row, index }) => {
+                      const checked = isChecked(row, index);
                       return (
                         <tr
                           key={index}
-                          className={`border-b border-border-soft ${dropped ? "opacity-45" : ""}`}
+                          className={`border-b border-border-soft ${checked ? "" : "opacity-45"}`}
                         >
+                          <td className={`${CELL} text-left`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={row.skip}
+                              onChange={(e) =>
+                                setPicks((prev) => ({ ...prev, [index]: e.target.checked }))
+                              }
+                              title={row.skip ? "This row can't be imported" : undefined}
+                            />
+                          </td>
                           <td className={`${CELL} text-left text-dim`}>
                             {row.draft.date ? shortDate(row.draft.date) : "—"}
                           </td>
@@ -338,8 +485,15 @@ export function ImportDialog({
                           <td className={`${CELL} text-left`}>
                             {row.skip ? (
                               <span className="text-negative">{row.issues[0]}</span>
-                            ) : row.duplicate ? (
+                            ) : row.duplicateVia === "exact" ? (
                               <span className="text-dim-2">Already imported</span>
+                            ) : row.duplicateVia === "match" ? (
+                              <span
+                                className="text-dim-2"
+                                title="This file doesn't match one already imported byte for byte, but a transaction in this account describes the same event."
+                              >
+                                Same as an existing row
+                              </span>
                             ) : row.syncMatchId ? (
                               <span className="text-accent">Replaces a synced dividend</span>
                             ) : row.issues.length > 0 ? (
@@ -354,10 +508,31 @@ export function ImportDialog({
                   </tbody>
                 </table>
               </div>
-              {rows.length > 200 && (
+              {filtered.length === 0 && (
                 <p className="mt-1 text-[11.5px] text-dim-2">
-                  Showing the first 200 of {rows.length} rows. All {importable.length} importable rows
-                  will be added.
+                  No rows in this group.
+                </p>
+              )}
+              {filtered.length > visible && (
+                <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px] text-dim-2">
+                  <span>
+                    Showing {visible} of {filtered.length.toLocaleString()} rows. Ticking is
+                    unaffected — the header checkbox covers all {filtered.length.toLocaleString()}.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setVisible((n) => n + PAGE * 2)}
+                    className="rounded-md border border-border px-2 py-0.5 text-[11px] text-dim hover:text-foreground"
+                  >
+                    Show {Math.min(PAGE * 2, filtered.length - visible).toLocaleString()} more
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVisible(() => filtered.length)}
+                    className="rounded-md border border-border px-2 py-0.5 text-[11px] text-dim hover:text-foreground"
+                  >
+                    Show all {filtered.length.toLocaleString()}
+                  </button>
                 </p>
               )}
             </>
