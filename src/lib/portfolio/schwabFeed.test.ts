@@ -111,6 +111,31 @@ describe("schwab quotes", () => {
     expect(outcome.status === "ok" && outcome.value.price).toBe(512.33);
   });
 
+  it("hands an index back unanswered so the other feed prices it", async () => {
+    // Schwab's `closePrice` is the previous close on an equity but *today's*
+    // close on an index -- identical to `lastPrice` after the bell, with
+    // netChange 0. Reading it the same way printed 0.00% for every benchmark
+    // in the market strip on a day the index actually moved.
+    respond = () => ({
+      status: 200,
+      body: {
+        $SPX: {
+          symbol: "$SPX",
+          assetMainType: "INDEX",
+          reference: { description: "S & P 500 INDEX" },
+          quote: {
+            lastPrice: 7711.76,
+            closePrice: 7711.76,
+            netChange: 0,
+            tradeTime: Date.parse("2026-08-28T20:00:00Z"),
+          },
+        },
+      },
+    });
+
+    expect(await schwabProvider.quote("^GSPC")).toEqual({ status: "unknown_symbol" });
+  });
+
   it("shrugs at a symbol missing from the response rather than failing", async () => {
     // A symbol Schwab does not carry must fall through to the other feed, not
     // register as an outage that would suppress the ticker everywhere.
