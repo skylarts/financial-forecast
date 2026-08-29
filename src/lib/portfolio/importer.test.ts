@@ -429,3 +429,125 @@ describe("buildImportRows: money source", () => {
     expect(parentOnly.syncMatchId).toBeNull();
   });
 });
+
+describe("buildImportRows duplicate matching", () => {
+  const stored = (draft: Record<string, unknown>, accountId = "acct-1") => ({
+    date: "2024-01-10" as const,
+    type: "buy" as const,
+    symbol: "VTI",
+    quantity: 10,
+    price: 220.5,
+    amount: 2205,
+    fees: 0,
+    lotId: null,
+    acquiredDate: null,
+    spinoffSymbol: null,
+    spinoffShareRatio: null,
+    spinoffBasisRetained: null,
+    note: "",
+    sourceHash: "some-other-hash",
+    id: "tx-1",
+    accountId,
+    importBatchId: null,
+    ...draft,
+  });
+
+  const build = (csv: string, existing: ReturnType<typeof stored>[], target?: string) => {
+    const table = parseDelimited(csv);
+    return buildImportRows(table, guessMapping(table.headers), existing, target ?? null);
+  };
+
+  const ROW = "Date,Action,Symbol,Quantity,Price,Amount\n01/10/2024,YOU BOUGHT,VTI,10,220.50,-2205.00";
+
+  it("recognises a row whose source formatting changed", () => {
+    // Same event, written the way a re-export or a reworded statement writes
+    // it: a Lot ID the app itself assigned, an added Account column, and the
+    // amount with a thousands separator. The row fingerprint misses all three.
+    const reexported =
+      "Date,Action,Symbol,Quantity,Price,Amount,Lot ID,Account\n" +
+      '2024-01-10,buy,VTI,10,220.5,"2,205.00",VTI-20240110-1,Brokerage';
+    const [row] = build(reexported, [stored({})], "acct-1");
+
+    expect(row.duplicate).toBe(true);
+    expect(row.duplicateVia).toBe("match");
+  });
+
+  it("still prefers the exact fingerprint when there is one", () => {
+    const [once] = build(ROW, []);
+    const [row] = build(ROW, [stored({ ...once.draft })], "acct-1");
+
+    expect(row.duplicateVia).toBe("exact");
+  });
+
+  it("lets a genuine repeat through, and only the repeat", () => {
+    // Two identical fills of the same order: the ledger holds one, so the
+    // first is recognised and the second is new.
+    const twice = `${ROW}\n01/10/2024,YOU BOUGHT,VTI,10,220.50,-2205.00`;
+    const rows = build(twice, [stored({})], "acct-1");
+
+    expect(rows.map((r) => r.duplicate)).toEqual([true, false]);
+  });
+
+  it("does not let one account's rows suppress another's", () => {
+    // The same $2,205 buy really can sit in two accounts. Before scoping, the
+    // second import found the first and silently dropped the row.
+    const [row] = build(ROW, [stored({})], "acct-2");
+
+    expect(row.duplicate).toBe(false);
+  });
+
+  it("treats a row that supersedes a synced dividend as new, not duplicate", () => {
+    const csv = "Date,Action,Symbol,Amount\n04/01/2024,DIVIDEND RECEIVED,VTI,42.00";
+    const synced = stored({
+      id: "tx-div",
+      date: "2024-04-01" as const,
+      type: "dividend" as const,
+      quantity: 0,
+      price: 0,
+      amount: 42,
+      sourceHash: "auto-div:VTI:2024-04-01",
+    });
+    const [row] = build(csv, [synced], "acct-1");
+
+    expect(row.duplicate).toBe(false);
+    expect(row.syncMatchId).toBe("tx-div");
+  });
+
+  it("matches a trade whose amount the ledger derives rather than stores", () => {
+    // The ledger holds no amount on this buy -- it means "shares x price" --
+    // while the statement states one, with the commission folded in. Same
+    // trade; the shares and the price are what say so.
+    const withFee =
+      "Date,Action,Symbol,Quantity,Price,Amount\n01/10/2024,YOU BOUGHT,VTI,10,220.50,-2205.08";
+    const [row] = build(withFee, [stored({ amount: null })], "acct-1");
+
+    expect(row.duplicate).toBe(true);
+  });
+
+  it("keeps two cash rows apart by their amount", () => {
+    // Nothing else tells a deposit from a deposit, so the amount has to.
+    const csv =
+      "Date,Action,Amount\n01/10/2024,Funds Received,500.00\n01/10/2024,Funds Received,900.00";
+    const deposit = stored({
+      type: "cash_deposit" as const,
+      symbol: null,
+      quantity: 0,
+      price: 0,
+      amount: 500,
+    });
+    const rows = build(csv, [deposit], "acct-1");
+
+    expect(rows.map((r) => r.duplicate)).toEqual([true, false]);
+  });
+
+  it("does not let an unreadable row claim a match from the ledger", () => {
+    // The bad row must not spend the pool's only VTI buy, or the good row
+    // behind it would import as a second copy.
+    const csv = `Date,Action,Symbol,Quantity,Price,Amount\nnot a date,YOU BOUGHT,VTI,10,220.50,-2205.00\n01/10/2024,YOU BOUGHT,VTI,10,220.50,-2205.00`;
+    const rows = build(csv, [stored({})], "acct-1");
+
+    expect(rows[0].skip).toBe(true);
+    expect(rows[0].duplicate).toBe(false);
+    expect(rows[1].duplicate).toBe(true);
+  });
+});
