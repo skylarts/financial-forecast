@@ -97,20 +97,20 @@ export function SchwabConnection() {
           — your connection is still signed in, so there is nothing to reconnect. This is usually a
           temporary limit on Schwab&apos;s side. Prices are on the public feed until it clears.
         </span>
-        <SchwabAppSettings onChanged={reload} />
       </Bar>
     );
   }
 
-  // Connected and healthy. The banner stays quiet -- the standing badge in the
-  // header is what reports this state -- except for the one collapsed link,
-  // which is the only way to rotate or remove a live app secret without first
-  // tearing the connection down.
+  // Connected and healthy: nothing to report and nothing to do, so the banner
+  // renders nothing at all. The standing badge in the header reports the
+  // state, and the app registration lives behind the header's own menu -- a
+  // permanent full-width strip holding one collapsed link was a row of chrome
+  // paid for on every visit.
   if (status.connected && !expiringSoon) {
+    if (!outcome) return null;
     return (
       <Bar>
-        {outcome && <span className="w-full text-dim">{outcome}</span>}
-        <SchwabAppSettings onChanged={reload} />
+        <span className="w-full text-dim">{outcome}</span>
       </Bar>
     );
   }
@@ -143,7 +143,6 @@ export function SchwabConnection() {
       >
         {status.connected ? "Sign in again" : "Connect Schwab"}
       </a>
-      <SchwabAppSettings onChanged={reload} />
     </Bar>
   );
 }

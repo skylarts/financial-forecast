@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Id } from "@/domain";
 import dynamic from "next/dynamic";
 import {
@@ -18,7 +18,6 @@ import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore
 import { usePortfolioCloudSync } from "@/store/usePortfolioCloudSync";
 import { useCloudSync } from "@/store/useCloudSync";
 import { useForecastValueSync } from "@/store/useForecastValueSync";
-import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
 import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
 import { useSecurityProfiles } from "@/store/useSecurityProfiles";
@@ -38,7 +37,7 @@ import { useCollapsedGroups } from "./grouping";
 import { PositionDetail, type PositionSelection } from "./PositionDetail";
 import { ImportDialog, type ImportAssignment } from "./ImportDialog";
 import { AccountsPanel } from "./AccountsPanel";
-import { ExportMenu } from "./ExportMenu";
+import { PortfolioMenu } from "./PortfolioMenu";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import type { AllocationDimension } from "./AllocationPanel";
@@ -111,46 +110,6 @@ const SIDE_FILTERS = [
 ] as const;
 
 type SideFilter = (typeof SIDE_FILTERS)[number]["value"];
-
-// Same sign-in-with-Google affordance the forecast tool's header exposes,
-// so a household can sync the portfolio to the same account without ever
-// leaving this page -- reuses the same auth state, just without the
-// forecast-specific menu items (Setup Guide, backup controls) that don't
-// apply here.
-function AccountMenu() {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={menuRef}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title="Account"
-        className="rounded-md border border-border bg-panel-2 px-2.5 py-1.5 text-sm text-dim hover:text-foreground"
-      >
-        ⋯
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-border bg-panel p-1 shadow-lg">
-          <AccountTopMenuItem onClose={() => setOpen(false)} />
-          <div className="border-t border-border pt-1">
-            <SignOutMenuItem onClose={() => setOpen(false)} />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function PortfolioApp() {
   const portfolio = usePortfolioStore((s) => s.portfolio);
@@ -586,8 +545,8 @@ export function PortfolioApp() {
     <>
       <ThemeSync />
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-panel px-6 py-3">
-        <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
           <select
             value={scope}
             onChange={(e) => setScope(e.target.value)}
@@ -611,18 +570,21 @@ export function PortfolioApp() {
               ))}
             </optgroup>
           </select>
-          <Btn onClick={refreshPrices} title="Refetch quotes now">
-            {pricesLoading ? "Refreshing…" : "Refresh prices"}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Btn
+            onClick={refreshPrices}
+            title="Refetch quotes now"
+            ariaLabel="Refresh prices"
+            className="px-2.5"
+          >
+            <span aria-hidden className={pricesLoading ? "inline-block animate-spin" : undefined}>
+              ↻
+            </span>
           </Btn>
           {/* Beside the refresh control because it answers the question that
               control raises: refreshed from where. */}
           <SchwabBadge />
-          {portfolio.transactions.length === 0 && (
-            <Btn onClick={handleLoadDemo} title="Fill the tracker with a fictional ledger to look at">
-              Load sample data
-            </Btn>
-          )}
-          <ExportMenu portfolio={portfolio} />
           <Btn
             variant="primary"
             onClick={() => {
@@ -644,7 +606,11 @@ export function PortfolioApp() {
           >
             Import transactions
           </Btn>
-          <AccountMenu />
+          <PortfolioMenu
+            portfolio={portfolio}
+            canLoadDemo={portfolio.transactions.length === 0}
+            onLoadDemo={handleLoadDemo}
+          />
         </div>
       </header>
 
