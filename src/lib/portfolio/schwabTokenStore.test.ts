@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const getUser = vi.hoisted(() => vi.fn());
-const upsert = vi.hoisted(() => vi.fn(async () => ({ error: null })));
+// Returns the row so the assertions can read exactly what was sent.
+const upsert = vi.hoisted(() =>
+  vi.fn(async (row: Record<string, unknown>) => ({ error: null, row })),
+);
 const maybeSingle = vi.hoisted(() => vi.fn());
 const del = vi.hoisted(() => vi.fn(() => ({ eq: vi.fn(async () => ({ error: null })) })));
 
@@ -66,7 +69,7 @@ describe("what actually reaches the database", () => {
     const secret = "schwab-refresh-token-abc123";
     expect(await writeTokens({ refreshToken: secret, obtainedAt: 1_700_000_000_000 })).toBe(true);
 
-    const written = upsert.mock.calls[0][0] as { refresh_token: string; user_id: string };
+    const written = upsert.mock.calls[0]?.[0] as unknown as { refresh_token: string; user_id: string };
     expect(written.user_id).toBe("user-1");
     expect(written.refresh_token).not.toContain(secret);
     expect(written.refresh_token.startsWith("v1.")).toBe(true);
@@ -89,7 +92,7 @@ describe("what actually reaches the database", () => {
     vi.stubEnv("SCHWAB_ENCRYPTION_KEY", KEY);
 
     await writeTokens({ refreshToken: "round-trip-token", obtainedAt: 1_700_000_000_000 });
-    const stored = (upsert.mock.calls[0][0] as { refresh_token: string }).refresh_token;
+    const stored = (upsert.mock.calls[0]?.[0] as unknown as { refresh_token: string }).refresh_token;
     maybeSingle.mockResolvedValue({
       data: { refresh_token: stored, obtained_at: "2023-11-14T22:13:20.000Z" },
       error: null,
