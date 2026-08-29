@@ -32,9 +32,20 @@ const SETUP_STEPS = [
   "Paste the app key and secret here, then connect.",
 ];
 
-export function SchwabAppSettings({ onChanged }: { onChanged?: () => void }) {
+/**
+ * `alwaysOpen` drops the disclosure button and renders the form expanded --
+ * how the settings dialog shows it, where the whole point of the dialog is
+ * this form and a second click to reveal it would be ceremony.
+ */
+export function SchwabAppSettings({
+  onChanged,
+  alwaysOpen = false,
+}: {
+  onChanged?: () => void;
+  alwaysOpen?: boolean;
+}) {
   const [state, setState] = useState<AppState | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(alwaysOpen);
   const [appKey, setAppKey] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -118,18 +129,23 @@ export function SchwabAppSettings({ onChanged }: { onChanged?: () => void }) {
 
   return (
     <div className="w-full">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="text-[12px] text-dim underline decoration-dotted underline-offset-2 hover:text-foreground"
-      >
-        {state.hasOwnApp
-          ? `Your Schwab app (${state.appKeyHint})`
-          : "Use your own Schwab app"}
-      </button>
+      {!alwaysOpen && (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="text-[12px] text-dim underline decoration-dotted underline-offset-2 hover:text-foreground"
+        >
+          {state.hasOwnApp
+            ? `Your Schwab app (${state.appKeyHint})`
+            : "Use your own Schwab app"}
+        </button>
+      )}
 
       {open && (
-        <div className="mt-2 max-w-2xl rounded-md border border-border bg-panel p-3 text-[12px]">
+        <div className={`max-w-2xl rounded-md border border-border bg-panel p-3 text-[12px] ${alwaysOpen ? "" : "mt-2"}`}>
+          {alwaysOpen && state.hasOwnApp && (
+            <p className="mb-2 text-dim">Your Schwab app ({state.appKeyHint}) is registered.</p>
+          )}
           <p className="text-dim-2">
             Schwab has no shared integration — every connection runs through an app registered by a
             person. Register your own so your brokerage is never reached through anyone else&apos;s.

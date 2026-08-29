@@ -19,6 +19,7 @@ export function Btn({
   className = "",
   ariaHasPopup,
   ariaExpanded,
+  ariaLabel,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -31,6 +32,8 @@ export function Btn({
   /** Set both when the button opens a menu, so it announces as one. */
   ariaHasPopup?: "menu";
   ariaExpanded?: boolean;
+  /** Needed when the button's content is an icon rather than words. */
+  ariaLabel?: string;
 }) {
   const base =
     "rounded-md px-3 py-1.5 text-[12.5px] transition-colors disabled:opacity-50";
@@ -46,6 +49,7 @@ export function Btn({
       onClick={onClick}
       aria-haspopup={ariaHasPopup}
       aria-expanded={ariaExpanded}
+      aria-label={ariaLabel}
       className={`${base} ${styles} ${className}`}
     >
       {children}
