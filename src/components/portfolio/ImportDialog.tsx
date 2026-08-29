@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { SchwabFetchPanel } from "./SchwabFetchPanel";
 import type { PortfolioAccount, Transaction } from "@/domain/portfolio";
 import { TRANSACTION_TYPE_LABELS } from "@/domain/portfolio";
 import {
@@ -47,11 +48,15 @@ const SAMPLE = `Run Date,Action,Symbol,Quantity,Price,Amount
 export function ImportDialog({
   accounts,
   existingTransactions,
+  securities,
   onImport,
   onClose,
 }: {
   accounts: PortfolioAccount[];
   existingTransactions: Transaction[];
+  /** The ledger's own securities, used to put a symbol back on a Schwab
+   *  dividend -- Schwab names the company in prose and the symbol nowhere. */
+  securities: readonly { symbol: string; name: string }[];
   onImport: (assignments: ImportAssignment[]) => void;
   onClose: () => void;
 }) {
@@ -170,6 +175,10 @@ export function ImportDialog({
               Skip rows already imported
             </label>
           </div>
+
+          {/* Above the box rather than beside the file picker: fetching fills
+              the same box, so it reads as one more way to get text in. */}
+          <SchwabFetchPanel securities={securities} onFetched={setText} />
 
           <textarea
             value={text}
