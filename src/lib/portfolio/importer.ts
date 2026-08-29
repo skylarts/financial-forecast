@@ -7,6 +7,7 @@ import {
   type TransactionType,
 } from "@/domain/portfolio";
 import { isAutoDividendHash, isSameDividendWindow } from "@/engine/portfolio/dividends";
+import { createIdentityPool, transactionIdentity } from "./transactionIdentity";
 
 export interface ParsedTable {
   headers: string[];
@@ -79,8 +80,16 @@ export interface ImportRow {
   issues: string[];
   /** True when the row could not be understood well enough to import. */
   skip: boolean;
-  /** True when an identical row is already in the ledger. */
+  /** True when this row is already in the ledger, by either route below. */
   duplicate: boolean;
+  /**
+   * How it was recognised, so the review table can say which:
+   * `"exact"` -- the same source row was imported before, matched on its
+   * fingerprint; `"match"` -- the fingerprint is new (a re-export, a reworded
+   * description, a reformatted number) but a transaction already in this
+   * account describes the same event.
+   */
+  duplicateVia: "exact" | "match" | null;
   /**
    * Id of the sync-written dividend this row's own statement payment
    * supersedes, when this dividend/reinvest row falls in that entry's
@@ -384,15 +393,28 @@ export function buildImportRows(
   // exactly what the source column is about to decide.
   const targetIds =
     target === null ? [] : typeof target === "string" ? [target] : [...target];
-  const seen = new Set(existing.map((tx) => tx.sourceHash).filter((h): h is string => h !== null));
+
+  // Duplicate detection looks only at where this file is actually landing.
+  // Unscoped, the same $500 deposit in two accounts collides: importing it
+  // into the second would find the first and silently drop the row. The family
+  // rather than the single account is the right universe, because a split
+  // workplace file fans out across sleeves and any of them may hold the match.
+  const inScope =
+    targetIds.length === 0 ? existing : existing.filter((tx) => targetIds.includes(tx.accountId));
+
+  const seen = new Set(inScope.map((tx) => tx.sourceHash).filter((h): h is string => h !== null));
+  // Sync-written dividends are deliberately left out: they are ex-date
+  // estimates that a statement row supersedes rather than repeats, and that
+  // handover is the `syncMatchId` path below.
+  const identities = createIdentityPool(inScope.filter((tx) => !isAutoDividendHash(tx.sourceHash)));
 
   // Dividends the sync already wrote into the target account, by symbol --
   // the only thing a statement's own pay-date row can collide with that its
   // hash won't reveal.
   const autoDivEntries = new Map<string, { id: string; date: ISODate }[]>();
   if (targetIds.length > 0) {
-    for (const tx of existing) {
-      if (!targetIds.includes(tx.accountId) || tx.symbol === null || !isAutoDividendHash(tx.sourceHash)) continue;
+    for (const tx of inScope) {
+      if (tx.symbol === null || !isAutoDividendHash(tx.sourceHash)) continue;
       const symbol = normalizeSymbol(tx.symbol);
       const entries = autoDivEntries.get(symbol);
       const entry = { id: tx.id, date: tx.date };
@@ -493,13 +515,33 @@ export function buildImportRows(
       issues.push("Replaces a dividend the price-feed sync added earlier under its ex-date.");
     }
 
+    const skip = !date || !type || (needsSymbol && !symbolRaw) || spinoffIncomplete;
+
+    // Two routes, tried in that order. The fingerprint is exact and survives
+    // the user editing the transaction afterwards, so it stays the first
+    // answer; the identity catches what a changed file format loses. A row
+    // superseding a synced dividend is neither -- it is a replacement, and
+    // calling it a duplicate would leave the estimate in the ledger forever.
+    // A row that cannot be imported at all claims nothing from the pool.
+    let duplicateVia: "exact" | "match" | null = null;
+    if (!skip && syncMatchId === null) {
+      const identity = transactionIdentity(draft);
+      if (seen.has(sourceHash)) {
+        duplicateVia = "exact";
+        identities.drop(identity);
+      } else if (identities.take(identity)) {
+        duplicateVia = "match";
+      }
+    }
+
     return {
       raw,
       draft,
       taxSourceLabel: cell(raw, mapping.taxSource).trim(),
       issues,
-      skip: !date || !type || (needsSymbol && !symbolRaw) || spinoffIncomplete,
-      duplicate: seen.has(sourceHash),
+      skip,
+      duplicate: duplicateVia !== null,
+      duplicateVia,
       syncMatchId,
     };
   });
