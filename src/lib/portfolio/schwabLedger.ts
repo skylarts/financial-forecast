@@ -1,3 +1,4 @@
+import type { PortfolioAccount } from "@/domain/portfolio";
 import type { SchwabLedgerRow } from "./schwabTransactions";
 
 /**
@@ -76,6 +77,22 @@ function normalizeName(text: string): string {
     .replace(NOISE, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Which internal account a Schwab account has been linked to, if any.
+ *
+ * The link lives on the account (`PortfolioAccount.schwabAccountHash`) rather
+ * than anywhere per-fetch, so it survives across sessions and applies no
+ * matter who in a household is the one connected to Schwab -- see
+ * `schwabAccountHash`'s own doc comment for why it always names a plain
+ * account or a split account's parent, never a sleeve.
+ */
+export function accountForSchwabHash(
+  accounts: readonly PortfolioAccount[],
+  hashValue: string,
+): PortfolioAccount | null {
+  return accounts.find((a) => a.schwabAccountHash === hashValue) ?? null;
 }
 
 /**

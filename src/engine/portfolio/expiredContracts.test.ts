@@ -39,6 +39,7 @@ function portfolio(transactions: Transaction[]): Portfolio {
         ownerId: null,
         openingCashBalance: 0,
         parentAccountId: null,
+        schwabAccountHash: null,
       },
     ],
     transactions,

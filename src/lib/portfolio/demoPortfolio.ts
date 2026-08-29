@@ -188,6 +188,7 @@ export function buildDemoPortfolio(
     ownerId,
     openingCashBalance: 0,
     parentAccountId: null,
+    schwabAccountHash: null,
   });
 
   const accounts: PortfolioAccount[] = [

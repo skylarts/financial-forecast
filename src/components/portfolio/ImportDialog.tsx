@@ -178,7 +178,17 @@ export function ImportDialog({
 
           {/* Above the box rather than beside the file picker: fetching fills
               the same box, so it reads as one more way to get text in. */}
-          <SchwabFetchPanel securities={securities} onFetched={setText} />
+          <SchwabFetchPanel
+            accounts={accounts}
+            securities={securities}
+            onFetched={(csv, linkedAccountId) => {
+              setText(csv);
+              // Only when a link exists -- an unlinked fetch leaves whatever
+              // the picker above already had, rather than silently landing
+              // rows wherever the picker happened to be pointed.
+              if (linkedAccountId) setAccountId(linkedAccountId);
+            }}
+          />
 
           <textarea
             value={text}
