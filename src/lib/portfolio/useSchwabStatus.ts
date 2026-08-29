@@ -7,6 +7,8 @@ export interface SchwabStatus {
   configured: boolean;
   /** A refresh token is on hand and has not aged out. */
   connected: boolean;
+  /** Installed, but nobody is signed in -- the fix is a login, not a connect. */
+  signInRequired: boolean;
   expiresAt: string | null;
   daysRemaining: number | null;
 }
