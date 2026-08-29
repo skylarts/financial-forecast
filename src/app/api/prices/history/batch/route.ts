@@ -54,7 +54,7 @@ export async function GET(request: Request) {
 
   if (symbols.length === 0) {
     return Response.json(
-      { histories: {}, splits: {}, skipped },
+      { histories: {}, splits: {}, skipped, splitsUnknown: [] },
       { headers: { "Cache-Control": HISTORY_CACHE_CONTROL } },
     );
   }
@@ -80,7 +80,18 @@ export async function GET(request: Request) {
 
   const histories: Record<string, { date: string; close: number }[]> = {};
   const splits: Record<string, { date: string; ratio: number }[]> = {};
+  /**
+   * Symbols whose split list is silence rather than an answer.
+   *
+   * Only the fallback feed can produce this: it serves closes already adjusted
+   * for splits but never reports that one happened. An empty `splits` entry
+   * therefore means "none" for most symbols and "nobody told me" for these,
+   * and the two must not be collapsed here -- a caller reconstructing the
+   * shares actually held on a past day needs to know which it is.
+   */
+  const splitsUnknown: string[] = [];
   for (const [symbol, result] of results) {
+    if (result.points.length > 0 && !result.splitsKnown) splitsUnknown.push(symbol);
     // A symbol the feed has nothing for is omitted rather than sent as an empty
     // array, so the caller can tell "no history" apart from "no data yet".
     if (result.points.length > 0) histories[symbol] = trim(result.points);
@@ -91,7 +102,7 @@ export async function GET(request: Request) {
   }
 
   return Response.json(
-    { histories, splits, skipped },
+    { histories, splits, skipped, splitsUnknown },
     { headers: { "Cache-Control": HISTORY_CACHE_CONTROL } },
   );
 }
