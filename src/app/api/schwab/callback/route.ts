@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { exchangeCode, STATE_COOKIE } from "@/lib/portfolio/schwabAuth";
+import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
 
 /**
  * Where Schwab sends the browser back with a one-time code.
@@ -20,6 +21,9 @@ export async function GET(request: Request) {
 
   // Schwab reports a refusal by redirecting here with an error rather than a
   // code -- most often the user simply declining on the consent screen.
+  const guard = await requireSchwabAccess();
+  if (!guard.ok) return back("sign_in_required");
+
   if (searchParams.get("error")) return back("denied");
 
   const state = searchParams.get("state");

@@ -1,3 +1,4 @@
+import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
 import { fetchSchwabAccounts } from "@/lib/portfolio/schwabTransactions";
 
 /**
@@ -8,6 +9,9 @@ import { fetchSchwabAccounts } from "@/lib/portfolio/schwabTransactions";
  * either way -- offer the sign-in.
  */
 export async function GET() {
+  const guard = await requireSchwabAccess();
+  if (!guard.ok) return guard.response;
+
   const accounts = await fetchSchwabAccounts();
   if (!accounts) {
     return Response.json({ error: "not_connected" }, { status: 404, headers: { "Cache-Control": "no-store" } });

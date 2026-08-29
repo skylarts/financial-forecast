@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { authorizeUrl, schwabConfigured, STATE_COOKIE } from "@/lib/portfolio/schwabAuth";
+import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
 
 /**
  * Starts the Schwab consent flow.
@@ -16,6 +17,11 @@ export async function GET(request: Request) {
   if (!schwabConfigured()) {
     return NextResponse.redirect(`${origin}/portfolio?schwab=unconfigured`);
   }
+
+  // A connection has to belong to someone. Starting the flow while signed out
+  // on a deployment would mint a credential with nowhere to put it.
+  const guard = await requireSchwabAccess();
+  if (!guard.ok) return NextResponse.redirect(`${origin}/portfolio?schwab=sign_in_required`);
 
   // A single-use value echoed back by Schwab and compared on return, so a
   // callback the user never initiated cannot bind someone else's brokerage

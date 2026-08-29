@@ -49,6 +49,14 @@ export function SchwabConnection() {
             you sign in again.
           </span>
         </>
+      ) : status.signInRequired ? (
+        <>
+          <span className="text-dim">Using the public price feed</span>
+          <span className="text-dim-2">
+            — sign in to this app to use your Schwab connection. A brokerage connection belongs to
+            an account, so there is nobody to attach it to until you do.
+          </span>
+        </>
       ) : (
         <>
           <span className="text-dim">Using the public price feed</span>
@@ -57,12 +65,17 @@ export function SchwabConnection() {
           </span>
         </>
       )}
-      <a
-        href="/api/schwab/authorize"
-        className="rounded border border-border px-2 py-0.5 text-[12px] text-foreground hover:border-accent"
-      >
-        {status.connected ? "Sign in again" : "Connect Schwab"}
-      </a>
+      {/* No Connect button while signed out: starting the flow would mint a
+          credential with nowhere to put it, and failing at the end of a
+          brokerage login is a poor way to learn that. */}
+      {!status.signInRequired && (
+        <a
+          href="/api/schwab/authorize"
+          className="rounded border border-border px-2 py-0.5 text-[12px] text-foreground hover:border-accent"
+        >
+          {status.connected ? "Sign in again" : "Connect Schwab"}
+        </a>
+      )}
     </div>
   );
 }

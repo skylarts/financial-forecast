@@ -63,6 +63,32 @@ and manual CSV/statement import works exactly as it always has.
 3. Put the app key and secret in `.env.local` (see `.env.example`).
 4. Open the portfolio and use **Connect Schwab** in the banner.
 
+### Hosting it for more than one person
+
+A Schwab connection belongs to a person, not to the deployment. Where Supabase
+is configured, each user's token is stored in their own `schwab_connections`
+row, encrypted, and reachable only by them -- row-level security enforces that
+in the database, so a route that forgets to scope its query still cannot return
+someone else's credential. Every Schwab route requires a signed-in user.
+
+The single-user file under `data/` is only used when Supabase is not configured
+at all, which is the same condition under which this app has no login. As soon
+as there is a Supabase project, an unauthenticated request is refused rather
+than falling back to that file -- otherwise it would be one shared brokerage
+connection handed to every visitor.
+
+To deploy:
+
+1. Run `supabase/schwab_connections.sql` in the Supabase SQL editor.
+2. Set `SCHWAB_ENCRYPTION_KEY` (`openssl rand -hex 32`). Connecting is refused
+   without it rather than storing a brokerage token in plaintext.
+3. Set `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, and a `SCHWAB_CALLBACK_URL` on
+   the production domain, and register that callback on the Schwab app.
+
+Note that Schwab requires **commercial approval** before an app may connect
+*other people's* accounts. Without it, each user must register their own
+individual Schwab app and supply their own key and secret.
+
 **Schwab connections expire after seven days.** The refresh token cannot be
 renewed programmatically — Schwab requires a human to sign in again. The banner
 starts asking two days out; if it lapses, prices fall back to the public feed

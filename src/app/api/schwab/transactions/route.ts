@@ -1,7 +1,12 @@
+import { requireSchwabAccess } from "@/lib/portfolio/schwabGuard";
 import { fetchSchwabTransactions, MAX_RANGE_DAYS } from "@/lib/portfolio/schwabTransactions";
 
 /** Transactions for one account over a window, as ledger-shaped rows. */
 export async function GET(request: Request) {
+  // Before anything else: this returns a full trading history.
+  const guard = await requireSchwabAccess();
+  if (!guard.ok) return guard.response;
+
   const params = new URL(request.url).searchParams;
   const account = (params.get("account") ?? "").trim();
   if (!account) {

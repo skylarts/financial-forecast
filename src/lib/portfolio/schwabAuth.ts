@@ -1,5 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readTokens, storageMode, writeTokens, type StoredTokens } from "./schwabTokenStore";
 
 /**
  * OAuth against Schwab's developer platform, shared by every Schwab-backed
@@ -26,27 +25,21 @@ const ACCESS_TOKEN_TTL_MS = 25 * 60 * 1000;
 /** Schwab's fixed refresh-token lifetime. Not configurable, not extendable. */
 export const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * Where the refresh token is kept.
- *
- * A file rather than an env var because the token rotates on a weekly cycle
- * and an env var would mean editing `.env.local` and restarting the server
- * every time. Under `data/`, which is already gitignored for exactly this
- * class of secret.
- */
-const TOKEN_PATH = join(process.cwd(), "data", "schwab-tokens.json");
-
-interface StoredTokens {
-  refreshToken: string;
-  /** Epoch ms, used to tell the user when they will next have to re-approve. */
-  obtainedAt: number;
-}
-
 export interface SchwabStatus {
   /** App key and secret are present -- the integration is installed. */
   configured: boolean;
   /** A refresh token is on hand and has not aged out. */
   connected: boolean;
+  /**
+   * The integration is installed, but this request has no identity to attach
+   * a connection to -- Supabase is configured and nobody is signed in.
+   *
+   * Reported separately from `connected: false` because the two need opposite
+   * responses and look identical otherwise: one is "connect Schwab", the other
+   * is "sign in first". Without this the app silently reverts to the public
+   * price feed and offers a Connect button that cannot succeed.
+   */
+  signInRequired: boolean;
   /** ISO timestamp the refresh token dies, or null when not connected. */
   expiresAt: string | null;
   /** Whole days left before a re-login is required, floored at 0. */
@@ -79,59 +72,24 @@ export function schwabConfigured(): boolean {
 /* Token storage                                                              */
 /* -------------------------------------------------------------------------- */
 
-/**
- * The stored token, cached in process.
- *
- * `undefined` means "not read from disk yet"; `null` means "read, and there is
- * nothing there". Without that distinction every unconnected install would hit
- * the filesystem on every quote.
- */
-let stored: StoredTokens | null | undefined;
-
-async function readStored(): Promise<StoredTokens | null> {
-  if (stored !== undefined) return stored;
-  try {
-    const parsed = JSON.parse(await readFile(TOKEN_PATH, "utf8")) as Partial<StoredTokens>;
-    stored =
-      typeof parsed.refreshToken === "string" && typeof parsed.obtainedAt === "number"
-        ? { refreshToken: parsed.refreshToken, obtainedAt: parsed.obtainedAt }
-        : null;
-  } catch {
-    // Missing or unreadable file is the ordinary unconnected case.
-    stored = null;
-  }
-  return stored;
-}
-
-async function writeStored(tokens: StoredTokens | null): Promise<void> {
-  stored = tokens;
-  if (tokens === null) {
-    await writeFile(TOKEN_PATH, "", { mode: 0o600 }).catch(() => {});
-    return;
-  }
-  await mkdir(dirname(TOKEN_PATH), { recursive: true });
-  // Written to a sibling and renamed so a crash mid-write cannot leave a
-  // half-written token behind, which would read back as a disconnect and cost
-  // the user a re-login they didn't need.
-  const temp = `${TOKEN_PATH}.${process.pid}.tmp`;
-  await writeFile(temp, JSON.stringify(tokens), { mode: 0o600 });
-  await rename(temp, TOKEN_PATH);
-}
-
 function isLive(tokens: StoredTokens | null): tokens is StoredTokens {
   return tokens !== null && Date.now() - tokens.obtainedAt < REFRESH_TOKEN_TTL_MS;
 }
 
 export async function schwabStatus(): Promise<SchwabStatus> {
   const configured = schwabConfigured();
-  const tokens = configured ? await readStored() : null;
+  const { mode } = await storageMode();
+  const signInRequired = configured && mode === "none";
+
+  const tokens = configured && !signInRequired ? await readTokens() : null;
   if (!isLive(tokens)) {
-    return { configured, connected: false, expiresAt: null, daysRemaining: null };
+    return { configured, connected: false, signInRequired, expiresAt: null, daysRemaining: null };
   }
   const expiry = tokens.obtainedAt + REFRESH_TOKEN_TTL_MS;
   return {
     configured,
     connected: true,
+    signInRequired: false,
     expiresAt: new Date(expiry).toISOString(),
     daysRemaining: Math.max(0, Math.floor((expiry - Date.now()) / (24 * 60 * 60 * 1000))),
   };
@@ -139,8 +97,9 @@ export async function schwabStatus(): Promise<SchwabStatus> {
 
 /** Forgets the stored token, so the next request falls back to Yahoo. */
 export async function disconnectSchwab(): Promise<void> {
-  accessToken = null;
-  await writeStored(null);
+  const key = await cacheKey();
+  if (key) accessTokens.delete(key);
+  await writeTokens(null);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -211,12 +170,15 @@ export async function exchangeCode(code: string): Promise<boolean> {
   const token = await postToken(body);
   if (!token?.refresh_token) return false;
 
-  await writeStored({ refreshToken: token.refresh_token, obtainedAt: Date.now() });
+  // A refused write is a real failure, not something to paper over: it means
+  // there is nowhere safe to put this credential -- no signed-in user, or no
+  // encryption key on a shared database. Reporting success would leave the
+  // user believing they had connected something that was never stored.
+  const saved = await writeTokens({ refreshToken: token.refresh_token, obtainedAt: Date.now() });
+  if (!saved) return false;
+
   if (token.access_token) {
-    accessToken = {
-      value: token.access_token,
-      expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS,
-    };
+    await cacheAccessToken(token.access_token);
   }
   return true;
 }
@@ -225,11 +187,33 @@ export async function exchangeCode(code: string): Promise<boolean> {
 /* Access tokens                                                              */
 /* -------------------------------------------------------------------------- */
 
-let accessToken: { value: string; expiresAt: number } | null = null;
-let refreshInFlight: Promise<string | null> | null = null;
+/**
+ * Access tokens, cached per connection rather than per process.
+ *
+ * The single-token cache this replaced was correct for exactly one user and
+ * silently wrong for two: on a deployment it would have handed whoever asked
+ * next the token belonging to whoever refreshed last -- one person's browser
+ * quietly reading another person's brokerage. Keyed by the owner so that
+ * cannot happen, and the same key gates the in-flight refresh.
+ */
+const accessTokens = new Map<string, { value: string; expiresAt: number }>();
+const refreshesInFlight = new Map<string, Promise<string | null>>();
+
+/** Cache key for the current caller, or null when no connection is reachable. */
+async function cacheKey(): Promise<string | null> {
+  const { mode, userId } = await storageMode();
+  if (mode === "supabase" && userId) return `user:${userId}`;
+  if (mode === "file") return "local";
+  return null;
+}
+
+async function cacheAccessToken(value: string): Promise<void> {
+  const key = await cacheKey();
+  if (key) accessTokens.set(key, { value, expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS });
+}
 
 async function refreshAccessToken(): Promise<string | null> {
-  const tokens = await readStored();
+  const tokens = await readTokens();
   if (!isLive(tokens)) return null;
 
   const token = await postToken(
@@ -240,17 +224,17 @@ async function refreshAccessToken(): Promise<string | null> {
     // A refresh that fails inside the seven days is usually the user having
     // revoked the app at Schwab. Drop the stored token so the UI says
     // "disconnected" instead of retrying a dead credential every 30 minutes.
-    await writeStored(null);
+    await writeTokens(null);
     return null;
   }
 
   // Schwab normally hands back the same refresh token, but persist it when it
   // differs so a rotation doesn't silently strand the connection.
   if (token.refresh_token && token.refresh_token !== tokens.refreshToken) {
-    await writeStored({ refreshToken: token.refresh_token, obtainedAt: tokens.obtainedAt });
+    await writeTokens({ refreshToken: token.refresh_token, obtainedAt: tokens.obtainedAt });
   }
 
-  accessToken = { value: token.access_token, expiresAt: Date.now() + ACCESS_TOKEN_TTL_MS };
+  await cacheAccessToken(token.access_token);
   return token.access_token;
 }
 
@@ -263,22 +247,32 @@ async function refreshAccessToken(): Promise<string | null> {
  */
 export async function schwabAccessToken(): Promise<string | null> {
   if (!schwabConfigured()) return null;
-  if (accessToken && Date.now() < accessToken.expiresAt) return accessToken.value;
+
+  const key = await cacheKey();
+  // No key means there is no connection this caller may use -- a deployment
+  // with nobody signed in. Falling back to any stored token here is exactly
+  // the bug that would serve one person's brokerage to another.
+  if (!key) return null;
+
+  const cached = accessTokens.get(key);
+  if (cached && Date.now() < cached.expiresAt) return cached.value;
 
   // A burst of quote requests arriving on a cold token must produce one
   // refresh, not one per symbol -- Schwab rate-limits the token endpoint
-  // harder than the data endpoints.
-  if (!refreshInFlight) {
-    refreshInFlight = refreshAccessToken().finally(() => {
-      refreshInFlight = null;
+  // harder than the data endpoints. Held per connection so one user's refresh
+  // is never awaited by another.
+  let inFlight = refreshesInFlight.get(key);
+  if (!inFlight) {
+    inFlight = refreshAccessToken().finally(() => {
+      refreshesInFlight.delete(key);
     });
+    refreshesInFlight.set(key, inFlight);
   }
-  return refreshInFlight;
+  return inFlight;
 }
 
 /** Test seam: drops in-process caches so a test can start from a clean slate. */
 export function resetSchwabAuthCache(): void {
-  stored = undefined;
-  accessToken = null;
-  refreshInFlight = null;
+  accessTokens.clear();
+  refreshesInFlight.clear();
 }

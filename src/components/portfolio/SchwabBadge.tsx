@@ -41,7 +41,9 @@ export function SchwabBadge() {
     ? `Prices are coming from your Schwab account. The sign-in expires in ${
         days === null ? "under a week" : expiryWording(days)
       }${status.expiresAt ? ` (${new Date(status.expiresAt).toLocaleDateString()})` : ""}, after which prices fall back to the public feed until you sign in again.`
-    : "Prices are coming from the public feed. Connect Schwab to use your broker's own prices.";
+    : status.signInRequired
+      ? "Prices are coming from the public feed. Sign in to this app to use your Schwab connection."
+      : "Prices are coming from the public feed. Connect Schwab to use your broker's own prices.";
 
   return (
     <span
