@@ -883,6 +883,7 @@ export function PortfolioApp() {
         <ImportDialog
           accounts={portfolio.accounts}
           existingTransactions={portfolio.transactions}
+          securities={portfolio.securities}
           onImport={handleImport}
           onClose={() => setImporting(false)}
         />
