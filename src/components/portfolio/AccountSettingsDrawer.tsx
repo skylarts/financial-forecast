@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Account } from "@/domain";
 import type { Person } from "@/domain/household";
 import {
@@ -30,6 +30,53 @@ import type { SchwabAccountOption } from "@/lib/portfolio/useSchwabAccounts";
 
 const INPUT =
   "w-full rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none focus:border-accent";
+
+const COMMIT_DEBOUNCE_MS = 400;
+
+/**
+ * Lets a text/number field feel instant while the value behind it is
+ * expensive to write -- committing an account edit replays lot assignment
+ * over every transaction in the ledger, so firing that on each keystroke is
+ * what made typing here lag many seconds behind the cursor. Keystrokes update
+ * local state immediately; `commit` only runs after a pause, or right away on
+ * blur or unmount so nothing typed is lost by closing the drawer quickly.
+ */
+function useDebouncedField<T>(value: T, commit: (next: T) => void, delay = COMMIT_DEBOUNCE_MS) {
+  const [local, setLocal] = useState(value);
+  const localRef = useRef(value);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+
+  useEffect(() => {
+    localRef.current = value;
+    setLocal(value);
+  }, [value]);
+
+  const flush = useCallback(() => {
+    if (timer.current === null) return;
+    clearTimeout(timer.current);
+    timer.current = null;
+    commitRef.current(localRef.current);
+  }, []);
+
+  useEffect(() => flush, [flush]);
+
+  const onChange = useCallback(
+    (next: T) => {
+      localRef.current = next;
+      setLocal(next);
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        timer.current = null;
+        commitRef.current(next);
+      }, delay);
+    },
+    [delay],
+  );
+
+  return { value: local, onChange, flush };
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -92,6 +139,14 @@ export function AccountSettingsDrawer({
   const [parentError, setParentError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
+  const name = useDebouncedField(account.name, (value) => updateAccount(account.id, { name: value }));
+  const institution = useDebouncedField(account.institution, (value) =>
+    updateAccount(account.id, { institution: value }),
+  );
+  const openingCashBalance = useDebouncedField(account.openingCashBalance, (value) =>
+    updateAccount(account.id, { openingCashBalance: value }),
+  );
+
   const linked = forecastAccounts.find((a) => a.id === account.forecastAccountId) ?? null;
   // Only accounts that could legally take this one as a sleeve, so the list
   // cannot offer a choice that would just be rejected.
@@ -116,16 +171,18 @@ export function AccountSettingsDrawer({
         <Section title="Details">
           <Field label="Name">
             <input
-              value={account.name}
-              onChange={(e) => updateAccount(account.id, { name: e.target.value })}
+              value={name.value}
+              onChange={(e) => name.onChange(e.target.value)}
+              onBlur={name.flush}
               className={INPUT}
             />
           </Field>
           <Field label="Institution">
             <input
-              value={account.institution}
+              value={institution.value}
               placeholder="Charles Schwab, Empower, …"
-              onChange={(e) => updateAccount(account.id, { institution: e.target.value })}
+              onChange={(e) => institution.onChange(e.target.value)}
+              onBlur={institution.flush}
               className={INPUT}
             />
           </Field>
@@ -163,10 +220,9 @@ export function AccountSettingsDrawer({
           >
             <input
               type="number"
-              value={account.openingCashBalance}
-              onChange={(e) =>
-                updateAccount(account.id, { openingCashBalance: Number(e.target.value) || 0 })
-              }
+              value={openingCashBalance.value}
+              onChange={(e) => openingCashBalance.onChange(Number(e.target.value) || 0)}
+              onBlur={openingCashBalance.flush}
               className={`${INPUT} tabular-nums`}
             />
           </Field>
