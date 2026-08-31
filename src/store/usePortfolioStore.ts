@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import {
   normalizeSymbol,
@@ -20,8 +20,14 @@ import { accountFamilyIds, hasSleeves } from "@/lib/portfolio/accountTree";
 import { splitTransactionByFraction } from "@/lib/portfolio/splitTransaction";
 import { sleeveTypeFor, TAX_SOURCE_SLEEVES } from "@/lib/portfolio/taxSource";
 import { buildLotLedger } from "@/engine/portfolio/lots";
+import { createPortfolioStorage } from "@/lib/portfolio/portfolioStorage";
 
-const STORAGE_KEY = "portfolio-tracker";
+/**
+ * Deliberately not the old `localStorage` key. The migration in
+ * `portfolioStorage` reads that one and clears it, and reusing the name would
+ * leave no way to tell a ledger that has already moved from one that hasn't.
+ */
+const STORAGE_KEY = "portfolio";
 
 /**
  * Everything a ledger passes through on its way into the store, whatever door
@@ -400,7 +406,7 @@ export const usePortfolioStore = create<PortfolioState>()(
     },
     {
       name: STORAGE_KEY,
-      storage: createJSONStorage(() => localStorage),
+      storage: createPortfolioStorage(),
       partialize: (state) => ({ portfolio: state.portfolio, lastSavedAt: state.lastSavedAt }),
       /**
        * Backfills lot ids and canonical symbols onto a ledger saved before
@@ -413,7 +419,25 @@ export const usePortfolioStore = create<PortfolioState>()(
         const merged = { ...current, ...(persisted as Partial<PortfolioState>) };
         return { ...merged, portfolio: tidy(merged.portfolio) };
       },
-      onRehydrateStorage: () => (state) => state?.setHasHydrated(true),
+      /**
+       * Marks hydration done whether or not it worked.
+       *
+       * `state` is undefined when rehydration threw -- a stored ledger the
+       * schema now rejects, a structured clone that failed to read back -- and
+       * the old `state?.setHasHydrated(true)` quietly did nothing in exactly
+       * that case. The whole UI waits on this flag, so the failure mode was an
+       * app stuck on "Loading..." forever with nothing in the console, which is
+       * indistinguishable from a hang. Starting empty is the honest outcome:
+       * the cloud copy still loads over it on sign-in, and a visible empty
+       * portfolio is something you can act on.
+       */
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.warn("Stored portfolio could not be read; starting empty.", error);
+        }
+        if (state) state.setHasHydrated(true);
+        else usePortfolioStore.setState({ hasHydrated: true });
+      },
     },
   ),
 );

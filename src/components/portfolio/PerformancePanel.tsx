@@ -31,6 +31,7 @@ import {
   type HoldingFacets,
 } from "./filters";
 import { BenchmarkPicker } from "./BenchmarkPicker";
+import { scopedTo } from "@/lib/portfolio/scope";
 
 const MAX_BENCHMARKS = 5;
 
@@ -210,7 +211,7 @@ export function PerformancePanel({
     () =>
       scopeAccountIds === null
         ? portfolio.transactions
-        : portfolio.transactions.filter((tx) => scopeAccountIds.includes(tx.accountId)),
+        : portfolio.transactions.filter(scopedTo(scopeAccountIds)),
     [portfolio.transactions, scopeAccountIds],
   );
 
@@ -249,7 +250,7 @@ export function PerformancePanel({
   const openingCash = useMemo(
     () =>
       portfolio.accounts
-        .filter((a) => scopeAccountIds === null || scopeAccountIds.includes(a.id))
+        .filter((a) => scopeAccountIds === null || new Set(scopeAccountIds).has(a.id))
         .reduce((sum, a) => sum + a.openingCashBalance, 0),
     [portfolio.accounts, scopeAccountIds],
   );

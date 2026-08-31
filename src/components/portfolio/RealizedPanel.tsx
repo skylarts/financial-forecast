@@ -16,6 +16,7 @@ import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { useSort, type SortAccessors } from "./useSort";
 import { SortHeader } from "./SortHeader";
+import { MoreRows, useRowWindow } from "./rowWindow";
 
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
@@ -111,6 +112,11 @@ export function RealizedPanel({
   }, [closedLots, search, outcome]);
 
   const sorted = useMemo(() => apply(filtered), [apply, filtered]);
+
+  // Realized lots grow without bound -- every sale a ledger has ever recorded
+  // stays here forever -- so this list is capped the same way the transaction
+  // table is.
+  const rowWindow = useRowWindow(sorted);
 
   const groups = useMemo(() => {
     if (grouping === "none") return [{ key: "", label: "", rows: sorted }];
@@ -259,7 +265,7 @@ export function RealizedPanel({
                           />
                         )}
                         {!collapsed &&
-                          group.rows.map((lot, i) => (
+                          group.rows.slice(0, rowWindow.limit(group.key)).map((lot, i) => (
                             <tr
                               key={`${lot.closeTxId}-${i}`}
                               onClick={() => onSelectSymbol(lot.symbol)}
@@ -281,6 +287,19 @@ export function RealizedPanel({
                               <td className={`${CELL} text-right text-dim`}>{lotTermLabel(lot)}</td>
                             </tr>
                           ))}
+                        {!collapsed && group.rows.length > rowWindow.limit(group.key) && (
+                          <tr>
+                            <td colSpan={9} className="px-3 py-2">
+                              <MoreRows
+                                shown={rowWindow.limit(group.key)}
+                                total={group.rows.length}
+                                noun="lot"
+                                onMore={(count) => rowWindow.more(count, group.key)}
+                                onAll={() => rowWindow.all(group.rows.length, group.key)}
+                              />
+                            </td>
+                          </tr>
+                        )}
                       </Fragment>
                     );
                   })}

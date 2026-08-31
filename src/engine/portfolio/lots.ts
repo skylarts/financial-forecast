@@ -291,10 +291,9 @@ function retireContracts(
     });
   }
 
-  open.set(
-    key,
-    lots.filter((lot) => lot.quantity > EPSILON),
-  );
+  // Depleted lots are left in place rather than filtered out. Every reader
+  // here already skips them on quantity, and rebuilding the array would
+  // invalidate the FIFO cursor `buildLotLedger` keeps into it.
 }
 
 /**
@@ -399,12 +398,8 @@ function applySpinoff(
     }
   }
 
-  if (retires) {
-    open.set(
-      key,
-      lots.filter((lot) => lot.quantity > EPSILON),
-    );
-  }
+  // Retired lots keep their place at zero quantity, for the same reason
+  // `retireContracts` leaves its own behind.
 }
 
 /**
@@ -422,7 +417,33 @@ function applySpinoff(
  * starts mid-stream is normal, and dropping the trade entirely would understate
  * proceeds far more badly than an overstated gain does.
  */
+/**
+ * Replays already done, keyed by the exact array that produced them.
+ *
+ * One change to the ledger used to replay it three times over: once in the
+ * store's `tidy` to fill in lot ids, once in `symbolsInPortfolio` to work out
+ * what to quote, and once more in `analyzePortfolio` to build the holdings.
+ * All three ask the same question of the same rows, so the second and third
+ * are free.
+ *
+ * Safe because this is a pure function of an array the app never mutates in
+ * place -- every store update builds a new one -- and because no consumer
+ * writes back to the lots it gets. Both halves of that have to stay true: a
+ * caller that mutated a returned `OpenLot` would corrupt every later read of
+ * the same ledger. `WeakMap` keeps entries only as long as the array is
+ * reachable, so there is nothing to evict.
+ */
+const ledgerCache = new WeakMap<readonly Transaction[], LotLedger>();
+
 export function buildLotLedger(transactions: readonly Transaction[]): LotLedger {
+  const cached = ledgerCache.get(transactions);
+  if (cached) return cached;
+  const built = buildLotLedgerUncached(transactions);
+  ledgerCache.set(transactions, built);
+  return built;
+}
+
+function buildLotLedgerUncached(transactions: readonly Transaction[]): LotLedger {
   const open = new Map<string, OpenLot[]>();
   const closedLots: ClosedLot[] = [];
   const warnings: LedgerWarning[] = [];
@@ -433,6 +454,19 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
   // shares, so there is nothing for either sale to confuse it with; keying
   // this globally was flagging accounts that could never collide.
   const issued = new Map<Id, Set<string>>();
+  /**
+   * Index of the oldest lot in each position's queue that may still hold
+   * shares. Everything before it is fully drawn down.
+   *
+   * Without this the ledger was quadratic in its own size: each disposal
+   * copied the position's entire open-lot array to pick a candidate from the
+   * front of it, and then rebuilt that array to drop what it had just
+   * depleted. A workplace account is the worst case for exactly that shape --
+   * years of per-paycheck purchases leave tens of thousands of open lots, and
+   * every rebalance sale walked all of them to take shares off the oldest two.
+   * Replaying 40k rows took 3.5 seconds; the cursor makes it linear.
+   */
+  const fifoCursor = new Map<string, number>();
 
   // A custody move is two legs of one non-event; cancelling them first keeps
   // the lots they would have churned exactly where they are.
@@ -537,30 +571,47 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
     // otherwise. Lots are appended in replay order, which is already
     // date-ascending, so the array itself is the FIFO queue.
     const namedIds = parseLotIds(tx.lotId);
-    const claimed = new Set<OpenLot>();
-    const candidates: OpenLot[] = [];
     const missing: string[] = [];
     let namedShares = 0;
 
-    for (const id of namedIds) {
-      const matches = lots.filter((lot) => lot.id === id && lot.quantity > EPSILON);
-      if (matches.length === 0) {
-        missing.push(id);
-        continue;
+    // Advance past lots earlier disposals already emptied, so the plain FIFO
+    // case reads the next live lot without touching the ones behind it.
+    let cursor = fifoCursor.get(key) ?? 0;
+    while (cursor < lots.length && lots[cursor].quantity <= EPSILON) cursor += 1;
+
+    /**
+     * The queue this disposal draws from, and where in it to start.
+     *
+     * A trade naming no lots -- which is nearly all of them, since brokerage
+     * exports carry no lot ids -- draws straight from the live array at the
+     * cursor and stops as soon as it has its shares. Only a trade that does
+     * name lots pays to materialize a reordered queue, and there the named
+     * lots go first with everything else still queued oldest-first behind
+     * them.
+     */
+    let candidates: OpenLot[] | null = null;
+    if (namedIds.length > 0) {
+      const claimed = new Set<OpenLot>();
+      candidates = [];
+      for (const id of namedIds) {
+        let found = false;
+        for (const lot of lots) {
+          if (lot.id !== id || lot.quantity <= EPSILON || claimed.has(lot)) continue;
+          found = true;
+          claimed.add(lot);
+          candidates.push(lot);
+          namedShares += lot.quantity;
+        }
+        if (!found) missing.push(id);
       }
-      for (const lot of matches) {
-        if (claimed.has(lot)) continue;
-        claimed.add(lot);
-        candidates.push(lot);
-        namedShares += lot.quantity;
+      // Anything the trade didn't name still queues up behind what it did. A
+      // lot that comes up short is a bookkeeping error worth flagging, but the
+      // shares did leave the account from somewhere, and drawing the rest from
+      // the next oldest lot is far closer to the truth than booking it at zero
+      // basis.
+      for (let i = cursor; i < lots.length; i += 1) {
+        if (!claimed.has(lots[i])) candidates.push(lots[i]);
       }
-    }
-    // Anything the trade didn't name still queues up behind what it did. A lot
-    // that comes up short is a bookkeeping error worth flagging, but the shares
-    // did leave the account from somewhere, and drawing the rest from the next
-    // oldest lot is far closer to the truth than booking it at zero basis.
-    for (const lot of lots) {
-      if (!claimed.has(lot)) candidates.push(lot);
     }
 
     if (missing.length > 0) {
@@ -589,7 +640,9 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
       });
     }
 
-    for (const lot of candidates) {
+    const queue = candidates ?? lots;
+    for (let i = candidates ? 0 : cursor; i < queue.length; i += 1) {
+      const lot = queue[i];
       if (remaining <= EPSILON) break;
       if (lot.quantity <= EPSILON) continue;
       const taken = Math.min(lot.quantity, remaining);
@@ -654,10 +707,10 @@ export function buildLotLedger(transactions: readonly Transaction[]): LotLedger 
       });
     }
 
-    open.set(
-      key,
-      lots.filter((lot) => lot.quantity > EPSILON),
-    );
+    // The cursor moves instead of the array: leaving depleted lots in place
+    // is what keeps a disposal from costing a full copy of the queue.
+    while (cursor < lots.length && lots[cursor].quantity <= EPSILON) cursor += 1;
+    fifoCursor.set(key, cursor);
   }
 
   const openLots = [...open.values()].flat().filter((lot) => lot.quantity > EPSILON);
