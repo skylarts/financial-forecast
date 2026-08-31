@@ -19,6 +19,7 @@ import {
   type TransactionType,
 } from "@/domain/portfolio";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
+import { scopedTo } from "@/lib/portfolio/scope";
 import { accountPath, accountTreeRows } from "@/lib/portfolio/accountTree";
 import { money, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Btn } from "@/components/ui/controls";
@@ -34,6 +35,7 @@ import {
   type GroupingOption,
 } from "./grouping";
 import { FilterStatus } from "./FilterStatus";
+import { MoreRows, useRowWindow } from "./rowWindow";
 
 type TxGrouping = "none" | "symbol" | "account" | "type" | "month";
 
@@ -446,7 +448,7 @@ export function TransactionsPanel({
     const exactTicker = tickers.includes(query) ? query : null;
 
     return portfolio.transactions
-      .filter((tx) => scopeAccountIds === null || scopeAccountIds.includes(tx.accountId))
+      .filter(scopeAccountIds === null ? () => true : scopedTo(scopeAccountIds))
       // One box covers both symbol and lot id. Generated ids lead with the
       // symbol, so a plain "VTI" still finds every VTI row and a full id
       // narrows to the purchase and the sales that drew on it -- which is the
@@ -480,6 +482,10 @@ export function TransactionsPanel({
 
     return buildGroups(rows, labelFor);
   }, [rows, grouping, accountNames]);
+
+  // Keyed on `rows`, so any filter, sort, or ledger change starts the table
+  // back at its first page instead of re-drawing a previous expansion.
+  const rowWindow = useRowWindow(rows);
 
   // Opens collapsed: picking a grouping here is asking for the subtotals --
   // the hundreds of underlying rows are what the grouping was meant to fold away.
@@ -806,7 +812,7 @@ export function TransactionsPanel({
                       />
                     )}
                     {!collapsed &&
-                      group.rows.map((tx: Transaction) =>
+                      group.rows.slice(0, rowWindow.limit(group.key)).map((tx: Transaction) =>
                         editingId === tx.id ? (
                         <tr key={tx.id}>
                           <td colSpan={10} className="p-0">
@@ -901,6 +907,18 @@ export function TransactionsPanel({
                         </tr>
                       ),
                       )}
+                    {!collapsed && group.rows.length > rowWindow.limit(group.key) && (
+                      <tr>
+                        <td colSpan={10} className="px-3 py-2">
+                          <MoreRows
+                            shown={rowWindow.limit(group.key)}
+                            total={group.rows.length}
+                            onMore={(count) => rowWindow.more(count, group.key)}
+                            onAll={() => rowWindow.all(group.rows.length, group.key)}
+                          />
+                        </td>
+                      </tr>
+                    )}
                   </Fragment>
                 );
               })}

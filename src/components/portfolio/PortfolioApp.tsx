@@ -287,13 +287,13 @@ export function PortfolioApp() {
    * Allocation -- neither of which carries a holding -- still lists its own
    * ledger without either panel having to hand one over.
    */
-  const scopedTransactions = useMemo(
-    () =>
-      scopeAccountIds === null
-        ? portfolio.transactions
-        : portfolio.transactions.filter((tx) => scopeAccountIds.includes(tx.accountId)),
-    [portfolio.transactions, scopeAccountIds],
-  );
+  const scopedTransactions = useMemo(() => {
+    if (scopeAccountIds === null) return portfolio.transactions;
+    // A Set, because this is asked once per transaction and the scope can name
+    // every account in the portfolio.
+    const ids = new Set(scopeAccountIds);
+    return portfolio.transactions.filter((tx) => ids.has(tx.accountId));
+  }, [portfolio.transactions, scopeAccountIds]);
 
   /**
    * Opens the detail drawer on a name, from wherever it was clicked.

@@ -12,6 +12,7 @@ import {
 import { money, percent, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { useMarketIndexes } from "@/store/useMarketIndexes";
+import { scopedTo } from "@/lib/portfolio/scope";
 import { Segmented } from "@/components/ui/controls";
 
 /** How many day movers the strip names before it runs out of room. */
@@ -134,7 +135,7 @@ export function SummaryCards({
     () =>
       scopeAccountIds === null
         ? portfolio.transactions
-        : portfolio.transactions.filter((tx) => scopeAccountIds.includes(tx.accountId)),
+        : portfolio.transactions.filter(scopedTo(scopeAccountIds)),
     [portfolio.transactions, scopeAccountIds],
   );
 

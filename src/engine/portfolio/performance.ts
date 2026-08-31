@@ -477,7 +477,8 @@ export function symbolsForWindow(
    *  treated as though it were never traded, so it's never fetched or priced. */
   symbols?: ReadonlySet<string>,
 ): string[] {
-  const scoped = (accountIds ? transactions.filter((tx) => accountIds.includes(tx.accountId)) : transactions).filter(
+  const scopeIds = accountIds ? new Set(accountIds) : null;
+  const scoped = (scopeIds ? transactions.filter((tx) => scopeIds.has(tx.accountId)) : transactions).filter(
     (tx) => symbols === undefined || (tx.symbol !== null && symbols.has(normalizeSymbol(tx.symbol))),
   );
   const ordered = [...scoped].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
@@ -571,7 +572,8 @@ export function buildPerformanceSeries(
   options: SeriesOptions,
 ): PerformanceSeries {
   const { from, to, accountIds, splits, openingCash = 0, symbols } = options;
-  const scoped = (accountIds ? transactions.filter((tx) => accountIds.includes(tx.accountId)) : [...transactions]).filter(
+  const scopeIds = accountIds ? new Set(accountIds) : null;
+  const scoped = (scopeIds ? transactions.filter((tx) => scopeIds.has(tx.accountId)) : [...transactions]).filter(
     (tx) => symbols === undefined || (tx.symbol !== null && symbols.has(normalizeSymbol(tx.symbol))),
   );
   const ordered = [...scoped].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));

@@ -118,8 +118,29 @@ export type Security = z.infer<typeof securitySchema>;
  * three ways a statement might spell one contract all land on the same holding
  * and all reach the quote feed under the name it knows.
  */
+/**
+ * Memoized because this sits under every hot loop in the app and is far more
+ * expensive than it looks: canonicalizing runs a trim, an upper-case, a
+ * whitespace collapse and a full option-contract parse, and the engine calls
+ * it once per transaction per holding. A ledger only ever contains a few
+ * hundred distinct spellings, so the cache is small and effectively permanent.
+ */
+const normalized = new Map<string, string>();
+
+/**
+ * Guards against a pathological ledger (or a fuzz test) growing the cache
+ * without bound. Clearing wholesale rather than evicting one entry keeps this
+ * free in the normal case, where the ceiling is never reached.
+ */
+const NORMALIZE_CACHE_LIMIT = 50_000;
+
 export function normalizeSymbol(raw: string): string {
-  return canonicalizeSymbol(raw);
+  const hit = normalized.get(raw);
+  if (hit !== undefined) return hit;
+  const value = canonicalizeSymbol(raw);
+  if (normalized.size >= NORMALIZE_CACHE_LIMIT) normalized.clear();
+  normalized.set(raw, value);
+  return value;
 }
 
 /**

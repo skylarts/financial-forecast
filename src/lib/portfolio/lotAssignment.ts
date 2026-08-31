@@ -35,6 +35,21 @@ function closesRealLot(tx: Transaction): boolean {
  * match when the purchases behind it change.
  */
 export function assignLotIds(transactions: Transaction[]): Transaction[] {
+  // Once every row carries an id there is nothing here to do, and the ledger
+  // replay below -- the expensive half of this function -- can be skipped
+  // outright. That is the steady state: the store re-runs this after every
+  // single mutation, and all but the first pass over a given ledger has
+  // nothing left to fill in.
+  let needsWork = false;
+  for (const tx of transactions) {
+    if (tx.lotId !== null) continue;
+    if (opensRealLot(tx) || closesRealLot(tx)) {
+      needsWork = true;
+      break;
+    }
+  }
+  if (!needsWork) return transactions;
+
   const minter = createLotIdMinter(transactions.flatMap((tx) => parseLotIds(tx.lotId)));
   const assigned = new Map<string, string>();
 

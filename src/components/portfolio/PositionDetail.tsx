@@ -11,6 +11,7 @@ import { rollUpBySymbol } from "@/engine/portfolio/bySymbol";
 import { lotTermLabel, money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Segmented } from "@/components/ui/controls";
 import type { PricePoint } from "./PriceChart";
+import { MoreRows, useRowWindow } from "./rowWindow";
 
 /**
  * The Holdings tab -- almost always the first thing this page shows -- opens
@@ -186,6 +187,14 @@ export function PositionDetail({
         .sort((a, b) => (a.acquiredDate < b.acquiredDate ? -1 : 1)),
     [openHoldings],
   );
+
+  // Three independent lists behind one holding, each windowed on its own. The
+  // open-lot list is the one that forced this: a fund bought every payday for
+  // fifteen years has tens of thousands of open lots, and drawing them all was
+  // enough on its own to hang the drawer open.
+  const openWindow = useRowWindow(openLots);
+  const closedWindow = useRowWindow(lotsClosed);
+  const txWindow = useRowWindow(txs);
 
   // A custom window is served by clipping the full history rather than by
   // asking the feed for arbitrary dates: the feed only speaks in named ranges,
@@ -439,7 +448,7 @@ export function PositionDetail({
                     </tr>
                   </thead>
                   <tbody>
-                    {openLots.map((lot) => {
+                    {openLots.slice(0, openWindow.limit()).map((lot) => {
                       const value = price0 === null ? lot.costBasis : lot.quantity * price0;
                       const gain = value - lot.costBasis;
                       const heldSince = new Date(`${lot.acquiredDate}T00:00:00`);
@@ -468,6 +477,19 @@ export function PositionDetail({
                         </tr>
                       );
                     })}
+                  {openLots.length > openWindow.limit() && (
+                    <tr>
+                      <td colSpan={9} className="px-3 py-2">
+                        <MoreRows
+                          shown={openWindow.limit()}
+                          total={openLots.length}
+                          noun="lot"
+                          onMore={(count) => openWindow.more(count)}
+                          onAll={() => openWindow.all(openLots.length)}
+                        />
+                      </td>
+                    </tr>
+                  )}
                   </tbody>
                 </table>
               </div>
@@ -493,7 +515,7 @@ export function PositionDetail({
                     </tr>
                   </thead>
                   <tbody>
-                    {lotsClosed.map((lot, i) => (
+                    {lotsClosed.slice(0, closedWindow.limit()).map((lot, i) => (
                       <tr key={`${lot.closeTxId}-${i}`} className="border-b border-border-soft">
                         <td className={`${CELL} text-left text-dim`}>{shortDate(lot.acquiredDate)}</td>
                         <td className={`${CELL} text-left text-dim`}>{shortDate(lot.disposedDate)}</td>
@@ -518,6 +540,19 @@ export function PositionDetail({
                         <td className={`${CELL} text-right text-dim`}>{lotTermLabel(lot)}</td>
                       </tr>
                     ))}
+                  {lotsClosed.length > closedWindow.limit() && (
+                    <tr>
+                      <td colSpan={9} className="px-3 py-2">
+                        <MoreRows
+                          shown={closedWindow.limit()}
+                          total={lotsClosed.length}
+                          noun="lot"
+                          onMore={(count) => closedWindow.more(count)}
+                          onAll={() => closedWindow.all(lotsClosed.length)}
+                        />
+                      </td>
+                    </tr>
+                  )}
                   </tbody>
                 </table>
               </div>
@@ -539,7 +574,7 @@ export function PositionDetail({
                   </tr>
                 </thead>
                 <tbody>
-                  {txs.map((tx) => (
+                  {txs.slice(0, txWindow.limit()).map((tx) => (
                     <tr key={tx.id} className="border-b border-border-soft">
                       <td className={`${CELL} text-left text-dim`}>{shortDate(tx.date)}</td>
                       <td className={`${CELL} text-left text-foreground`}>
@@ -561,7 +596,20 @@ export function PositionDetail({
                       </td>
                     </tr>
                   ))}
-                </tbody>
+                {txs.length > txWindow.limit() && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-2">
+                        <MoreRows
+                          shown={txWindow.limit()}
+                          total={txs.length}
+                          noun="transaction"
+                          onMore={(count) => txWindow.more(count)}
+                          onAll={() => txWindow.all(txs.length)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </tbody>
               </table>
             </div>
           </>

@@ -272,17 +272,63 @@ export function explodeExposures(holdings: readonly Holding[]): ExposureRow[] {
 
 const DAYS_PER_YEAR = 365;
 
-function daysBetween(from: ISODate, to: ISODate): number {
-  const a = new Date(`${from}T00:00:00`).getTime();
-  const b = new Date(`${to}T00:00:00`).getTime();
-  return (b - a) / 86_400_000;
+/**
+ * Days since the epoch for an ISO date, without constructing a `Date`.
+ *
+ * This is the hot path of every return figure in the app: the bisection below
+ * evaluates its whole flow series up to 200 times, so a `new Date(string)` per
+ * flow per iteration meant millions of string parses to answer one number --
+ * on a large ledger it was seconds of blocked main thread, and it dominated
+ * every render of the holdings table.
+ *
+ * Reading the three fields directly and going through `Date.UTC` also drops
+ * the DST artifact the old local-midnight parse carried, where a window
+ * spanning a clock change measured as 0.958 or 1.042 days instead of 1.
+ */
+function daysFromEpoch(date: ISODate): number {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  return Date.UTC(year, month - 1, day) / 86_400_000;
 }
 
-function npv(flows: readonly { date: ISODate; amount: number }[], rate: number, start: ISODate) {
-  return flows.reduce((sum, flow) => {
-    const years = daysBetween(start, flow.date) / DAYS_PER_YEAR;
-    return sum + flow.amount / Math.pow(1 + rate, years);
-  }, 0);
+/**
+ * Flows folded onto one entry per date, measured in years from the first.
+ *
+ * Discounting depends only on *when* a flow lands, so flows sharing a date
+ * discount by the same factor and can be summed before the bisection rather
+ * than during each of its iterations. That is exact arithmetic, not an
+ * approximation -- and on a ledger that buys fifteen funds every payday it
+ * collapses the series an order of magnitude before any work is done on it.
+ */
+function discountablePoints(
+  flows: readonly { date: ISODate; amount: number }[],
+): { years: Float64Array; amounts: Float64Array } {
+  const byDate = new Map<number, number>();
+  for (const flow of flows) {
+    if (flow.amount === 0) continue;
+    const day = daysFromEpoch(flow.date);
+    byDate.set(day, (byDate.get(day) ?? 0) + flow.amount);
+  }
+
+  const days = [...byDate.keys()].sort((a, b) => a - b);
+  const start = days[0] ?? 0;
+  const years = new Float64Array(days.length);
+  const amounts = new Float64Array(days.length);
+  for (let i = 0; i < days.length; i += 1) {
+    years[i] = (days[i] - start) / DAYS_PER_YEAR;
+    amounts[i] = byDate.get(days[i]) ?? 0;
+  }
+  return { years, amounts };
+}
+
+function npvAt(years: Float64Array, amounts: Float64Array, rate: number): number {
+  const base = 1 + rate;
+  let sum = 0;
+  for (let i = 0; i < years.length; i += 1) {
+    sum += amounts[i] / Math.pow(base, years[i]);
+  }
+  return sum;
 }
 
 /**
@@ -295,21 +341,30 @@ function npv(flows: readonly { date: ISODate; amount: number }[], rate: number, 
  * paid out (or only ever paid in) has no rate of return to find.
  */
 export function xirr(flows: readonly { date: ISODate; amount: number }[]): number | null {
-  const meaningful = flows.filter((f) => f.amount !== 0);
-  if (meaningful.length < 2) return null;
-  if (!meaningful.some((f) => f.amount > 0) || !meaningful.some((f) => f.amount < 0)) return null;
+  let positives = false;
+  let negatives = false;
+  let meaningful = 0;
+  for (const flow of flows) {
+    if (flow.amount === 0) continue;
+    meaningful += 1;
+    if (flow.amount > 0) positives = true;
+    else negatives = true;
+  }
+  if (meaningful < 2 || !positives || !negatives) return null;
 
-  const sorted = [...meaningful].sort((a, b) => (a.date < b.date ? -1 : 1));
-  const start = sorted[0].date;
+  const { years, amounts } = discountablePoints(flows);
+  // Flows that cancelled exactly against same-day opposites leave nothing to
+  // discount, and a single point can never cross zero.
+  if (years.length < 2) return null;
 
   let low = -0.9999;
   let high = 10;
-  let lowValue = npv(sorted, low, start);
-  if (lowValue * npv(sorted, high, start) > 0) return null;
+  let lowValue = npvAt(years, amounts, low);
+  if (lowValue * npvAt(years, amounts, high) > 0) return null;
 
   for (let i = 0; i < 200; i += 1) {
     const mid = (low + high) / 2;
-    const midValue = npv(sorted, mid, start);
+    const midValue = npvAt(years, amounts, mid);
     if (Math.abs(midValue) < 1e-7) return mid;
     if (lowValue * midValue < 0) {
       high = mid;
@@ -411,11 +466,61 @@ export function analyzePortfolio(
   options: { accountIds?: readonly Id[]; asOf?: ISODate } = {},
 ): PortfolioAnalysis {
   const asOf = options.asOf ?? todayIso();
-  const scope = options.accountIds;
-  const inScope = (accountId: Id) => !scope || scope.includes(accountId);
+  // A Set rather than the caller's array: this is asked once per transaction,
+  // so a linear scan of the scope turned every read of the ledger into a
+  // product of the two.
+  const scope = options.accountIds ? new Set(options.accountIds) : null;
+  const inScope = (accountId: Id) => !scope || scope.has(accountId);
 
-  const transactions = portfolio.transactions.filter((tx) => inScope(tx.accountId));
+  // Passed straight through when nothing is filtered out, so the replay below
+  // reuses the one the store and the quote prefetch already built rather than
+  // repeating it against a copy that only differs by identity.
+  const transactions = scope
+    ? portfolio.transactions.filter((tx) => inScope(tx.accountId))
+    : portfolio.transactions;
   const { openLots, closedLots, warnings } = buildLotLedger(transactions);
+
+  const currentYearPrefix = asOf.slice(0, 4);
+
+  /**
+   * The ledger indexed the three ways the holdings loop below needs to read
+   * it, in one pass.
+   *
+   * Each holding used to re-scan every transaction twice and every closed lot
+   * once to find its own rows, which is a product of two things that both grow
+   * with the ledger -- and each of those scans re-normalized the symbol of
+   * every transaction it rejected. Building the buckets up front costs one
+   * pass and turns each holding's lookup into a map hit.
+   */
+  const txsByPosition = new Map<string, Transaction[]>();
+  const incomeByPosition = new Map<string, number>();
+  let income = 0;
+  let incomeYtd = 0;
+  for (const tx of transactions) {
+    const isIncome = tx.type === "dividend" || tx.type === "interest";
+    if (isIncome) {
+      // Read off the ledger directly, not summed from `holdings` -- a holding
+      // exists only for a symbol still open, so a position closed out entirely
+      // would drop every dividend it ever paid.
+      const flow = signedCashFlow(tx);
+      income += flow;
+      if (tx.date.startsWith(currentYearPrefix)) incomeYtd += flow;
+    }
+    if (tx.symbol === null) continue;
+    const key = `${tx.accountId}::${normalizeSymbol(tx.symbol)}`;
+    const bucket = txsByPosition.get(key);
+    if (bucket) bucket.push(tx);
+    else txsByPosition.set(key, [tx]);
+    if (isIncome) incomeByPosition.set(key, (incomeByPosition.get(key) ?? 0) + signedCashFlow(tx));
+  }
+
+  /** Taxable realized gain per account/symbol/side, indexed the same way. */
+  const realizedByPosition = new Map<string, number>();
+  for (const lot of closedLots) {
+    if (!lot.taxable) continue;
+    const key = `${lot.accountId}::${lot.symbol}::${lot.side}`;
+    realizedByPosition.set(key, (realizedByPosition.get(key) ?? 0) + lot.gain);
+  }
 
   const securities = new Map(portfolio.securities.map((s) => [normalizeSymbol(s.symbol), s]));
   const accountNames = new Map(portfolio.accounts.map((a) => [a.id, a.name]));
@@ -464,30 +569,14 @@ export function analyzePortfolio(
 
     // Only the transactions on this side belong to this position -- otherwise a
     // symbol held both long and short would double-count its own history.
-    const positionTxs = transactions.filter(
-      (tx) =>
-        tx.accountId === accountId &&
-        tx.symbol !== null &&
-        normalizeSymbol(tx.symbol) === symbol &&
-        (opensLotOn(tx.type) === side || closesLotOn(tx.type) === side),
+    const positionKeyBase = `${accountId}::${symbol}`;
+    const positionTxs = (txsByPosition.get(positionKeyBase) ?? []).filter(
+      (tx) => opensLotOn(tx.type) === side || closesLotOn(tx.type) === side,
     );
-    const realizedGain = closedLots
-      .filter(
-        (lot) => lot.taxable && lot.accountId === accountId && lot.symbol === symbol && lot.side === side,
-      )
-      .reduce((sum, lot) => sum + lot.gain, 0);
+    const realizedGain = realizedByPosition.get(`${positionKeyBase}::${side}`) ?? 0;
     // Dividends follow the shares, so they land on the long side. A short pays
     // them out instead, which shows up as its own transaction.
-    const income = transactions
-      .filter(
-        (tx) =>
-          tx.accountId === accountId &&
-          tx.symbol !== null &&
-          normalizeSymbol(tx.symbol) === symbol &&
-          side === "long" &&
-          (tx.type === "dividend" || tx.type === "interest"),
-      )
-      .reduce((sum, tx) => sum + signedCashFlow(tx), 0);
+    const positionIncome = side === "long" ? incomeByPosition.get(positionKeyBase) ?? 0 : 0;
 
     holdings.push({
       key,
@@ -511,8 +600,8 @@ export function analyzePortfolio(
       dayChangePct,
       weight: 0,
       realizedGain,
-      income,
-      totalGain: unrealizedGain + realizedGain + income,
+      income: positionIncome,
+      totalGain: unrealizedGain + realizedGain + positionIncome,
       irr: annualizedReturn(side, positionTxs, marketValue, asOf),
       lots: [...lots].sort((a, b) => (a.acquiredDate < b.acquiredDate ? -1 : 1)),
     });
@@ -525,15 +614,6 @@ export function analyzePortfolio(
   // actually at risk, not diluted by a balance that was never invested.
   const costBasis = holdings.reduce((sum, h) => sum + h.costBasis, 0);
   const unrealizedGain = holdings.reduce((sum, h) => sum + h.unrealizedGain, 0);
-  // Read off the ledger directly, not summed from `holdings` -- a holding
-  // exists only for a symbol still open, so a position closed out entirely
-  // would drop every dividend it ever paid. Lifetime income is exactly the
-  // case where that matters: it's supposed to answer what dividends brought
-  // in over the portfolio's whole life, not just from what's left of it.
-  const income = transactions
-    .filter((tx) => tx.type === "dividend" || tx.type === "interest")
-    .reduce((sum, tx) => sum + signedCashFlow(tx), 0);
-
   // Replayed from the ledger, not read off the account: cash is derived here for
   // the same reason every other total is, so importing a row moves it.
   const cashByAccount = accountCashBalances(portfolio, { asOf });
@@ -592,7 +672,6 @@ export function analyzePortfolio(
 
   const taxableClosed = closedLots.filter((lot) => lot.taxable);
   const realizedGain = taxableClosed.reduce((sum, lot) => sum + lot.gain, 0);
-  const currentYear = asOf.slice(0, 4);
 
   /**
    * Today's move across the positions that could be measured.
@@ -609,12 +688,6 @@ export function analyzePortfolio(
   const dayBase = dayMovers.reduce((sum, h) => sum + h.marketValue, 0) - (dayChange ?? 0);
   const dayChangePct = dayChange !== null && dayBase !== 0 ? dayChange / dayBase : null;
 
-  const incomeYtd = transactions
-    .filter(
-      (tx) => (tx.type === "dividend" || tx.type === "interest") && tx.date.startsWith(currentYear),
-    )
-    .reduce((sum, tx) => sum + signedCashFlow(tx), 0);
-
   const summary: PortfolioSummary = {
     marketValue,
     cash,
@@ -630,7 +703,7 @@ export function analyzePortfolio(
       .filter((lot) => lot.term === "long")
       .reduce((sum, lot) => sum + lot.gain, 0),
     realizedGainYtd: taxableClosed
-      .filter((lot) => lot.disposedDate.startsWith(currentYear))
+      .filter((lot) => lot.disposedDate.startsWith(currentYearPrefix))
       .reduce((sum, lot) => sum + lot.gain, 0),
     income,
     incomeYtd,
