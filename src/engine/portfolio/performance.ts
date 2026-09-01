@@ -103,6 +103,23 @@ function roundToShareDecimals(quantity: number): number {
 }
 
 /**
+ * Rounds to the nearest cent, the smallest unit real money moves in.
+ *
+ * `cash` here is a running sum of every cash flow the ledger has ever
+ * recorded, replayed one transaction at a time. Left unrounded, ordinary
+ * binary floating-point error accumulates across years of additions, so an
+ * account that is genuinely down to the last cent can drift to something
+ * like 3e-11 instead of 0 -- and that residue becomes the `previousValue` a
+ * later day's return is divided by. A real return divided by a base that
+ * should have been zero but reads as a trillionth of a cent is how one day's
+ * ordinary gain turns into a trillion-dollar chart. `replayableCash` in
+ * `./cash` guards the same arithmetic for the opening-balance inference.
+ */
+function roundToCents(amount: number): number {
+  return Math.round(amount * 100) / 100;
+}
+
+/**
  * Running share count per symbol, by transaction.
  *
  * Deliberately simpler than the lot ledger: valuing a portfolio needs only how
@@ -644,7 +661,7 @@ export function buildPerformanceSeries(
   };
 
   const held = new Map<string, number>();
-  let cash = openingCash + funding.floor;
+  let cash = roundToCents(openingCash + funding.floor);
   let cursor = 0;
 
   // Everything before the window opens is history: replay it so the window
@@ -653,7 +670,7 @@ export function buildPerformanceSeries(
   // window that begins mid-ledger inherits both sides of what came before.
   while (cursor < ordered.length && ordered[cursor].date < from) {
     applyToShares(held, ordered[cursor]);
-    cash += signedCashFlow(ordered[cursor]);
+    cash = roundToCents(cash + signedCashFlow(ordered[cursor]));
     cursor += 1;
   }
 
@@ -679,7 +696,7 @@ export function buildPerformanceSeries(
       const on = (symbol: string) => priceOn(symbol, day);
       flow += basis === "account" ? externalFlowFor(tx, on) : flowFor(tx, on);
       applyToShares(held, tx);
-      cash += signedCashFlow(tx);
+      cash = roundToCents(cash + signedCashFlow(tx));
       cursor += 1;
     }
 

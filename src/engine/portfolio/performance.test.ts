@@ -493,6 +493,43 @@ describe("buildPerformanceSeries", () => {
 
     expect(points[0].value).toBe(1000);
   });
+
+  it("does not let a near-zero opening cash residue blow up the first day's return", () => {
+    // Stands in for the kind of value `replayableCash`'s floor used to hand
+    // back on a genuinely solvent ledger: not zero, but a floating-point
+    // sliver of a cent that should have been zero (see the accompanying
+    // regression in cash.test.ts, which shows how such a sliver arises from
+    // ordinary summation drift over many transactions).
+    const FLOOR_RESIDUE = 2.84e-13;
+
+    const histories = new Map([
+      [
+        "VTI",
+        // Paid $100 a share intraday; the feed's end-of-day close for the
+        // same day is $105, exactly as it is for essentially every real
+        // fill -- a trade almost never executes at the day's closing print.
+        // That ordinary gap is what a near-zero previous-day base turned
+        // into a trillion-dollar reading.
+        history([["2019-10-11", 105], ["2027-01-01", 110]]),
+      ],
+    ]);
+
+    const { points, basis } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2019-10-11", quantity: 10, price: 100 }),
+        tx({ type: "cash_deposit", date: "2019-10-11", symbol: null, amount: 1000 }),
+      ],
+      histories,
+      { from: "2019-10-11", to: "2027-01-01", openingCash: FLOOR_RESIDUE },
+    );
+
+    expect(basis).toBe("account");
+    // The account opens on this very buy, so there is no prior day to have
+    // earned a return against -- the index must stay at 1. Before rounding
+    // the cash replay to the cent, dividing the day's real $50 gain by a
+    // previous value of 2.84e-13 produced an index in the hundred trillions.
+    expect(points[0].index).toBe(1);
+  });
 });
 
 describe("a spinoff", () => {

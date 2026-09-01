@@ -20,6 +20,23 @@ function openingOf(portfolio: Portfolio, accountId: Id): number {
   return portfolio.accounts.find((a) => a.id === accountId)?.openingCashBalance ?? 0;
 }
 
+const CENTS_PER_DOLLAR = 100;
+
+/**
+ * Rounds to the nearest cent, the smallest unit real money moves in.
+ *
+ * Summing signed cash flows across years of transactions accumulates ordinary
+ * binary floating-point error -- a ledger that nets to exactly zero can drift
+ * to something like -3e-11 well before its balance ever truly goes negative.
+ * Left unrounded, that residue reads as a deficit, seeds a `floor` of a few
+ * trillionths of a dollar, and a performance series that opens on cash alone
+ * divides its first day's real return by that near-zero base -- which is how
+ * a solvent account's chart came to open above a trillion dollars.
+ */
+function roundToCents(amount: number): number {
+  return Math.round(amount * CENTS_PER_DOLLAR) / CENTS_PER_DOLLAR;
+}
+
 export interface CashFunding {
   /**
    * Whether the ledger accounts for the money it spends. False means the cash
@@ -60,7 +77,7 @@ export function replayableCash(
 
   for (let i = 0; i < ordered.length; i += 1) {
     const tx = ordered[i];
-    cash += signedCashFlow(tx);
+    cash = roundToCents(cash + signedCashFlow(tx));
     if (tx.type === "cash_deposit") arrived += Math.abs(signedCashFlow(tx));
     if (tx.type === "transfer_in") arrived += Math.abs(tx.quantity * tx.price);
 

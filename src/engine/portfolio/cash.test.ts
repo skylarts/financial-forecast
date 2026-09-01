@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Portfolio, Transaction, TransactionType } from "@/domain/portfolio";
-import { accountCashBalances } from "./cash";
+import { accountCashBalances, replayableCash } from "./cash";
 
 let seq = 0;
 function tx(partial: Partial<Transaction> & { type: TransactionType; date: string }): Transaction {
@@ -196,5 +196,20 @@ describe("accountCashBalances", () => {
     );
 
     expect(result.balance).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("replayableCash", () => {
+  it("reports a floor of exactly zero for a ledger that only nets to zero via float-noisy amounts", () => {
+    // 3,000 additions of 0.1 land on 299.9999999999997 in plain floating-
+    // point arithmetic -- a real drift below the mathematically exact 300,
+    // not a contrived value. Left unrounded, the running balance dips a
+    // hair below zero at the withdrawal that should have zeroed it exactly,
+    // and that sliver used to be reported as an implied opening balance the
+    // account never actually needed.
+    const deposits = Array.from({ length: 3000 }, () => cash("cash_deposit", "2015-01-01", 0.1));
+    const rows = [...deposits, cash("cash_withdrawal", "2015-01-02", 300)];
+
+    expect(replayableCash(rows, 0)).toEqual({ solvent: true, floor: 0 });
   });
 });
