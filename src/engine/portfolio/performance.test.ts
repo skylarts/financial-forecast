@@ -892,6 +892,76 @@ describe("a day whose flow dwarfs what was invested", () => {
 
     expect(totalReturn(points)).toBeCloseTo(0.1, 6);
   });
+
+  it("does not swing wildly on days the book is genuinely empty after several lots close out", () => {
+    // A real sequence (Skylar's Roth IRA, AAPL, April-June 2021): six buys
+    // across five days, two partial sells, two more buys, then a final sell
+    // on 2021-06-10 whose quantity matches the remaining lots to five decimal
+    // places. Decimal arithmetic nets this to exactly zero shares, but plain
+    // binary floating-point addition of these same fractional quantities
+    // leaves a sliver on the order of 1e-15 -- multiplied by AAPL's
+    // triple-digit price, a `previousValue` that is technically positive
+    // instead of the zero it should be. On a securities-only basis (forced
+    // by a facet filter, which is where this was found) a real day's price
+    // move divided by that sliver swung the reported return by dozens of
+    // points a day for two straight weeks, even though nothing was held.
+    const histories = new Map([
+      [
+        "AAPL",
+        history([
+          ["2021-04-01", 119.74],
+          ["2021-04-06", 123.72],
+          ["2021-04-07", 125.003887],
+          ["2021-04-08", 126.242105],
+          ["2021-04-09", 127.7483],
+          ["2021-04-14", 132.303473],
+          ["2021-04-15", 132.5726],
+          ["2021-04-16", 133.8912],
+          ["2021-04-19", 134.57],
+          ["2021-04-21", 134.999996],
+          ["2021-04-22", 134.878104],
+          ["2021-04-26", 132.89],
+          ["2021-05-03", 134.594184],
+          ["2021-06-10", 127.31],
+          // A week with real (if modest) price movement on an account that
+          // should be sitting on exactly zero shares.
+          ["2021-06-11", 130],
+          ["2021-06-16", 125],
+          ["2021-06-24", 133],
+        ]),
+      ],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2021-04-01", symbol: "AAPL", quantity: 0.16702, price: 119.74 }),
+        tx({ type: "buy", date: "2021-04-06", symbol: "AAPL", quantity: 0.48916, price: 123.72 }),
+        tx({ type: "buy", date: "2021-04-07", symbol: "AAPL", quantity: 0.08455, price: 125.003887 }),
+        tx({ type: "buy", date: "2021-04-08", symbol: "AAPL", quantity: 0.04459, price: 126.242105 }),
+        tx({ type: "buy", date: "2021-04-09", symbol: "AAPL", quantity: 0.51358, price: 127.7483 }),
+        tx({ type: "buy", date: "2021-04-14", symbol: "AAPL", quantity: 0.08828, price: 132.303473 }),
+        tx({ type: "sell", date: "2021-04-15", symbol: "AAPL", quantity: 1.38248, price: 132.5726 }),
+        tx({ type: "sell", date: "2021-04-16", symbol: "AAPL", quantity: 0.0047, price: 133.8912 }),
+        tx({ type: "buy", date: "2021-04-19", symbol: "AAPL", quantity: 0.44586, price: 134.57 }),
+        tx({ type: "buy", date: "2021-04-21", symbol: "AAPL", quantity: 0.07081, price: 134.999996 }),
+        tx({ type: "buy", date: "2021-04-22", symbol: "AAPL", quantity: 0.0473, price: 134.878104 }),
+        tx({ type: "sell", date: "2021-04-26", symbol: "AAPL", quantity: 0.10226, price: 132.89 }),
+        tx({ type: "buy", date: "2021-05-03", symbol: "AAPL", quantity: 0.37312, price: 134.594184 }),
+        tx({ type: "sell", date: "2021-06-10", symbol: "AAPL", quantity: 0.83483, price: 127.31 }),
+      ],
+      histories,
+      { from: "2021-04-01", to: "2021-06-24", symbols: new Set(["AAPL"]) },
+    );
+
+    const afterSoldOut = points.filter((p) => p.date >= "2021-06-10");
+    for (const point of afterSoldOut) {
+      // The book is genuinely empty -- valued at exactly zero, not a
+      // near-zero float sliver -- so a real price move the same week must
+      // not register as a return at all.
+      expect(point.value).toBe(0);
+      expect(point.index).toBe(afterSoldOut[0].index);
+    }
+  });
 });
 
 describe("the days between a split and the next trade", () => {

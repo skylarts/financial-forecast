@@ -127,6 +127,16 @@ function roundToCents(amount: number): number {
  * ledger for every day of a ten-year window would cost far more than it buys.
  * Shorts carry a negative count, which is exactly right for valuation -- a
  * short position is worth what covering it would cost, as a liability.
+ *
+ * Every write is rounded to `SHARE_DECIMALS`, the same precision real
+ * brokerages report. A position built from several separate buys and closed
+ * by one sell of their exact combined quantity should land on exactly zero,
+ * but unrounded binary floating-point addition can leave a sliver like
+ * 1e-13 shares instead. On a `securities` basis that sliver times a
+ * triple-digit share price is a `previousValue` that is technically
+ * positive, and a real day's price move divided by it is how a chart that
+ * had already sold out to nothing kept swinging by dozens of percentage
+ * points a day. See the parallel fix for the `cash` accumulator, above.
  */
 function applyToShares(held: Map<string, number>, tx: Transaction): void {
   if (tx.symbol === null) return;
@@ -138,24 +148,24 @@ function applyToShares(held: Map<string, number>, tx: Transaction): void {
     case "reinvest":
     case "transfer_in":
     case "buy_to_cover":
-      held.set(symbol, current + tx.quantity);
+      held.set(symbol, roundToShareDecimals(current + tx.quantity));
       break;
     case "sell":
     case "transfer_out":
-      held.set(symbol, current - tx.quantity);
+      held.set(symbol, roundToShareDecimals(current - tx.quantity));
       break;
     case "short_sell":
-      held.set(symbol, current - tx.quantity);
+      held.set(symbol, roundToShareDecimals(current - tx.quantity));
       break;
     case "split":
       // `quantity` is the ratio here, not a share count.
-      if (tx.quantity > 0) held.set(symbol, current * tx.quantity);
+      if (tx.quantity > 0) held.set(symbol, roundToShareDecimals(current * tx.quantity));
       break;
     case "option_expire":
     case "option_exercise":
     case "option_assign":
       // Retires the contract from whichever side it was held on.
-      held.set(symbol, current > 0 ? current - tx.quantity : current + tx.quantity);
+      held.set(symbol, roundToShareDecimals(current > 0 ? current - tx.quantity : current + tx.quantity));
       break;
     case "spinoff": {
       // Moves shares into the new symbol, scaled by the statement's ratio --
