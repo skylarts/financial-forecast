@@ -12,6 +12,7 @@ import {
 import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
 import { SchwabSettingsDialog } from "./SchwabSettingsDialog";
+import { SnapshotRestoreDialog } from "./SnapshotRestoreDialog";
 
 /**
  * Everything the header used to spell out in buttons of its own.
@@ -50,6 +51,7 @@ export function PortfolioMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [schwabOpen, setSchwabOpen] = useState(false);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -148,6 +150,20 @@ export function PortfolioMenu({
               Restore from backup…
               <span className={HINT}>Replaces everything currently loaded</span>
             </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={ITEM}
+              onClick={() => {
+                setOpen(false);
+                setSnapshotsOpen(true);
+              }}
+            >
+              Restore a local snapshot…
+              <span className={HINT}>
+                Automatic copies kept in this browser, out of reach of cloud sync
+              </span>
+            </button>
           </Group>
 
           <Group label="Connections">
@@ -209,6 +225,7 @@ export function PortfolioMenu({
         </div>
       )}
 
+      {snapshotsOpen && <SnapshotRestoreDialog onClose={() => setSnapshotsOpen(false)} />}
       {schwabOpen && <SchwabSettingsDialog onClose={() => setSchwabOpen(false)} />}
     </div>
   );
