@@ -15,6 +15,7 @@ import { SecurityEditorRow } from "./SecurityEditor";
 import { SummaryCards } from "./SummaryCards";
 import type { ExpiredContract } from "@/engine/portfolio/expiredContracts";
 import { usePortfolioStore, symbolsInPortfolio } from "@/store/usePortfolioStore";
+import { symbolsEverTraded } from "@/lib/portfolio/classifiableSymbols";
 import { usePortfolioCloudSync } from "@/store/usePortfolioCloudSync";
 import { useCloudSync } from "@/store/useCloudSync";
 import { useForecastValueSync } from "@/store/useForecastValueSync";
@@ -160,6 +161,11 @@ export function PortfolioApp() {
   const holdingCollapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
+  // Classification covers everything ever held, not just what's open now --
+  // the Performance and Holdings filters read it for closed positions too.
+  // Quotes stay on the narrow list above; a sold position has no price to ask
+  // for, but it still has an asset class.
+  const classifiableSymbols = useMemo(() => symbolsEverTraded(portfolio), [portfolio]);
   const {
     prices: liveQuotes,
     loading: pricesLoading,
@@ -210,6 +216,7 @@ export function PortfolioApp() {
         manualPriceDate: security?.manualPriceDate ?? null,
         lastKnownPrice: quote.price,
         lastKnownPriceDate: quote.date,
+        profileCheckedAt: security?.profileCheckedAt ?? null,
       });
     }
     // Runs off the feed response, not the store snapshot -- re-keying on
@@ -251,7 +258,7 @@ export function PortfolioApp() {
     [unavailableSymbols, staleSymbols],
   );
 
-  const { profiles: securityProfiles, loading: classifying } = useSecurityProfiles(symbols);
+  const { profiles: securityProfiles, loading: classifying } = useSecurityProfiles(classifiableSymbols);
 
   useForecastValueSync(portfolio, prices, cloudSyncReady, (count) =>
     setFlash(`Updated ${count} forecast balance${count === 1 ? "" : "s"}.`),

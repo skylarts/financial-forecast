@@ -487,8 +487,13 @@ export const usePortfolioStore = create<PortfolioState>()(
  * the feed about it only burns rate limit and -- for an option the feed will
  * never answer again -- surfaces a permanent, meaningless "no quote" warning
  * for a position that's already closed.
+ *
+ * Classification needs the opposite list: see `symbolsEverTraded`, which covers
+ * closed positions too, because a sold holding still has an asset class even
+ * though it has no price.
  */
 export function symbolsInPortfolio(portfolio: Portfolio): string[] {
   const { openLots } = buildLotLedger(portfolio.transactions);
   return [...new Set(openLots.map((lot) => lot.symbol))];
 }
+

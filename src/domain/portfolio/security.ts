@@ -109,6 +109,17 @@ export const securitySchema = z.object({
    */
   lastKnownPrice: z.number().nonnegative().nullable().default(null),
   lastKnownPriceDate: isoDateSchema.nullable().default(null),
+  /**
+   * The day the feed was last asked to classify this symbol, whatever it
+   * answered. Set even when the answer was "never heard of it", which is the
+   * whole point: a delisted ticker is a permanent miss, and without a record
+   * that it was asked about, every session re-asks the feed about every dead
+   * symbol the ledger has ever held and gets the same silence back.
+   *
+   * Null on every security saved before this field existed, so they are asked
+   * once and then settle.
+   */
+  profileCheckedAt: isoDateSchema.nullable().default(null),
 });
 export type Security = z.infer<typeof securitySchema>;
 
