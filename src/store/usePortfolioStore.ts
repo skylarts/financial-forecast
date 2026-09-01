@@ -21,6 +21,7 @@ import { splitTransactionByFraction } from "@/lib/portfolio/splitTransaction";
 import { sleeveTypeFor, TAX_SOURCE_SLEEVES } from "@/lib/portfolio/taxSource";
 import { buildLotLedger } from "@/engine/portfolio/lots";
 import { createPortfolioStorage } from "@/lib/portfolio/portfolioStorage";
+import { isDestructiveChange, saveSnapshot } from "@/lib/portfolio/portfolioSnapshots";
 
 /**
  * Deliberately not the old `localStorage` key. The migration in
@@ -193,11 +194,18 @@ export const usePortfolioStore = create<PortfolioState>()(
        *  lastSavedAt and silently skip the cloud push -- and so no path can
        *  leave a transaction without a lot id, whether it arrived from the
        *  add form, an import, or an edit that cleared the field. */
-      const mutate = (update: (portfolio: Portfolio) => Portfolio) =>
-        set((state) => ({
-          portfolio: tidy(update(state.portfolio)),
-          lastSavedAt: Date.now(),
-        }));
+      const mutate = (update: (portfolio: Portfolio) => Portfolio, reason = "edit") =>
+        set((state) => {
+          const next = tidy(update(state.portfolio));
+          // Snapshot the ledger on its way out, whenever the change loses
+          // transactions. Fire-and-forget on purpose: a backup that could
+          // block or fail an edit would be worse than the risk it covers, and
+          // `saveSnapshot` swallows its own errors.
+          if (isDestructiveChange(state.portfolio.transactions.length, next.transactions.length)) {
+            void saveSnapshot(state.portfolio, reason);
+          }
+          return { portfolio: next, lastSavedAt: Date.now() };
+        });
 
       return {
         portfolio: emptyPortfolio,
@@ -225,7 +233,7 @@ export const usePortfolioStore = create<PortfolioState>()(
               accounts: p.accounts.filter((a) => !doomed.has(a.id)),
               transactions: p.transactions.filter((tx) => !doomed.has(tx.accountId)),
             };
-          }),
+          }, "removing an account"),
 
         addTransaction: (tx) => {
           const id = nanoid();
@@ -252,13 +260,19 @@ export const usePortfolioStore = create<PortfolioState>()(
           })),
 
         removeTransaction: (id) =>
-          mutate((p) => ({ ...p, transactions: p.transactions.filter((tx) => tx.id !== id) })),
+          mutate(
+            (p) => ({ ...p, transactions: p.transactions.filter((tx) => tx.id !== id) }),
+            "deleting a transaction",
+          ),
 
         removeTransactions: (ids) => {
           if (ids.length === 0) return 0;
           const doomed = new Set(ids);
           const before = get().portfolio.transactions.length;
-          mutate((p) => ({ ...p, transactions: p.transactions.filter((tx) => !doomed.has(tx.id)) }));
+          mutate(
+            (p) => ({ ...p, transactions: p.transactions.filter((tx) => !doomed.has(tx.id)) }),
+            "deleting transactions",
+          );
           return before - get().portfolio.transactions.length;
         },
 
@@ -284,7 +298,7 @@ export const usePortfolioStore = create<PortfolioState>()(
           mutate((p) => ({
             ...p,
             transactions: p.transactions.filter((tx) => tx.importBatchId !== batchId),
-          }));
+          }), "undoing an import");
           return before - get().portfolio.transactions.length;
         },
 
@@ -391,15 +405,38 @@ export const usePortfolioStore = create<PortfolioState>()(
             };
           }),
 
+        /**
+         * Replaces the ledger wholesale -- the cloud pull, a restore, the
+         * sample data.
+         *
+         * Snapshotted for the same reason as the shrinking mutations, and with
+         * more cause: this is the path that lost a real portfolio, because a
+         * cloud row with nothing in it was loaded straight over a full local
+         * one. `syncSafety` now refuses that particular swap, but this is the
+         * seam every wholesale replacement goes through, so it is the right
+         * place to keep a copy of whatever is being replaced.
+         */
         loadPortfolio: (portfolio) =>
-          set({ portfolio: tidy(portfolio), lastSavedAt: Date.now() }),
+          set((state) => {
+            const next = tidy(portfolio);
+            if (isDestructiveChange(state.portfolio.transactions.length, next.transactions.length)) {
+              void saveSnapshot(state.portfolio, "replacing the whole ledger");
+            }
+            return { portfolio: next, lastSavedAt: Date.now() };
+          }),
 
         importJson: (raw) => {
           const result = portfolioSchema.safeParse(raw);
           if (!result.success) {
             return { ok: false, error: "That file isn't a portfolio backup this app can read." };
           }
-          set({ portfolio: tidy(result.data), lastSavedAt: Date.now() });
+          set((state) => {
+            const next = tidy(result.data);
+            if (isDestructiveChange(state.portfolio.transactions.length, next.transactions.length)) {
+              void saveSnapshot(state.portfolio, "restoring a backup file");
+            }
+            return { portfolio: next, lastSavedAt: Date.now() };
+          });
           return { ok: true };
         },
       };
