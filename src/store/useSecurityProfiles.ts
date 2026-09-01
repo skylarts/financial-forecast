@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeSymbol, type AssetClass, type Exposure, type InstrumentType } from "@/domain/portfolio";
+import {
+  normalizeSymbol,
+  type AssetClass,
+  type Exposure,
+  type InstrumentType,
+  type Security,
+} from "@/domain/portfolio";
+import { inferInstrumentType } from "@/lib/portfolio/classifiableSymbols";
 import { usePortfolioStore } from "./usePortfolioStore";
 
 /**
@@ -27,6 +34,36 @@ export interface ResolvedProfile {
   exposures: Exposure[];
   instrumentType: InstrumentType;
   found: boolean;
+}
+
+/**
+ * How many symbols go in one request. Must stay at or under the route's own
+ * MAX_SYMBOLS, which slices the overflow off without complaint.
+ */
+const REQUEST_CHUNK = 60;
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** A security record with nothing filled in, so a partial update can be spread
+ *  over it without every caller restating all thirteen fields. */
+function blankSecurity(symbol: string): Security {
+  return {
+    symbol,
+    name: "",
+    assetClass: "other",
+    assetClassSource: "auto",
+    exposures: [],
+    instrumentType: "other",
+    instrumentTypeSource: "auto",
+    themes: [],
+    manualPrice: null,
+    manualPriceDate: null,
+    lastKnownPrice: null,
+    lastKnownPriceDate: null,
+    profileCheckedAt: null,
+  };
 }
 
 export function useSecurityProfiles(symbols: readonly string[]): {
@@ -55,11 +92,15 @@ export function useSecurityProfiles(symbols: readonly string[]): {
     for (const security of portfolio.securities) {
       if (security.assetClassSource === "manual") set.add(normalizeSymbol(security.symbol));
       // An "auto" record with a real class is a feed answer already on file.
-      // "other" is left out: that's what an unresolved symbol defaults to, so
-      // it's worth asking again rather than treating a miss as permanent.
       else if (security.assetClassSource === "auto" && security.assetClass !== "other") {
         set.add(normalizeSymbol(security.symbol));
       }
+      // Asked before and the feed had nothing. That used to be left unsettled
+      // so it would be asked again, which was affordable while only open
+      // positions were classified. Across every symbol ever traded it is not:
+      // a ledger with hundreds of delisted tickers would re-ask about all of
+      // them on every single load, forever, for the same silence.
+      else if (security.profileCheckedAt !== null) set.add(normalizeSymbol(security.symbol));
     }
     return set;
   }, [portfolio.securities]);
@@ -75,71 +116,143 @@ export function useSecurityProfiles(symbols: readonly string[]): {
     [symbols, settled],
   );
 
+  /**
+   * Symbols waiting to be asked about, and whether a run is already draining
+   * them.
+   *
+   * A queue rather than a local variable because this effect re-runs *as a
+   * direct result of its own writes*: every classified symbol lands in the
+   * store, which changes `settled`, which changes `key`. Tying the run to the
+   * effect's own cancel token therefore killed it -- the first chunk's upserts
+   * re-triggered the effect, the cleanup cancelled the loop mid-flight, and the
+   * re-run found every symbol already in `requested` and did nothing. The
+   * backfill stopped dead after 60 symbols, silently. Now a re-entrant effect
+   * just appends to the queue and the single running loop drains it.
+   */
+  const queue = useRef<string[]>([]);
+  const running = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!hasHydrated || !key) return;
 
     const wanted = key.split(",").filter((symbol) => !requested.current.has(symbol));
     if (wanted.length === 0) return;
     for (const symbol of wanted) requested.current.add(symbol);
+    queue.current.push(...wanted);
 
-    let cancelled = false;
+    if (running.current) return;
+    running.current = true;
     setLoading(true);
 
-    void fetch(`/api/symbols/profile?symbols=${encodeURIComponent(wanted.join(","))}`)
-      .then((r) => r.json() as Promise<{ profiles: ResolvedProfile[] }>)
-      .then((body) => {
-        if (cancelled) return;
-        const found = (body.profiles ?? []).filter((p) => p.found);
-        setProfiles((current) => {
-          const next = { ...current };
-          for (const profile of found) next[profile.symbol] = profile;
-          return next;
-        });
+    void (async () => {
+      try {
+        // One chunk at a time, sequentially. The route caps a single request at
+        // MAX_SYMBOLS and *silently truncates* past it, so asking about a
+        // ledger's worth of closed symbols in one call would have dropped all
+        // but the first 60 with nothing to show for it. Going in order also
+        // keeps this from arriving as one burst against the same host the live
+        // quotes come from.
+        while (queue.current.length > 0 && mounted.current) {
+          const chunk = queue.current.splice(0, REQUEST_CHUNK);
+          const response = await fetch(
+            `/api/symbols/profile?symbols=${encodeURIComponent(chunk.join(","))}`,
+          );
+          const body = (await response.json()) as { profiles: ResolvedProfile[] };
+          if (!mounted.current) return;
 
-        // Read the store fresh rather than closing over it: this lands after an
-        // await, and the ledger may have moved on since the effect started.
-        const securities = usePortfolioStore.getState().portfolio.securities;
-        for (const profile of found) {
-          const existing = securities.find((s) => normalizeSymbol(s.symbol) === profile.symbol);
-          if (existing?.assetClassSource === "manual") continue;
+          const returned = body.profiles ?? [];
+          const found = returned.filter((p) => p.found);
+          setProfiles((current) => {
+            const next = { ...current };
+            for (const profile of found) next[profile.symbol] = profile;
+            return next;
+          });
 
-          const name = existing?.name || profile.name;
-          if (existing && existing.assetClass === profile.assetClass && existing.name === name) {
-            continue;
+          // Read the store fresh rather than closing over it: this lands after
+          // an await, and the ledger may have moved on since the run started.
+          const { portfolio: latest } = usePortfolioStore.getState();
+          const securityFor = (symbol: string) =>
+            latest.securities.find((s) => normalizeSymbol(s.symbol) === symbol);
+          const resolved = new Set(found.map((p) => p.symbol));
+
+          for (const profile of found) {
+            const existing = securityFor(profile.symbol);
+            if (existing?.assetClassSource === "manual") continue;
+
+            const name = existing?.name || profile.name;
+            if (
+              existing &&
+              existing.profileCheckedAt !== null &&
+              existing.assetClass === profile.assetClass &&
+              existing.name === name
+            ) {
+              continue;
+            }
+
+            upsertSecurity({
+              ...blankSecurity(profile.symbol),
+              ...existing,
+              symbol: profile.symbol,
+              name,
+              assetClass: profile.assetClass,
+              assetClassSource: "auto",
+              exposures: profile.exposures,
+              instrumentType:
+                existing?.instrumentTypeSource === "manual"
+                  ? existing.instrumentType
+                  : profile.instrumentType,
+              instrumentTypeSource:
+                existing?.instrumentTypeSource === "manual" ? "manual" : "auto",
+              themes: existing?.themes ?? [],
+              profileCheckedAt: todayIso(),
+            });
           }
 
-          upsertSecurity({
-            symbol: profile.symbol,
-            name,
-            assetClass: profile.assetClass,
-            assetClassSource: "auto",
-            exposures: profile.exposures,
-            instrumentType:
-              existing?.instrumentTypeSource === "manual"
-                ? existing.instrumentType
-                : profile.instrumentType,
-            instrumentTypeSource:
-              existing?.instrumentTypeSource === "manual" ? "manual" : "auto",
-            themes: existing?.themes ?? [],
-            manualPrice: existing?.manualPrice ?? null,
-            manualPriceDate: existing?.manualPriceDate ?? null,
-            lastKnownPrice: existing?.lastKnownPrice ?? null,
-            lastKnownPriceDate: existing?.lastKnownPriceDate ?? null,
-          });
-        }
-      })
-      .catch(() => {
-        // A failed lookup leaves the holdings unclassified, which is exactly
-        // where they were. Symbols stay in `requested` so a flaky feed doesn't
-        // turn into a retry loop; a reload asks again.
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+          // Symbols the feed could not place -- overwhelmingly delisted tickers
+          // off closed positions. Recorded rather than skipped, so they settle
+          // instead of being re-asked on every load forever, and given the best
+          // type the ledger itself can vouch for: "Other" is precisely what
+          // drops a closed holding out of a filtered chart.
+          for (const symbol of chunk) {
+            if (resolved.has(symbol)) continue;
+            const existing = securityFor(symbol);
+            if (existing?.assetClassSource === "manual") continue;
+            if (existing && existing.profileCheckedAt !== null) continue;
 
-    return () => {
-      cancelled = true;
-    };
+            upsertSecurity({
+              ...blankSecurity(symbol),
+              ...existing,
+              symbol,
+              instrumentType:
+                existing?.instrumentTypeSource === "manual"
+                  ? existing.instrumentType
+                  : inferInstrumentType(symbol, latest.transactions),
+              instrumentTypeSource:
+                existing?.instrumentTypeSource === "manual" ? "manual" : "auto",
+              profileCheckedAt: todayIso(),
+            });
+          }
+        }
+      } catch {
+        // A failed lookup leaves those symbols unclassified, which is exactly
+        // where they were, and unrecorded, so a reload asks again. Whatever is
+        // left in the queue is abandoned rather than retried: the symbols stay
+        // in `requested`, so a flaky feed can't turn into a retry loop, and the
+        // chunks that did land are already saved.
+        queue.current = [];
+      } finally {
+        running.current = false;
+        if (mounted.current) setLoading(false);
+      }
+    })();
   }, [key, hasHydrated, upsertSecurity]);
 
   return { profiles, loading };

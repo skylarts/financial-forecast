@@ -71,6 +71,7 @@ export function SecurityEditorRow({
       manualPriceDate: null,
       lastKnownPrice: null,
       lastKnownPriceDate: null,
+      profileCheckedAt: null,
     };
   };
 

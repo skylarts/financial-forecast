@@ -70,6 +70,7 @@ function security(
     manualPriceDate: null,
     lastKnownPrice: null,
     lastKnownPriceDate: null,
+    profileCheckedAt: null,
   };
 }
 

@@ -268,6 +268,7 @@ describe("analyzePortfolio", () => {
             manualPriceDate: "2026-08-01",
             lastKnownPrice: null,
             lastKnownPriceDate: null,
+            profileCheckedAt: null,
           },
         ],
       }),
@@ -377,8 +378,8 @@ describe("analyzePortfolio", () => {
         ],
         {
           securities: [
-            { symbol: "VTI", name: "", assetClass: "us_equity", assetClassSource: "manual", exposures: [], instrumentType: "other", instrumentTypeSource: "manual", themes: [], manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
-            { symbol: "BND", name: "", assetClass: "bond", assetClassSource: "manual", exposures: [], instrumentType: "other", instrumentTypeSource: "manual", themes: [], manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null },
+            { symbol: "VTI", name: "", assetClass: "us_equity", assetClassSource: "manual", exposures: [], instrumentType: "other", instrumentTypeSource: "manual", themes: [], manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null, profileCheckedAt: null },
+            { symbol: "BND", name: "", assetClass: "bond", assetClassSource: "manual", exposures: [], instrumentType: "other", instrumentTypeSource: "manual", themes: [], manualPrice: null, manualPriceDate: null, lastKnownPrice: null, lastKnownPriceDate: null, profileCheckedAt: null },
           ],
         },
       ),
@@ -416,6 +417,7 @@ describe("analyzePortfolio", () => {
               manualPriceDate: null,
               lastKnownPrice: null,
               lastKnownPriceDate: null,
+              profileCheckedAt: null,
             },
             {
               symbol: "BND",
@@ -430,6 +432,7 @@ describe("analyzePortfolio", () => {
               manualPriceDate: null,
               lastKnownPrice: null,
               lastKnownPriceDate: null,
+              profileCheckedAt: null,
             },
           ],
         },
