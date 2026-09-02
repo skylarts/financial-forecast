@@ -29,10 +29,11 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      {/* The side nav is a peer of the page, not part of it, so both tools
-          share one rail and neither has to render its own. Below `md` the rail
-          hides itself and `MobileTabBar` takes over at the bottom of the
-          screen; `app-shell` reserves the space that fixed bar sits in. */}
+      {/* The section nav is a peer of the page, not part of it, so both tools
+          share one and neither has to render its own. It's a drawer now: it
+          costs no layout width until the name in the top-left opens it. Below
+          `md` `MobileTabBar` also stands at the bottom of the screen, in thumb
+          reach; `app-shell` reserves the space that fixed bar sits in. */}
       <body className="app-shell flex min-h-full">
         <AuthProvider>
           <SideNav />

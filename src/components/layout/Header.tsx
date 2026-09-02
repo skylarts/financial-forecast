@@ -9,6 +9,7 @@ import { useAssumptionsStore } from "@/store/useAssumptionsStore";
 import { AssumptionsDrawer } from "@/components/assumptions/AssumptionsDrawer";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { BackupControls } from "@/components/layout/BackupControls";
+import { NavMenuButton } from "@/components/layout/SideNav";
 import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
 import { Btn } from "@/components/ui/controls";
 import { VIEWS, type View } from "@/lib/views";
@@ -329,19 +330,16 @@ export function Header({
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-3 py-3 sm:px-6 sm:py-3.5">
-      <div className="flex items-center gap-2.5">
-        <span
-          aria-hidden
-          className="block h-5 w-2 rounded-[3px] bg-gradient-to-b from-accent-line to-accent"
-        />
-        <div className="flex flex-col">
-          <h1 className="text-[15px] font-bold leading-tight tracking-tight">
-            {isJoy ? "Forecast ✨" : "Forecast"}
-          </h1>
-          {isJoy && (
-            <span className="joy-tagline text-[11px] font-medium">Bright days ahead ☀️</span>
-          )}
-        </div>
+      {/* The tool's name doubles as the way into the section drawer -- see
+          NavMenuButton for why the name, rather than a separate hamburger,
+          carries it. */}
+      <div className="flex flex-col">
+        <h1 className="text-[15px] font-bold leading-tight tracking-tight">
+          <NavMenuButton>{isJoy ? "Forecast ✨" : "Forecast"}</NavMenuButton>
+        </h1>
+        {isJoy && (
+          <span className="joy-tagline pl-1 text-[11px] font-medium">Bright days ahead ☀️</span>
+        )}
       </div>
 
 
