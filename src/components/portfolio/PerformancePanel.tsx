@@ -255,10 +255,17 @@ export function PerformancePanel({
     [portfolio.accounts, scopeAccountIds],
   );
 
+  // Narrowed the same way the series itself is -- a symbol/type facet has no
+  // history before its own first trade, so "Max" has to open there too, not
+  // at the account's first-ever transaction in some other symbol entirely.
   const earliest = useMemo(() => {
-    const dates = scopedTransactions.map((tx) => tx.date).sort();
+    const relevant =
+      includedSymbols === undefined
+        ? scopedTransactions
+        : scopedTransactions.filter((tx) => tx.symbol !== null && includedSymbols.has(normalizeSymbol(tx.symbol)));
+    const dates = relevant.map((tx) => tx.date).sort();
     return dates[0] ?? todayIso();
-  }, [scopedTransactions]);
+  }, [scopedTransactions, includedSymbols]);
 
   const { from, to } = useMemo(() => {
     const end = period === "custom" && customTo ? customTo : todayIso();
@@ -307,14 +314,26 @@ export function PerformancePanel({
     [scopedTransactions, histories, splits, from, to, scopeAccountIds, openingCash, includedSymbols],
   );
 
+  // A window can open before the filtered slice had anything to show for
+  // itself -- no shares of the included symbols yet, or no account funded
+  // yet -- and the engine correctly holds the index flat through that dead
+  // stretch rather than inventing a return for it. Charting that flat lead
+  // anyway reads as "no activity" when what happened is "wrong question for
+  // this period", so the visible series -- and any benchmark laid over it --
+  // starts at the first day there was something to measure.
+  const displayFrom = useMemo(() => {
+    const firstActive = series.points.findIndex((p) => Math.abs(p.value) > 1e-9);
+    return firstActive > 0 ? series.points[firstActive].date : from;
+  }, [series.points, from]);
+
   const benchmarkSeries = useMemo(
     () =>
       benchmarks.map((symbol, i) => ({
         symbol,
         color: BENCHMARK_COLORS[i % BENCHMARK_COLORS.length],
-        points: indexPrices(histories.get(symbol) ?? [], from, to),
+        points: indexPrices(histories.get(symbol) ?? [], displayFrom, to),
       })),
-    [benchmarks, histories, from, to],
+    [benchmarks, histories, displayFrom, to],
   );
 
   const BASE = 10_000;
@@ -322,6 +341,7 @@ export function PerformancePanel({
   const rows = useMemo<ChartRow[]>(() => {
     const byDate = new Map<string, ChartRow>();
     for (const point of series.points) {
+      if (point.date < displayFrom) continue;
       byDate.set(point.date, { date: point.date, portfolio: point.index * BASE });
     }
     for (const benchmark of benchmarkSeries) {
@@ -334,7 +354,7 @@ export function PerformancePanel({
       }
     }
     return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [series.points, benchmarkSeries]);
+  }, [series.points, benchmarkSeries, displayFrom]);
 
   /**
    * One series spanning every window the table can possibly need -- from the
