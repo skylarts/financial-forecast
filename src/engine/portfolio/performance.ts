@@ -103,6 +103,23 @@ function roundToShareDecimals(quantity: number): number {
 }
 
 /**
+ * Rounds to the nearest cent, the smallest unit real money moves in.
+ *
+ * `cash` here is a running sum of every cash flow the ledger has ever
+ * recorded, replayed one transaction at a time. Left unrounded, ordinary
+ * binary floating-point error accumulates across years of additions, so an
+ * account that is genuinely down to the last cent can drift to something
+ * like 3e-11 instead of 0 -- and that residue becomes the `previousValue` a
+ * later day's return is divided by. A real return divided by a base that
+ * should have been zero but reads as a trillionth of a cent is how one day's
+ * ordinary gain turns into a trillion-dollar chart. `replayableCash` in
+ * `./cash` guards the same arithmetic for the opening-balance inference.
+ */
+function roundToCents(amount: number): number {
+  return Math.round(amount * 100) / 100;
+}
+
+/**
  * Running share count per symbol, by transaction.
  *
  * Deliberately simpler than the lot ledger: valuing a portfolio needs only how
@@ -110,6 +127,16 @@ function roundToShareDecimals(quantity: number): number {
  * ledger for every day of a ten-year window would cost far more than it buys.
  * Shorts carry a negative count, which is exactly right for valuation -- a
  * short position is worth what covering it would cost, as a liability.
+ *
+ * Every write is rounded to `SHARE_DECIMALS`, the same precision real
+ * brokerages report. A position built from several separate buys and closed
+ * by one sell of their exact combined quantity should land on exactly zero,
+ * but unrounded binary floating-point addition can leave a sliver like
+ * 1e-13 shares instead. On a `securities` basis that sliver times a
+ * triple-digit share price is a `previousValue` that is technically
+ * positive, and a real day's price move divided by it is how a chart that
+ * had already sold out to nothing kept swinging by dozens of percentage
+ * points a day. See the parallel fix for the `cash` accumulator, above.
  */
 function applyToShares(held: Map<string, number>, tx: Transaction): void {
   if (tx.symbol === null) return;
@@ -121,24 +148,24 @@ function applyToShares(held: Map<string, number>, tx: Transaction): void {
     case "reinvest":
     case "transfer_in":
     case "buy_to_cover":
-      held.set(symbol, current + tx.quantity);
+      held.set(symbol, roundToShareDecimals(current + tx.quantity));
       break;
     case "sell":
     case "transfer_out":
-      held.set(symbol, current - tx.quantity);
+      held.set(symbol, roundToShareDecimals(current - tx.quantity));
       break;
     case "short_sell":
-      held.set(symbol, current - tx.quantity);
+      held.set(symbol, roundToShareDecimals(current - tx.quantity));
       break;
     case "split":
       // `quantity` is the ratio here, not a share count.
-      if (tx.quantity > 0) held.set(symbol, current * tx.quantity);
+      if (tx.quantity > 0) held.set(symbol, roundToShareDecimals(current * tx.quantity));
       break;
     case "option_expire":
     case "option_exercise":
     case "option_assign":
       // Retires the contract from whichever side it was held on.
-      held.set(symbol, current > 0 ? current - tx.quantity : current + tx.quantity);
+      held.set(symbol, roundToShareDecimals(current > 0 ? current - tx.quantity : current + tx.quantity));
       break;
     case "spinoff": {
       // Moves shares into the new symbol, scaled by the statement's ratio --
@@ -644,7 +671,7 @@ export function buildPerformanceSeries(
   };
 
   const held = new Map<string, number>();
-  let cash = openingCash + funding.floor;
+  let cash = roundToCents(openingCash + funding.floor);
   let cursor = 0;
 
   // Everything before the window opens is history: replay it so the window
@@ -653,7 +680,7 @@ export function buildPerformanceSeries(
   // window that begins mid-ledger inherits both sides of what came before.
   while (cursor < ordered.length && ordered[cursor].date < from) {
     applyToShares(held, ordered[cursor]);
-    cash += signedCashFlow(ordered[cursor]);
+    cash = roundToCents(cash + signedCashFlow(ordered[cursor]));
     cursor += 1;
   }
 
@@ -679,7 +706,7 @@ export function buildPerformanceSeries(
       const on = (symbol: string) => priceOn(symbol, day);
       flow += basis === "account" ? externalFlowFor(tx, on) : flowFor(tx, on);
       applyToShares(held, tx);
-      cash += signedCashFlow(tx);
+      cash = roundToCents(cash + signedCashFlow(tx));
       cursor += 1;
     }
 

@@ -493,6 +493,43 @@ describe("buildPerformanceSeries", () => {
 
     expect(points[0].value).toBe(1000);
   });
+
+  it("does not let a near-zero opening cash residue blow up the first day's return", () => {
+    // Stands in for the kind of value `replayableCash`'s floor used to hand
+    // back on a genuinely solvent ledger: not zero, but a floating-point
+    // sliver of a cent that should have been zero (see the accompanying
+    // regression in cash.test.ts, which shows how such a sliver arises from
+    // ordinary summation drift over many transactions).
+    const FLOOR_RESIDUE = 2.84e-13;
+
+    const histories = new Map([
+      [
+        "VTI",
+        // Paid $100 a share intraday; the feed's end-of-day close for the
+        // same day is $105, exactly as it is for essentially every real
+        // fill -- a trade almost never executes at the day's closing print.
+        // That ordinary gap is what a near-zero previous-day base turned
+        // into a trillion-dollar reading.
+        history([["2019-10-11", 105], ["2027-01-01", 110]]),
+      ],
+    ]);
+
+    const { points, basis } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2019-10-11", quantity: 10, price: 100 }),
+        tx({ type: "cash_deposit", date: "2019-10-11", symbol: null, amount: 1000 }),
+      ],
+      histories,
+      { from: "2019-10-11", to: "2027-01-01", openingCash: FLOOR_RESIDUE },
+    );
+
+    expect(basis).toBe("account");
+    // The account opens on this very buy, so there is no prior day to have
+    // earned a return against -- the index must stay at 1. Before rounding
+    // the cash replay to the cent, dividing the day's real $50 gain by a
+    // previous value of 2.84e-13 produced an index in the hundred trillions.
+    expect(points[0].index).toBe(1);
+  });
 });
 
 describe("a spinoff", () => {
@@ -854,6 +891,76 @@ describe("a day whose flow dwarfs what was invested", () => {
     );
 
     expect(totalReturn(points)).toBeCloseTo(0.1, 6);
+  });
+
+  it("does not swing wildly on days the book is genuinely empty after several lots close out", () => {
+    // A real sequence (Skylar's Roth IRA, AAPL, April-June 2021): six buys
+    // across five days, two partial sells, two more buys, then a final sell
+    // on 2021-06-10 whose quantity matches the remaining lots to five decimal
+    // places. Decimal arithmetic nets this to exactly zero shares, but plain
+    // binary floating-point addition of these same fractional quantities
+    // leaves a sliver on the order of 1e-15 -- multiplied by AAPL's
+    // triple-digit price, a `previousValue` that is technically positive
+    // instead of the zero it should be. On a securities-only basis (forced
+    // by a facet filter, which is where this was found) a real day's price
+    // move divided by that sliver swung the reported return by dozens of
+    // points a day for two straight weeks, even though nothing was held.
+    const histories = new Map([
+      [
+        "AAPL",
+        history([
+          ["2021-04-01", 119.74],
+          ["2021-04-06", 123.72],
+          ["2021-04-07", 125.003887],
+          ["2021-04-08", 126.242105],
+          ["2021-04-09", 127.7483],
+          ["2021-04-14", 132.303473],
+          ["2021-04-15", 132.5726],
+          ["2021-04-16", 133.8912],
+          ["2021-04-19", 134.57],
+          ["2021-04-21", 134.999996],
+          ["2021-04-22", 134.878104],
+          ["2021-04-26", 132.89],
+          ["2021-05-03", 134.594184],
+          ["2021-06-10", 127.31],
+          // A week with real (if modest) price movement on an account that
+          // should be sitting on exactly zero shares.
+          ["2021-06-11", 130],
+          ["2021-06-16", 125],
+          ["2021-06-24", 133],
+        ]),
+      ],
+    ]);
+
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2021-04-01", symbol: "AAPL", quantity: 0.16702, price: 119.74 }),
+        tx({ type: "buy", date: "2021-04-06", symbol: "AAPL", quantity: 0.48916, price: 123.72 }),
+        tx({ type: "buy", date: "2021-04-07", symbol: "AAPL", quantity: 0.08455, price: 125.003887 }),
+        tx({ type: "buy", date: "2021-04-08", symbol: "AAPL", quantity: 0.04459, price: 126.242105 }),
+        tx({ type: "buy", date: "2021-04-09", symbol: "AAPL", quantity: 0.51358, price: 127.7483 }),
+        tx({ type: "buy", date: "2021-04-14", symbol: "AAPL", quantity: 0.08828, price: 132.303473 }),
+        tx({ type: "sell", date: "2021-04-15", symbol: "AAPL", quantity: 1.38248, price: 132.5726 }),
+        tx({ type: "sell", date: "2021-04-16", symbol: "AAPL", quantity: 0.0047, price: 133.8912 }),
+        tx({ type: "buy", date: "2021-04-19", symbol: "AAPL", quantity: 0.44586, price: 134.57 }),
+        tx({ type: "buy", date: "2021-04-21", symbol: "AAPL", quantity: 0.07081, price: 134.999996 }),
+        tx({ type: "buy", date: "2021-04-22", symbol: "AAPL", quantity: 0.0473, price: 134.878104 }),
+        tx({ type: "sell", date: "2021-04-26", symbol: "AAPL", quantity: 0.10226, price: 132.89 }),
+        tx({ type: "buy", date: "2021-05-03", symbol: "AAPL", quantity: 0.37312, price: 134.594184 }),
+        tx({ type: "sell", date: "2021-06-10", symbol: "AAPL", quantity: 0.83483, price: 127.31 }),
+      ],
+      histories,
+      { from: "2021-04-01", to: "2021-06-24", symbols: new Set(["AAPL"]) },
+    );
+
+    const afterSoldOut = points.filter((p) => p.date >= "2021-06-10");
+    for (const point of afterSoldOut) {
+      // The book is genuinely empty -- valued at exactly zero, not a
+      // near-zero float sliver -- so a real price move the same week must
+      // not register as a return at all.
+      expect(point.value).toBe(0);
+      expect(point.index).toBe(afterSoldOut[0].index);
+    }
   });
 });
 
