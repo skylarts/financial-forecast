@@ -278,10 +278,10 @@ export function AccountsPanel({
           No accounts yet. Add one to start tracking holdings.
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-lg border border-border bg-panel">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-border">
+              <tr className="border-b border-border bg-panel-2">
                 {[
                   { label: "Account", align: "text-left" },
                   {

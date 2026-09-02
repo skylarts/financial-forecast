@@ -694,7 +694,7 @@ export function PortfolioApp() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search symbol or name"
             aria-label="Search the portfolio"
-            className="w-full min-w-0 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56"
+            className="min-w-[8rem] flex-1 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56 sm:flex-none"
           />
           <FilterMenu
             sections={filterSections}
@@ -778,40 +778,53 @@ export function PortfolioApp() {
         />
       </div>
 
-      <SummaryCards
-        portfolio={portfolio}
-        summary={summary}
-        holdings={analysis.holdings}
-        scopeAccountIds={scopeAccountIds}
-        loadingQuotes={pricesLoading}
-      />
-
       <main className="flex-1">
+        {/* The summary cards belong to Holdings, the way the forecast's KPI
+            bento belongs to its Overview -- Holdings is where you come to see
+            what you own, and these four cards are that question answered in
+            one line each.
+
+            They used to render above every tab. With the tab strip up in the
+            header they read as part of whichever tab is showing, which they
+            are not, and on two tabs they printed the same figure twice: the
+            Performance card sat directly above Performance's own return
+            tiles, and Gains & losses above Realized's. A number that appears
+            twice on one screen invites the reader to look for the difference
+            between them. */}
         {tab === "holdings" && (
-          <div className="px-3 py-4 sm:px-6">
-            {/* Only the side filter is Holdings' own now -- search and the
-                facets live in the control bar under the header. */}
-            {hasShorts && (
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Segmented
-                  options={SIDE_FILTERS}
-                  value={sideFilter}
-                  onChange={setSideFilter}
-                  size="sm"
-                  ariaLabel="Filter by position side"
-                />
-              </div>
-            )}
-            <HoldingsTable
-              holdings={visibleHoldings}
-              accountNames={accountNames}
-              showAccount={soleAccountId === null}
-              grouping={grouping}
-              onGroupingChange={setGrouping}
-              collapse={holdingCollapse}
-              onSelect={(holding) => openPosition(holding.symbol, holding.accountId)}
+          <>
+            <SummaryCards
+              portfolio={portfolio}
+              summary={summary}
+              holdings={analysis.holdings}
+              scopeAccountIds={scopeAccountIds}
+              loadingQuotes={pricesLoading}
             />
-          </div>
+            <div className="px-3 pb-4 sm:px-6">
+              {/* Only the side filter is Holdings' own now -- search and the
+                  facets live in the control bar under the header. */}
+              {hasShorts && (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <Segmented
+                    options={SIDE_FILTERS}
+                    value={sideFilter}
+                    onChange={setSideFilter}
+                    size="sm"
+                    ariaLabel="Filter by position side"
+                  />
+                </div>
+              )}
+              <HoldingsTable
+                holdings={visibleHoldings}
+                accountNames={accountNames}
+                showAccount={soleAccountId === null}
+                grouping={grouping}
+                onGroupingChange={setGrouping}
+                collapse={holdingCollapse}
+                onSelect={(holding) => openPosition(holding.symbol, holding.accountId)}
+              />
+            </div>
+          </>
         )}
 
         {tab === "allocation" && (
