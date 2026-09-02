@@ -18,8 +18,8 @@ interface Section {
  * rather than text glyphs because neither shape exists as a character -- the
  * only compass in Unicode is the color emoji, which would ignore the rail's
  * state colors entirely, and nothing at all draws an arrow that dips partway
- * along. Stroking in `currentColor` keeps that inheritance: dim in the drawer,
- * `pri-fg` on the active pill, `accent` in the tab bar, with no per-icon rules.
+ * along. Stroking in `currentColor` keeps that inheritance: dim on a resting
+ * link, `pri-fg` on the active pill, with no per-icon color rules.
  */
 function IconFrame({ size, children }: { size: number; children: ReactNode }) {
   return (
@@ -179,7 +179,10 @@ export function NavMenuButton({ children }: { children: ReactNode }) {
  * column had little to do all day except take the width.
  *
  * Being `fixed`, it never occupies layout space -- the page underneath keeps
- * the whole window at every width, open or closed.
+ * the whole window at every width, open or closed. It's also the only section
+ * nav there is: a phone opens this same drawer from the same button rather
+ * than getting a bottom tab bar of its own, so there is one list of sections
+ * to maintain and one place to look for it whatever you're holding.
  */
 export function SideNav() {
   const pathname = usePathname();
@@ -268,44 +271,5 @@ export function SideNav() {
         </ul>
       </nav>
     </>
-  );
-}
-
-/**
- * The phone equivalent: a fixed bottom bar, the convention every mobile OS
- * already trained people on. It stays even though the drawer now works at
- * every width -- one thumb-reach tap beats reaching for the far top corner,
- * and on a phone the bar costs space the drawer would have covered anyway.
- *
- * It's `fixed`, so it's out of flow -- `app-shell` in globals.css reserves the
- * matching bottom padding, including the home-indicator inset, so the last row
- * of a table is never trapped underneath it.
- */
-export function MobileTabBar() {
-  const pathname = usePathname();
-
-  return (
-    <nav
-      aria-label="Sections"
-      className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-panel-2 pb-[env(safe-area-inset-bottom)] md:hidden"
-    >
-      {SECTIONS.map((section) => {
-        const active = isActive(pathname, section.href);
-        const Icon = section.icon;
-        return (
-          <Link
-            key={section.href}
-            href={section.href}
-            aria-current={active ? "page" : undefined}
-            className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
-              active ? "text-accent" : "text-dim"
-            }`}
-          >
-            <Icon size={18} />
-            {section.label}
-          </Link>
-        );
-      })}
-    </nav>
   );
 }

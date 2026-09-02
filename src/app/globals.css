@@ -162,17 +162,12 @@ body {
    component has to ask what device it is on.
    --------------------------------------------------------------------------- */
 
-/* `MobileTabBar` is fixed, so it sits outside flow and would otherwise cover
-   the last row of whatever is scrolled to the bottom. Reserve its height plus
-   the home-indicator inset. Above `md` the rail is back and the bar is gone. */
+/* Nothing is fixed to the bottom of the screen any more -- navigation lives in
+   the drawer behind the tool's name -- so all this has to keep clear is the
+   home-indicator strip, which would otherwise sit on top of the last row of
+   whatever is scrolled to the bottom. The inset is 0 everywhere else. */
 .app-shell {
-  padding-bottom: calc(3.25rem + env(safe-area-inset-bottom));
-}
-
-@media (min-width: 768px) {
-  .app-shell {
-    padding-bottom: 0;
-  }
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Nothing may push the page sideways: a phone that scrolls horizontally makes
