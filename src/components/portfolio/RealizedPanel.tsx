@@ -142,7 +142,7 @@ export function RealizedPanel({
   const labelSpan = 5;
 
   return (
-    <div className="p-3 sm:p-5">
+    <div className="px-3 py-4 sm:px-6">
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
           label="Realized YTD"
@@ -185,10 +185,10 @@ export function RealizedPanel({
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
+              <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="sticky top-0 z-10 border-b border-border bg-panel">
+                  <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
                     <SortHeader
                       label={`Symbol${groupedColumnMarker(groupedColumn, "symbol")}`}
                       column="symbol"
@@ -305,7 +305,7 @@ export function RealizedPanel({
                   })}
                 </tbody>
                 <tfoot>
-                  <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+                  <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
                     <td className={`${CELL} text-left text-foreground`} colSpan={labelSpan}>
                       Total
                     </td>

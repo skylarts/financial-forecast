@@ -240,10 +240,10 @@ export function HoldingsTable({
 
   return (
     <div className="overflow-x-auto">
-      <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
+      <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
       <table className="w-full border-collapse">
         <thead>
-          <tr className="sticky top-0 z-10 border-b border-border bg-panel">
+          <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
             <SortHeader
               label="Holding"
               column="symbol"
@@ -403,7 +403,7 @@ export function HoldingsTable({
           })}
         </tbody>
         <tfoot>
-          <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+          <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
             <td className={`${CELL} text-left text-foreground`} colSpan={labelSpan}>
               Total
             </td>

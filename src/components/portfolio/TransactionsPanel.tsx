@@ -549,7 +549,7 @@ export function TransactionsPanel({
   const splitValid = splitFraction > 0 && splitFraction < 1;
 
   return (
-    <div className="p-3 sm:p-5">
+    <div className="px-3 py-4 sm:px-6">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[14px] font-semibold text-foreground">
           Transactions
@@ -749,10 +749,10 @@ export function TransactionsPanel({
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
+          <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="sticky top-0 z-10 border-b border-border bg-panel">
+              <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
                 <th className={`${HEAD} w-8 text-center`}>
                   <input
                     type="checkbox"
@@ -958,7 +958,7 @@ export function TransactionsPanel({
               })}
             </tbody>
             <tfoot>
-              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
                 <td className={`${CELL} text-left text-foreground`} colSpan={5}>
                   Total
                 </td>

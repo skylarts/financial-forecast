@@ -240,7 +240,7 @@ export function AccountsPanel({
   const editing = rows.find((r) => r.account.id === settingsFor) ?? null;
 
   return (
-    <div className="p-3 sm:p-5">
+    <div className="px-3 py-4 sm:px-6">
       {/* Heading and its action share the top line; the explanation sits under
           both. Wrapping the paragraph in beside the button squeezed "Add
           account" into a two-line sliver of a button. */}
@@ -278,10 +278,10 @@ export function AccountsPanel({
           No accounts yet. Add one to start tracking holdings.
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto rounded-lg border border-border bg-panel">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-border">
+              <tr className="border-b border-border bg-panel-2">
                 {[
                   { label: "Account", align: "text-left" },
                   {

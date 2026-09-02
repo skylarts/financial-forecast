@@ -551,47 +551,28 @@ export function PortfolioApp() {
   return (
     <>
       <ThemeSync />
-      {/* One row at every width: title, scope picker, then the actions hard
-          right. What buys the room on a phone is the scope picker flexing to
-          whatever is left over, "transactions" dropping off the import button,
-          and the connection badge hiding -- the feed it names is already
-          spelled out in the notice bar below on a narrow screen. */}
-      <header className="flex flex-nowrap items-center gap-2 border-b border-border bg-panel px-3 py-3 sm:px-6">
-        {/* Below 360px the scope picker cannot show "All accounts" in full with
-            this heading also on the row, and a picker truncated to "All acco"
-            is worse than no heading -- the bottom tab bar already names the
-            section and marks it current. Everything at 360px and up keeps it. */}
-        <h1 className="hidden shrink-0 text-[15px] font-semibold text-foreground min-[360px]:block sm:text-[16px]">
-          Portfolio
-        </h1>
+      {/* The same shape as the forecast's header, deliberately: a brand mark
+          and the tool's name on the left, the actions that change data hard
+          right, and the top-level views on their own line underneath. Two
+          tools that share a shell should not each invent their own chrome.
 
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value)}
-          aria-label="Scope the portfolio to a person or account"
-          className="min-w-0 flex-1 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground sm:flex-none"
-        >
-            <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
-            <optgroup label="By person">
-              {people.map((p) => (
-                <option key={p.id} value={ownerScope(p.id)}>
-                  {p.name}
-                </option>
-              ))}
-              <option value={JOINT_OWNER_SCOPE}>Joint</option>
-            </optgroup>
-            <optgroup label="By account">
-              {portfolio.accounts.map((a) => (
-                <option key={a.id} value={accountScope(a.id)}>
-                  {a.name}
-                </option>
-              ))}
-            </optgroup>
-        </select>
+          No panel fill here -- the header sits on the page background so the
+          lighter panel surfaces below it (the control bar, the cards, the
+          tables) read as things layered *on* the page rather than as more
+          chrome. */}
+      <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-3 py-3 sm:px-6 sm:py-3.5">
+        <div className="flex items-center gap-2.5">
+          <span
+            aria-hidden
+            className="block h-5 w-2 rounded-[3px] bg-gradient-to-b from-accent-line to-accent"
+          />
+          <h1 className="text-[15px] font-bold leading-tight tracking-tight">Portfolio</h1>
+        </div>
 
-        {/* Hard right, and in one group so the primary action sits beside the
-            tools rather than on a line of its own. */}
-        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+        {/* Pinned to the top-right corner at every width, same as the forecast:
+            the corner belongs to the controls that act on your data, not to a
+            tab strip that only says where you are. */}
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
           <Btn
             variant="primary"
             onClick={() => {
@@ -642,89 +623,86 @@ export function PortfolioApp() {
             onLoadDemo={handleLoadDemo}
           />
         </div>
+
+        {/* The six top-level views, as an underline strip on its own line --
+            the forecast's exact treatment. They used to be a filled segmented
+            control further down the page, which put the same solid accent fill
+            on "where you are" as on the buttons that do something, and buried
+            the tab strip under three bands of summary and notices.
+
+            `w-full` claims its own line at every width, and the negative margin
+            bleeds it to the screen edge so a tab clipped by the edge is what
+            tells you there is more to swipe to on a phone. */}
+        <nav
+          className="scroll-strip -mx-3 -mb-3 flex w-full items-center gap-0.5 px-3 sm:-mx-6 sm:-mb-3.5 sm:px-6"
+          aria-label="Portfolio views"
+        >
+          {TABS.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              aria-current={t.value === tab}
+              onClick={() => setTab(t.value)}
+              className={`whitespace-nowrap border-b-2 px-3.5 py-2 pb-3.5 text-[13px] transition-colors ${
+                t.value === tab
+                  ? "border-accent font-semibold text-foreground"
+                  : "border-transparent font-medium text-dim hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
       </header>
 
-      {flash && (
-        <div className="flex items-center justify-between gap-3 border-b border-border bg-panel-2 px-3 sm:px-6 py-2 text-[12.5px] text-foreground">
-          <span>{flash.text}</span>
-          <div className="flex shrink-0 items-center gap-3">
-            {flash.undoBatch && (
-              <button
-                type="button"
-                onClick={() => handleUndoImport(flash.undoBatch!, flash.text.includes("replacing"))}
-                className="text-accent hover:underline"
-                title="Remove every transaction this import added"
-              >
-                Undo import
-              </button>
-            )}
-            <button type="button" onClick={() => setFlash(null)} className="text-dim hover:text-foreground">
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
+      {/* The control bar: everything that narrows what the views below show,
+          in one strip on the panel surface directly under the header. It is
+          the forecast's ViewBar in the same position with the same treatment
+          -- there, the year range and dollar mode; here, the account scope,
+          the search box, and the facet filters.
 
-      {analysis.warnings.length > 0 && (
-        <div className="border-b border-border bg-panel-2 px-3 sm:px-6 py-2">
-          <details>
-            <summary className="cursor-pointer text-[12.5px] text-accent">
-              {analysis.warnings.length === 1
-                ? "1 transaction needs a look"
-                : `${analysis.warnings.length} transactions need a look`}
-            </summary>
-            <ul className="mt-1.5 space-y-1">
-              {analysis.warnings.map((warning, i) => (
-                <li key={i} className="text-[12px] text-dim">
-                  {shortDate(warning.date)} · {warning.symbol} — {warning.message}
-                </li>
+          The scope picker moved down out of the header to join them. It was
+          the odd one out up there: a control that reshapes every view, sitting
+          in the row reserved for actions. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-panel px-3 py-2 sm:px-6 sm:py-2.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <select
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            aria-label="Scope the portfolio to a person or account"
+            className="min-w-0 max-w-full rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px] text-foreground"
+          >
+            <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
+            <optgroup label="By person">
+              {people.map((p) => (
+                <option key={p.id} value={ownerScope(p.id)}>
+                  {p.name}
+                </option>
               ))}
-            </ul>
-          </details>
+              <option value={JOINT_OWNER_SCOPE}>Joint</option>
+            </optgroup>
+            <optgroup label="By account">
+              {portfolio.accounts.map((a) => (
+                <option key={a.id} value={accountScope(a.id)}>
+                  {a.name}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search symbol or name"
+            aria-label="Search the portfolio"
+            className="min-w-[8rem] flex-1 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56 sm:flex-none"
+          />
+          <FilterMenu
+            sections={filterSections}
+            onChange={setFacet}
+            onClearAll={() => setFacets(emptyHoldingFacets())}
+          />
+          <FilterChips sections={filterSections} onChange={setFacet} />
         </div>
-      )}
-
-      <SummaryCards
-        portfolio={portfolio}
-        summary={summary}
-        holdings={analysis.holdings}
-        scopeAccountIds={scopeAccountIds}
-        loadingQuotes={pricesLoading}
-      />
-
-      <ExpiredContractsNotice
-        contracts={analysis.expiredContracts}
-        onRecord={handleRecordExpiry}
-      />
-
-      <SchwabConnection />
-
-      <PriceFeedNotice
-        unknown={displayUnknown}
-        unavailable={displayUnavailable}
-        stale={staleSymbols}
-        onRetry={refresh}
-        retrying={pricesLoading}
-      />
-
-      {/* Above the tabs because it applies to all of them, and below the
-          summary cards because it does not apply to those -- the cards answer
-          to the account picker in the header, which is the one scope control
-          with a wider reach than the tabs. */}
-      <div className="flex flex-wrap items-center gap-2 px-3 sm:px-6 pb-3 pt-1">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search symbol or name"
-          aria-label="Search the portfolio"
-          className="w-full rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56"
-        />
-        <FilterMenu
-          sections={filterSections}
-          onChange={setFacet}
-          onClearAll={() => setFacets(emptyHoldingFacets())}
-        />
-        <FilterChips sections={filterSections} onChange={setFacet} />
         <FilterStatus
           shown={scopedHoldings.length}
           total={analysis.holdings.length}
@@ -737,40 +715,116 @@ export function PortfolioApp() {
         />
       </div>
 
-      {/* Six tabs never fit a phone, so the strip scrolls sideways and bleeds
-          to the screen edge rather than wrapping into a block. */}
-      <div className="scroll-strip border-b border-border px-3 sm:px-6">
-        <div className="w-max">
-          <Segmented options={TABS} value={tab} onChange={setTab} size="sm" ariaLabel="Portfolio view" />
-        </div>
+      {/* Banners, in the content gutter as inset cards rather than as
+          full-bleed bands of panel-2. Full-bleed read as more header: on a
+          quiet day the page opened with four stacked strips of chrome before
+          any of your money appeared. As cards they sit in the same column as
+          the summary and the tables, and disappear cleanly when there is
+          nothing to say (`empty:hidden` collapses the gap too). */}
+      <div className="flex flex-col gap-3 px-3 pt-4 sm:px-6 empty:hidden">
+        {flash && (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 p-3 text-[12.5px] text-foreground">
+            <span>{flash.text}</span>
+            <div className="flex shrink-0 items-center gap-3">
+              {flash.undoBatch && (
+                <button
+                  type="button"
+                  onClick={() => handleUndoImport(flash.undoBatch!, flash.text.includes("replacing"))}
+                  className="text-accent hover:underline"
+                  title="Remove every transaction this import added"
+                >
+                  Undo import
+                </button>
+              )}
+              <button type="button" onClick={() => setFlash(null)} className="text-dim hover:text-foreground">
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {analysis.warnings.length > 0 && (
+          <div className="rounded-lg border border-accent/40 bg-accent/10 p-3">
+            <details>
+              <summary className="cursor-pointer text-[12.5px] text-accent">
+                {analysis.warnings.length === 1
+                  ? "1 transaction needs a look"
+                  : `${analysis.warnings.length} transactions need a look`}
+              </summary>
+              <ul className="mt-1.5 space-y-1">
+                {analysis.warnings.map((warning, i) => (
+                  <li key={i} className="text-[12px] text-dim">
+                    {shortDate(warning.date)} · {warning.symbol} — {warning.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
+        )}
+
+        <ExpiredContractsNotice
+          contracts={analysis.expiredContracts}
+          onRecord={handleRecordExpiry}
+        />
+
+        <SchwabConnection />
+
+        <PriceFeedNotice
+          unknown={displayUnknown}
+          unavailable={displayUnavailable}
+          stale={staleSymbols}
+          onRetry={refresh}
+          retrying={pricesLoading}
+        />
       </div>
 
       <main className="flex-1">
+        {/* The summary cards belong to Holdings, the way the forecast's KPI
+            bento belongs to its Overview -- Holdings is where you come to see
+            what you own, and these four cards are that question answered in
+            one line each.
+
+            They used to render above every tab. With the tab strip up in the
+            header they read as part of whichever tab is showing, which they
+            are not, and on two tabs they printed the same figure twice: the
+            Performance card sat directly above Performance's own return
+            tiles, and Gains & losses above Realized's. A number that appears
+            twice on one screen invites the reader to look for the difference
+            between them. */}
         {tab === "holdings" && (
-          <div className="p-3 sm:p-5">
-            {/* Only the side filter is Holdings' own now -- search and the
-                facets moved to the bar above the tabs. */}
-            {hasShorts && (
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Segmented
-                  options={SIDE_FILTERS}
-                  value={sideFilter}
-                  onChange={setSideFilter}
-                  size="sm"
-                  ariaLabel="Filter by position side"
-                />
-              </div>
-            )}
-            <HoldingsTable
-              holdings={visibleHoldings}
-              accountNames={accountNames}
-              showAccount={soleAccountId === null}
-              grouping={grouping}
-              onGroupingChange={setGrouping}
-              collapse={holdingCollapse}
-              onSelect={(holding) => openPosition(holding.symbol, holding.accountId)}
+          <>
+            <SummaryCards
+              portfolio={portfolio}
+              summary={summary}
+              holdings={analysis.holdings}
+              scopeAccountIds={scopeAccountIds}
+              loadingQuotes={pricesLoading}
             />
-          </div>
+            <div className="px-3 pb-4 sm:px-6">
+              {/* Only the side filter is Holdings' own now -- search and the
+                  facets live in the control bar under the header. */}
+              {hasShorts && (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <Segmented
+                    options={SIDE_FILTERS}
+                    value={sideFilter}
+                    onChange={setSideFilter}
+                    size="sm"
+                    ariaLabel="Filter by position side"
+                  />
+                </div>
+              )}
+              <HoldingsTable
+                holdings={visibleHoldings}
+                accountNames={accountNames}
+                showAccount={soleAccountId === null}
+                grouping={grouping}
+                onGroupingChange={setGrouping}
+                collapse={holdingCollapse}
+                onSelect={(holding) => openPosition(holding.symbol, holding.accountId)}
+              />
+            </div>
+          </>
         )}
 
         {tab === "allocation" && (
