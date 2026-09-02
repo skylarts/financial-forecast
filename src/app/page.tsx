@@ -152,13 +152,13 @@ function HomeContent() {
       {/* Banners sit above whichever view is showing -- a stale plan or an
           insufficient-funds warning is worth seeing regardless of which tab
           you happen to be on. */}
-      <div className="flex flex-col gap-3 px-6 pt-4 empty:hidden">
+      <div className="flex flex-col gap-3 px-3 sm:px-6 pt-4 empty:hidden">
         <StalePlanBanner scenario={scenario} />
         <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
       </div>
 
       {view === "Overview" ? (
-        <main className="flex w-full flex-1 flex-col gap-3 px-6 py-4">
+        <main className="flex w-full flex-1 flex-col gap-3 px-3 sm:px-6 py-4">
           {isJoy && <JoyQuote />}
           <OverviewBento
             kpis={projection.kpis}
@@ -205,7 +205,7 @@ function HomeContent() {
           />
         </main>
       ) : (
-        <main className="flex w-full flex-1 flex-col px-6 py-4">
+        <main className="flex w-full flex-1 flex-col px-3 sm:px-6 py-4">
           <DetailTabs
             active={view}
           accounts={projection.accounts}

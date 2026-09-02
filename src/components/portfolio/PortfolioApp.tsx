@@ -551,15 +551,26 @@ export function PortfolioApp() {
   return (
     <>
       <ThemeSync />
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-panel px-6 py-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
-          <select
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            aria-label="Scope the portfolio to a person or account"
-            className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
-          >
+      {/* One row at every width: title, scope picker, then the actions hard
+          right. What buys the room on a phone is the scope picker flexing to
+          whatever is left over, "transactions" dropping off the import button,
+          and the connection badge hiding -- the feed it names is already
+          spelled out in the notice bar below on a narrow screen. */}
+      <header className="flex flex-nowrap items-center gap-2 border-b border-border bg-panel px-3 py-3 sm:px-6">
+        {/* Below 360px the scope picker cannot show "All accounts" in full with
+            this heading also on the row, and a picker truncated to "All acco"
+            is worse than no heading -- the bottom tab bar already names the
+            section and marks it current. Everything at 360px and up keeps it. */}
+        <h1 className="hidden shrink-0 text-[15px] font-semibold text-foreground min-[360px]:block sm:text-[16px]">
+          Portfolio
+        </h1>
+
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          aria-label="Scope the portfolio to a person or account"
+          className="min-w-0 flex-1 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground sm:flex-none"
+        >
             <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
             <optgroup label="By person">
               {people.map((p) => (
@@ -576,22 +587,11 @@ export function PortfolioApp() {
                 </option>
               ))}
             </optgroup>
-          </select>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Btn
-            onClick={refreshPrices}
-            title="Refetch quotes now"
-            ariaLabel="Refresh prices"
-            className="px-2.5"
-          >
-            <span aria-hidden className={pricesLoading ? "inline-block animate-spin" : undefined}>
-              ↻
-            </span>
-          </Btn>
-          {/* Beside the refresh control because it answers the question that
-              control raises: refreshed from where. */}
-          <SchwabBadge />
+        </select>
+
+        {/* Hard right, and in one group so the primary action sits beside the
+            tools rather than on a line of its own. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           <Btn
             variant="primary"
             onClick={() => {
@@ -611,8 +611,31 @@ export function PortfolioApp() {
               setImporting(true);
             }}
           >
-            Import transactions
+            <span className="whitespace-nowrap">
+              Import<span className="hidden sm:inline"> transactions</span>
+            </span>
           </Btn>
+          <Btn
+            onClick={refreshPrices}
+            title="Refetch quotes now"
+            ariaLabel="Refresh prices"
+            className="px-2.5"
+          >
+            <span aria-hidden className={pricesLoading ? "inline-block animate-spin" : undefined}>
+              ↻
+            </span>
+          </Btn>
+          {/* Beside the refresh control because it answers the question that
+              control raises: refreshed from where. Hidden on a phone, where
+              its two words are the difference between this bar fitting on one
+              line and not -- the same status is spelled out in the feed notice
+              further down the page. */}
+          {/* `contents`, not `inline-flex`: the badge renders nothing until a
+              Schwab app is configured, and a wrapper that generates a box
+              would still claim one of this row's gaps when it is empty. */}
+          <span className="hidden sm:contents">
+            <SchwabBadge />
+          </span>
           <PortfolioMenu
             portfolio={portfolio}
             canLoadDemo={portfolio.transactions.length === 0}
@@ -622,7 +645,7 @@ export function PortfolioApp() {
       </header>
 
       {flash && (
-        <div className="flex items-center justify-between gap-3 border-b border-border bg-panel-2 px-6 py-2 text-[12.5px] text-foreground">
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-panel-2 px-3 sm:px-6 py-2 text-[12.5px] text-foreground">
           <span>{flash.text}</span>
           <div className="flex shrink-0 items-center gap-3">
             {flash.undoBatch && (
@@ -643,7 +666,7 @@ export function PortfolioApp() {
       )}
 
       {analysis.warnings.length > 0 && (
-        <div className="border-b border-border bg-panel-2 px-6 py-2">
+        <div className="border-b border-border bg-panel-2 px-3 sm:px-6 py-2">
           <details>
             <summary className="cursor-pointer text-[12.5px] text-accent">
               {analysis.warnings.length === 1
@@ -688,13 +711,13 @@ export function PortfolioApp() {
           summary cards because it does not apply to those -- the cards answer
           to the account picker in the header, which is the one scope control
           with a wider reach than the tabs. */}
-      <div className="flex flex-wrap items-center gap-2 px-6 pb-3 pt-1">
+      <div className="flex flex-wrap items-center gap-2 px-3 sm:px-6 pb-3 pt-1">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search symbol or name"
           aria-label="Search the portfolio"
-          className="w-56 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
+          className="w-full rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56"
         />
         <FilterMenu
           sections={filterSections}
@@ -714,13 +737,17 @@ export function PortfolioApp() {
         />
       </div>
 
-      <div className="border-b border-border px-6">
-        <Segmented options={TABS} value={tab} onChange={setTab} size="sm" ariaLabel="Portfolio view" />
+      {/* Six tabs never fit a phone, so the strip scrolls sideways and bleeds
+          to the screen edge rather than wrapping into a block. */}
+      <div className="scroll-strip border-b border-border px-3 sm:px-6">
+        <div className="w-max">
+          <Segmented options={TABS} value={tab} onChange={setTab} size="sm" ariaLabel="Portfolio view" />
+        </div>
       </div>
 
       <main className="flex-1">
         {tab === "holdings" && (
-          <div className="p-5">
+          <div className="p-3 sm:p-5">
             {/* Only the side filter is Holdings' own now -- search and the
                 facets moved to the bar above the tabs. */}
             {hasShorts && (

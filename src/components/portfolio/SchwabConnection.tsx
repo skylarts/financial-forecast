@@ -149,7 +149,7 @@ export function SchwabConnection() {
 
 function Bar({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-panel-2 px-6 py-2.5 text-[12.5px]">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-panel-2 px-3 sm:px-6 py-2.5 text-[12.5px]">
       {children}
     </div>
   );

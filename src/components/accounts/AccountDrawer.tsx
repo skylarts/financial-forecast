@@ -469,8 +469,8 @@ export function AccountDrawer({
               Remove
             </button>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className={labelClass}>
+          <div className="grid grid-cols-2 items-end gap-2 sm:flex sm:flex-wrap">
+            <label className={`${labelClass} min-w-0`}>
               Starts on{i === 0 ? " (blank = plan start)" : ""}
               <input
                 className={inputClass}
@@ -479,7 +479,7 @@ export function AccountDrawer({
                 onChange={(e) => updateContribRow(row.key, { startDate: e.target.value })}
               />
             </label>
-            <label className={labelClass}>
+            <label className={`${labelClass} min-w-0`}>
               Amount (per occurrence)
               <MoneyInput
                 value={row.amount}
@@ -487,7 +487,7 @@ export function AccountDrawer({
                 onChange={(e) => updateContribRow(row.key, { amount: e.target.value })}
               />
             </label>
-            <label className={labelClass}>
+            <label className={`${labelClass} min-w-0`}>
               Frequency
               <select
                 className={inputClass}
@@ -502,8 +502,8 @@ export function AccountDrawer({
               </select>
             </label>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className={labelClass}>
+          <div className="grid grid-cols-2 items-end gap-2 sm:flex sm:flex-wrap">
+            <label className={`${labelClass} min-w-0`}>
               <span className="inline-flex items-center gap-1">
                 Growth rate (per year)
                 <InfoTooltip text={`How the contribution amount itself rises over time. Blank = matches inflation (${inflationPctLabel}%); 0 = stays flat.`} />
@@ -514,7 +514,7 @@ export function AccountDrawer({
                 onChange={(e) => updateContribRow(row.key, { growthRatePct: e.target.value })}
               />
             </label>
-            <label className={labelClass}>
+            <label className={`${labelClass} min-w-0`}>
               <span className="inline-flex items-center gap-1">
                 Funded from
                 <InfoTooltip text="Paycheck deduction (e.g. 401k) grows this account without reducing take-home cash -- enter income net of it. Take-home pay (e.g. Roth IRA, brokerage) is drawn from your spending account each period." />
@@ -531,7 +531,7 @@ export function AccountDrawer({
                 ))}
               </select>
             </label>
-            <label className={labelClass}>
+            <label className={`${labelClass} min-w-0`}>
               <span className="inline-flex items-center gap-1">
                 Ends on (optional)
                 <InfoTooltip text="Leave blank to stop automatically when this account's owner retires. Each change takes over when the next one starts." />
@@ -578,8 +578,8 @@ export function AccountDrawer({
               Loan Details
               <InfoTooltip text="The balance above is amortized monthly at this rate and term -- a payment is drawn from your spending account automatically, same as a mortgage." />
             </div>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className={labelClass}>
+            <div className="grid grid-cols-2 items-end gap-2 sm:flex sm:flex-wrap">
+              <label className={`${labelClass} min-w-0`}>
                 Interest rate (per year)
                 <PercentInput
                   value={loanDraft.annualInterestRatePct}
@@ -587,7 +587,7 @@ export function AccountDrawer({
                   onChange={(e) => setLoanDraft((d) => ({ ...d, annualInterestRatePct: e.target.value }))}
                 />
               </label>
-              <label className={labelClass}>
+              <label className={`${labelClass} min-w-0`}>
                 Years remaining
                 <input
                   className={inputClass}
@@ -598,7 +598,7 @@ export function AccountDrawer({
                   onChange={(e) => setLoanDraft((d) => ({ ...d, termYears: e.target.value }))}
                 />
               </label>
-              <label className={labelClass}>
+              <label className={`${labelClass} min-w-0`}>
                 <span className="inline-flex items-center gap-1">
                   Monthly payment (optional)
                   <InfoTooltip text="Leave blank to calculate automatically from the balance, rate, and remaining term." />
@@ -609,7 +609,7 @@ export function AccountDrawer({
                   onChange={(e) => setLoanDraft((d) => ({ ...d, monthlyPayment: e.target.value }))}
                 />
               </label>
-              <label className={labelClass}>
+              <label className={`${labelClass} min-w-0`}>
                 <span className="inline-flex items-center gap-1">
                   Extra principal / month (optional)
                   <InfoTooltip text="Paid on top of the scheduled payment -- shortens the term and pays the loan off early, same as a mortgage's extra principal." />
@@ -681,7 +681,7 @@ export function AccountDrawer({
                 <div className="text-xs font-semibold uppercase tracking-wide text-dim">Scheduled growth-rate changes</div>
                 {growthRows.map((row) => (
                   <div key={row.key} className="flex items-end gap-2 rounded-md border border-border p-2">
-                    <label className={labelClass}>
+                    <label className={`${labelClass} min-w-0`}>
                       Starting
                       <input
                         className={inputClass}
@@ -690,7 +690,7 @@ export function AccountDrawer({
                         onChange={(e) => updateGrowthRow(row.key, { startDate: e.target.value })}
                       />
                     </label>
-                    <label className={labelClass}>
+                    <label className={`${labelClass} min-w-0`}>
                       New rate
                       <PercentInput
                         value={row.ratePct}

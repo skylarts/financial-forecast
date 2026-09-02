@@ -52,6 +52,10 @@ function isActive(pathname: string, href: string): boolean {
   return href === "/" ? pathname === "/" : pathname.startsWith(href);
 }
 
+/**
+ * The desktop rail. Hidden below `md`, where a 176px column would eat half a
+ * phone's width -- that layout hands its job to `MobileTabBar` instead.
+ */
 export function SideNav() {
   const pathname = usePathname();
   const collapsed = useSyncExternalStore(
@@ -63,7 +67,7 @@ export function SideNav() {
   return (
     <nav
       aria-label="Sections"
-      className={`sticky top-0 flex h-screen shrink-0 flex-col border-r border-border bg-panel-2 transition-[width] duration-150 ${
+      className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border bg-panel-2 transition-[width] duration-150 md:flex ${
         collapsed ? "w-[56px]" : "w-[176px]"
       }`}
     >
@@ -106,6 +110,46 @@ export function SideNav() {
       >
         {collapsed ? "»" : "« Collapse"}
       </button>
+    </nav>
+  );
+}
+
+/**
+ * The phone equivalent of the rail: a fixed bottom bar, the convention every
+ * mobile OS already trained people on. Bottom rather than top because it sits
+ * in thumb reach, and because the top of these pages is already dense with the
+ * scenario/scope controls.
+ *
+ * It's `fixed`, so it's out of flow -- `app-shell` in globals.css reserves the
+ * matching bottom padding, including the home-indicator inset, so the last row
+ * of a table is never trapped underneath it.
+ */
+export function MobileTabBar() {
+  const pathname = usePathname();
+
+  return (
+    <nav
+      aria-label="Sections"
+      className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-panel-2 pb-[env(safe-area-inset-bottom)] md:hidden"
+    >
+      {SECTIONS.map((section) => {
+        const active = isActive(pathname, section.href);
+        return (
+          <Link
+            key={section.href}
+            href={section.href}
+            aria-current={active ? "page" : undefined}
+            className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
+              active ? "text-accent" : "text-dim"
+            }`}
+          >
+            <span aria-hidden className="text-[16px] leading-none">
+              {section.icon}
+            </span>
+            {section.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

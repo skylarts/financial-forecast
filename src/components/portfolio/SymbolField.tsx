@@ -223,7 +223,7 @@ function ContractPicker({
               setRoot(e.target.value);
               setExpiry("");
             }}
-            placeholder="KLAR"
+            placeholder="SPY"
             className={`${INPUT} w-24`}
           />
         </label>
@@ -268,8 +268,8 @@ function ContractPicker({
       {!loading && failed && (
         <p className="text-[11.5px] text-dim">
           Couldn&apos;t read the listing for {debouncedRoot}. Type the contract instead — any of
-          &ldquo;KLAR 01/21/2028 17.50 C&rdquo;, &ldquo;KLAR280121C17.5&rdquo;, or the full
-          &ldquo;KLAR280121C00017500&rdquo; works.
+          &ldquo;SPY 01/15/2027 600 C&rdquo;, &ldquo;SPY270115C600&rdquo;, or the full
+          &ldquo;SPY270115C00600000&rdquo; works.
         </p>
       )}
 
@@ -400,7 +400,7 @@ export function SymbolField({
   const suggestionsVisible = showMatches && matches.length > 0 && !picking;
 
   return (
-    <div className="min-w-[16rem] flex-1">
+    <div className="col-span-2 w-full min-w-0 sm:col-auto sm:min-w-[16rem] sm:flex-1">
       <label className="block text-[11.5px] text-dim-2">
         <span className="mb-0.5 block">{label}</span>
         <div className="relative">
@@ -421,7 +421,7 @@ export function SymbolField({
                 choose(matches[0].symbol);
               }
             }}
-            placeholder="VTI, or KLAR 01/21/2028 17.50 C"
+            placeholder="SPY, or SPY 01/15/2027 600 C"
             autoComplete="off"
             spellCheck={false}
             className={`${INPUT} w-full`}

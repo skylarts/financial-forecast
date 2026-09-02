@@ -35,8 +35,12 @@ export function Btn({
   /** Needed when the button's content is an icon rather than words. */
   ariaLabel?: string;
 }) {
+  // Slightly tighter on a phone. Every one of these sits in a toolbar competing
+  // with a control that actually needs the width -- an account picker, a search
+  // box -- and 4px of padding either side of three buttons is the difference
+  // between that control reading in full and being truncated to nonsense.
   const base =
-    "rounded-md px-3 py-1.5 text-[12.5px] transition-colors disabled:opacity-50";
+    "rounded-md px-2.5 py-1.5 text-[12px] transition-colors disabled:opacity-50 sm:px-3 sm:text-[12.5px]";
   const styles =
     variant === "primary"
       ? "bg-pri text-pri-fg font-semibold border border-transparent hover:brightness-110"

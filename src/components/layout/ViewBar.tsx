@@ -113,8 +113,12 @@ export function ViewBar({
     "rounded-md border border-border bg-panel-2 px-2 py-1 font-mono text-[12px] text-foreground";
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-panel px-6 py-2.5">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-panel px-3 py-2 sm:px-6 sm:py-2.5">
+      {/* On a phone these controls wrapped into three stacked rows and ate a
+          quarter of the viewport before any data showed. Each group instead
+          stays on one line and scrolls sideways, bled to the screen edge; from
+          `sm` up there's room to wrap as before. */}
+      <div className="scroll-strip -mx-3 flex w-full flex-nowrap items-center gap-2 px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0">
         {granularityAvailable && (
           <Segmented
             ariaLabel="Show one column per year or per month"
@@ -126,7 +130,7 @@ export function ViewBar({
         )}
         {showMonths ? (
           <>
-            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+            <label className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-dim-2">
               From
               <select
                 value={monthStart}
@@ -142,7 +146,7 @@ export function ViewBar({
                   ))}
               </select>
             </label>
-            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+            <label className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-dim-2">
               To
               <select
                 value={monthEnd}
@@ -158,20 +162,20 @@ export function ViewBar({
                   ))}
               </select>
             </label>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               {MONTH_PRESETS.filter((p) => p.months <= monthOptions.length).map((p) => (
                 <Chip key={p.months} active={activeMonthPreset?.months === p.months} onClick={() => applyMonthPreset(p.months)}>
                   {p.label}
                 </Chip>
               ))}
             </div>
-            <span className="text-[11.5px] text-dim-2">
+            <span className="hidden whitespace-nowrap text-[11.5px] text-dim-2 sm:inline">
               Monthly detail covers the first {Math.round(monthOptions.length / 12)} years of the plan.
             </span>
           </>
         ) : (
           <>
-            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+            <label className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-dim-2">
               From
               <select
                 value={rangeStart}
@@ -187,7 +191,7 @@ export function ViewBar({
                   ))}
               </select>
             </label>
-            <label className="flex items-center gap-1.5 text-[11.5px] text-dim-2">
+            <label className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-dim-2">
               To
               <select
                 value={rangeEnd}
@@ -203,7 +207,7 @@ export function ViewBar({
                   ))}
               </select>
             </label>
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               {PRESETS.map((n) => (
                 <Chip
                   key={n}
@@ -221,8 +225,10 @@ export function ViewBar({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {savedToBrowser && <span className="text-[11.5px] text-dim-2">Saved to this browser</span>}
+      <div className="scroll-strip -mx-3 flex w-full flex-nowrap items-center gap-2 px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0">
+        {savedToBrowser && (
+          <span className="hidden text-[11.5px] text-dim-2 sm:inline">Saved to this browser</span>
+        )}
         <Segmented
           ariaLabel="Show figures in future or today's dollars"
           options={DOLLAR_OPTIONS}

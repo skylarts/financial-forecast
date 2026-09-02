@@ -328,7 +328,7 @@ export function Header({
   const closeAssumptions = useAssumptionsStore((s) => s.closeAssumptions);
 
   return (
-    <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-6 py-3.5">
+    <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-3 py-3 sm:px-6 sm:py-3.5">
       <div className="flex items-center gap-2.5">
         <span
           aria-hidden
@@ -344,9 +344,54 @@ export function Header({
         </div>
       </div>
 
-      {/* The five top-level views. Underline (not a filled pill) marks the
-          current one, so the primary fill stays reserved for actions. */}
-      <nav className="-mb-3.5 flex items-center gap-0.5 overflow-x-auto" aria-label="Views">
+
+      {/* Pinned to the top-right corner at every width. */}
+      <div className="flex items-center gap-2">
+        {scenarios.length > 2 ? (
+          <ScenarioSwitcher scenario={scenario} />
+        ) : (
+          <>
+            {/* A phone gets the same dropdown that three-plus scenarios trigger
+                on desktop: the side-by-side tab row plus "+ New Scenario" is
+                wider than the screen and pushed the rest of the bar onto a
+                third line, spending a quarter of the viewport on chrome. */}
+            <div className="sm:hidden">
+              <ScenarioSwitcher scenario={scenario} />
+            </div>
+            <nav className="hidden items-center gap-1 rounded-lg border border-border bg-panel p-1 sm:flex">
+              {scenarios.map((s) => (
+                <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
+              ))}
+              <NewScenarioControl scenario={scenario} />
+            </nav>
+          </>
+        )}
+        <Btn id="assumptions-button" variant="primary" onClick={openAssumptions} ariaLabel="Assumptions">
+          <span aria-hidden>⚙</span>
+          <span className="hidden sm:inline"> Assumptions</span>
+        </Btn>
+        <OverflowMenu onOpenWizard={openWizard} />
+      </div>
+
+      {/* The five top-level views, always on their own line beneath the title
+          and the action buttons -- at every width, not just narrow ones.
+
+          The top-right corner is the most reachable and most looked-at spot in
+          the bar, so it belongs to the controls that act on the plan; a tab
+          strip that merely says where you are does not earn it. Making that
+          true only below a breakpoint meant the bar rearranged itself as the
+          window resized, and in landscape the strip took the corner back and
+          pushed the buttons onto a second line. One row of tabs under one row
+          of actions is the same shape at every size.
+
+          It's `w-full` (so it always claims its own line) and a scroll strip,
+          bled to the screen edge by a negative margin that cancels the header
+          gutter -- on a phone the five never fit, and a tab clipped by the
+          edge is what tells you there is more to swipe to. */}
+      <nav
+        className="scroll-strip -mx-3 -mb-3 flex w-full items-center gap-0.5 px-3 sm:-mx-6 sm:-mb-3.5 sm:px-6"
+        aria-label="Views"
+      >
         {VIEWS.map((v) => (
           <button
             key={v}
@@ -363,23 +408,6 @@ export function Header({
           </button>
         ))}
       </nav>
-
-      <div className="flex items-center gap-2">
-        {scenarios.length > 2 ? (
-          <ScenarioSwitcher scenario={scenario} />
-        ) : (
-          <nav className="flex items-center gap-1 rounded-lg border border-border bg-panel p-1">
-            {scenarios.map((s) => (
-              <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
-            ))}
-            <NewScenarioControl scenario={scenario} />
-          </nav>
-        )}
-        <Btn id="assumptions-button" variant="primary" onClick={openAssumptions}>
-          ⚙ Assumptions
-        </Btn>
-        <OverflowMenu onOpenWizard={openWizard} />
-      </div>
       {/* key=scenario.id forces a full remount on scenario switch, so the
           drawer's local form state (settingsDraft, each PersonRow's draft)
           can't go stale relative to whichever scenario is now active. */}

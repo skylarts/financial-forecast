@@ -213,10 +213,16 @@ export function ImportDialog({
   const flagged = importable.filter((row) => row.issues.length > 0).length;
   const replacing = importable.filter((row) => row.syncMatchId !== null).length;
 
+  // Full-bleed on a phone. This dialog's whole job is a paste area, and inset
+  // by a margin inside a centred card there was barely room to see what you
+  // pasted -- the sample CSV alone filled it. Centred card returns at `sm`.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+      onClick={onClose}
+    >
       <div
-        className="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-border bg-panel"
+        className="flex max-h-full w-full max-w-5xl flex-col overflow-hidden border-border bg-panel sm:rounded-lg sm:border"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -294,7 +300,7 @@ export function ImportDialog({
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={`Paste a CSV or markdown table here, for example:\n\n${SAMPLE}`}
-            rows={7}
+            rows={10}
             className="w-full rounded-md border border-border bg-panel-2 px-3 py-2 font-mono text-[11.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
           />
 
@@ -354,7 +360,7 @@ export function ImportDialog({
                           onChange={(e) =>
                             setRouting((prev) => ({ ...prev, [label]: e.target.value }))
                           }
-                          className={`w-44 rounded-md border bg-panel-2 px-2 py-1 text-[11.5px] text-foreground ${
+                          className={`w-full rounded-md border bg-panel-2 px-2 py-1 text-[11.5px] text-foreground sm:w-44 ${
                             resolvedRouting[label] ? "border-border" : "border-negative"
                           }`}
                         >

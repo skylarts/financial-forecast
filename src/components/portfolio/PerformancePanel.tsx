@@ -456,7 +456,7 @@ export function PerformancePanel({
 
   if (portfolio.transactions.length === 0) {
     return (
-      <div className="p-5">
+      <div className="p-3 sm:p-5">
         {/* The switch stays even with nothing to measure -- without it there
             is no way back to the other view from an empty portfolio. */}
         {viewToggle}
@@ -468,7 +468,7 @@ export function PerformancePanel({
   }
 
   return (
-    <div className="p-5">
+    <div className="p-3 sm:p-5">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {viewToggle}
         <Segmented
@@ -489,10 +489,12 @@ export function PerformancePanel({
           size="sm"
           ariaLabel="Performance period"
         />
+        {/* One range, one row: split across two lines the boxes also fell out of
+            alignment, because the "From" label is wider than "To". */}
         {period === "custom" && (
-          <>
-            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-              From
+          <div className="grid w-full grid-cols-2 items-end gap-2 sm:flex sm:w-auto sm:items-center sm:gap-2">
+            <label className="min-w-0 text-[11.5px] text-dim-2 sm:flex sm:items-center sm:gap-1">
+              <span className="mb-0.5 block sm:mb-0">From</span>
               <input
                 type="date"
                 value={draftFrom}
@@ -504,11 +506,11 @@ export function PerformancePanel({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") setCustomFrom(draftFrom);
                 }}
-                className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
+                className="w-full rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent sm:w-auto"
               />
             </label>
-            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-              To
+            <label className="min-w-0 text-[11.5px] text-dim-2 sm:flex sm:items-center sm:gap-1">
+              <span className="mb-0.5 block sm:mb-0">To</span>
               <input
                 type="date"
                 value={draftTo}
@@ -518,10 +520,10 @@ export function PerformancePanel({
                 onKeyDown={(e) => {
                   if (e.key === "Enter") setCustomTo(draftTo);
                 }}
-                className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
+                className="w-full rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent sm:w-auto"
               />
             </label>
-          </>
+          </div>
         )}
       </div>
 

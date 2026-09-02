@@ -173,7 +173,7 @@ export function BySymbolPanel({
 
   if (all.length === 0) {
     return (
-      <div className="p-5">
+      <div className="p-3 sm:p-5">
         {/* The switch stays even with nothing to rank -- without it there is
             no way back to the other view from an empty portfolio. */}
         {viewToggle}
@@ -185,7 +185,7 @@ export function BySymbolPanel({
   }
 
   return (
-    <div className="p-5">
+    <div className="p-3 sm:p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {viewToggle}
         <Segmented

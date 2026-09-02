@@ -6,7 +6,7 @@ import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account
 import { incomeSourceSchema } from "@/domain";
 import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, inputClass } from "@/components/ui/formFields";
+import { Field, FieldRow, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, inputClass } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
@@ -208,26 +208,40 @@ export function IncomeDrawer({
             />
           </Field>
         )}
-        {category !== "social_security" && (
-          <Field label="Frequency">
-            <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+        {/* These two are alternatives, not independent settings -- the second
+            overrides the first -- so they sit side by side where "Or" reads as
+            the choice it is, rather than stacked as two unrelated fields. */}
+        {category !== "social_security" &&
+          (isOneTime ? (
+            <Field label="Frequency">
+              <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+            </Field>
+          ) : (
+            <FieldRow>
+              <Field label="Frequency">
+                <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+              </Field>
+              <Field
+                label="Or every N years"
+                hint="Optional. For a cyclical windfall (e.g. a bonus every few years). Overrides Frequency."
+              >
+                <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 10" />
+              </Field>
+            </FieldRow>
+          ))}
+        {isOneTime ? (
+          <Field label="Date">
+            <TextInput reg={register("startDate", { required: true })} type="date" />
           </Field>
-        )}
-        {category !== "social_security" && !isOneTime && (
-          <Field
-            label="Or repeat every N years (optional)"
-            hint="For a cyclical windfall (e.g. a bonus every few years). Overrides Frequency above."
-          >
-            <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 10" />
-          </Field>
-        )}
-        <Field label={isOneTime ? "Date" : "Start Date"}>
-          <TextInput reg={register("startDate", { required: true })} type="date" />
-        </Field>
-        {!isOneTime && (
-          <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
-            <TextInput reg={register("endDate")} type="date" />
-          </Field>
+        ) : (
+          <FieldRow>
+            <Field label="Start Date">
+              <TextInput reg={register("startDate", { required: true })} type="date" />
+            </Field>
+            <Field label="End Date" hint="Optional -- leave blank to continue indefinitely.">
+              <TextInput reg={register("endDate")} type="date" />
+            </Field>
+          </FieldRow>
         )}
         <Field label="Deposit Account">
           <SelectInput

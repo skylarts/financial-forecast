@@ -5,7 +5,7 @@ import { useForm } from "react-hook-form";
 import type { ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { expenseBaselineSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { Field, FieldRow, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
@@ -146,24 +146,38 @@ export function ExpenseDrawer({
         <Field label="Amount" hint="Per occurrence, today's dollars.">
           <MoneyInput reg={register("amount", { required: true })} placeholder="e.g. 6,500" />
         </Field>
-        <Field label="Frequency">
-          <SelectInput reg={register("frequency")} options={FREQUENCIES} />
-        </Field>
-        {!isOneTime && (
-          <Field
-            label="Or repeat every N years (optional)"
-            hint="For a repeat purchase like a car every few years. Overrides the Frequency above."
-          >
-            <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
+        {/* Alternatives, not independent settings -- the second overrides the
+            first -- so "Or" sits beside what it is an alternative to. */}
+        {isOneTime ? (
+          <Field label="Frequency">
+            <SelectInput reg={register("frequency")} options={FREQUENCIES} />
           </Field>
+        ) : (
+          <FieldRow>
+            <Field label="Frequency">
+              <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+            </Field>
+            <Field
+              label="Or every N years"
+              hint="Optional. For a repeat purchase like a car every few years. Overrides the Frequency."
+            >
+              <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
+            </Field>
+          </FieldRow>
         )}
-        <Field label={isOneTime ? "Date" : "Start Date"}>
-          <TextInput reg={register("startDate", { required: true })} type="date" />
-        </Field>
-        {!isOneTime && (
-          <Field label="End Date (optional)" hint="Leave blank to continue indefinitely.">
-            <TextInput reg={register("endDate")} type="date" />
+        {isOneTime ? (
+          <Field label="Date">
+            <TextInput reg={register("startDate", { required: true })} type="date" />
           </Field>
+        ) : (
+          <FieldRow>
+            <Field label="Start Date">
+              <TextInput reg={register("startDate", { required: true })} type="date" />
+            </Field>
+            <Field label="End Date" hint="Optional -- leave blank to continue indefinitely.">
+              <TextInput reg={register("endDate")} type="date" />
+            </Field>
+          </FieldRow>
         )}
         <Field label="Payment Account">
           <SelectInput
