@@ -329,7 +329,7 @@ export function Header({
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-3 py-3 sm:px-6 sm:py-3.5">
-      <div className="order-1 flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5">
         <span
           aria-hidden
           className="block h-5 w-2 rounded-[3px] bg-gradient-to-b from-accent-line to-accent"
@@ -344,46 +344,9 @@ export function Header({
         </div>
       </div>
 
-      {/* The five top-level views. Underline (not a filled pill) marks the
-          current one, so the primary fill stays reserved for actions.
 
-          On a phone the five never fit, so the row takes the full width and
-          scrolls sideways, bled to the screen edge by a negative margin that
-          cancels the header gutter -- a tab clipped by the edge is what tells
-          you there is more to swipe to.
-
-          `order` puts it on the SECOND line on a phone, under the title and
-          the action buttons. The top-right corner is the most reachable and
-          most looked-at spot in the bar, so it belongs to the controls that
-          act on the plan; a tab strip that merely says where you are does not
-          earn it, and having the strip there pushed the buttons down to a
-          third line. From `sm` up everything fits one line in reading order:
-          title, views, actions. */}
-      <nav
-        className="scroll-strip order-3 -mx-3 -mb-3 flex w-full items-center gap-0.5 px-3 sm:order-2 sm:mx-0 sm:-mb-3.5 sm:w-auto sm:px-0"
-        aria-label="Views"
-      >
-        {VIEWS.map((v) => (
-          <button
-            key={v}
-            type="button"
-            aria-current={v === view}
-            onClick={() => onViewChange(v)}
-            className={`whitespace-nowrap border-b-2 px-3.5 py-2 pb-3.5 text-[13px] transition-colors ${
-              v === view
-                ? "border-accent font-semibold text-foreground"
-                : "border-transparent font-medium text-dim hover:text-foreground"
-            }`}
-          >
-            {v}
-          </button>
-        ))}
-      </nav>
-
-      {/* Pinned to the top-right corner at every width: on a phone `order-2`
-          keeps it on the title's line, so the plan controls are always in the
-          same place rather than moving as the tab strip wraps. */}
-      <div className="order-2 flex items-center gap-2 sm:order-3">
+      {/* Pinned to the top-right corner at every width. */}
+      <div className="flex items-center gap-2">
         {scenarios.length > 2 ? (
           <ScenarioSwitcher scenario={scenario} />
         ) : (
@@ -409,6 +372,42 @@ export function Header({
         </Btn>
         <OverflowMenu onOpenWizard={openWizard} />
       </div>
+
+      {/* The five top-level views, always on their own line beneath the title
+          and the action buttons -- at every width, not just narrow ones.
+
+          The top-right corner is the most reachable and most looked-at spot in
+          the bar, so it belongs to the controls that act on the plan; a tab
+          strip that merely says where you are does not earn it. Making that
+          true only below a breakpoint meant the bar rearranged itself as the
+          window resized, and in landscape the strip took the corner back and
+          pushed the buttons onto a second line. One row of tabs under one row
+          of actions is the same shape at every size.
+
+          It's `w-full` (so it always claims its own line) and a scroll strip,
+          bled to the screen edge by a negative margin that cancels the header
+          gutter -- on a phone the five never fit, and a tab clipped by the
+          edge is what tells you there is more to swipe to. */}
+      <nav
+        className="scroll-strip -mx-3 -mb-3 flex w-full items-center gap-0.5 px-3 sm:-mx-6 sm:-mb-3.5 sm:px-6"
+        aria-label="Views"
+      >
+        {VIEWS.map((v) => (
+          <button
+            key={v}
+            type="button"
+            aria-current={v === view}
+            onClick={() => onViewChange(v)}
+            className={`whitespace-nowrap border-b-2 px-3.5 py-2 pb-3.5 text-[13px] transition-colors ${
+              v === view
+                ? "border-accent font-semibold text-foreground"
+                : "border-transparent font-medium text-dim hover:text-foreground"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </nav>
       {/* key=scenario.id forces a full remount on scenario switch, so the
           drawer's local form state (settingsDraft, each PersonRow's draft)
           can't go stale relative to whichever scenario is now active. */}

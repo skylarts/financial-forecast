@@ -551,24 +551,26 @@ export function PortfolioApp() {
   return (
     <>
       <ThemeSync />
-      {/* Two lines on a phone, one from `sm` up. The split is by role, not by
-          what happens to fit: the title and the always-available tools (refresh,
-          connection status, overflow) hold the top line so the menu sits in the
-          same top-right corner as the forecast's, and the two controls you
-          actually operate -- the scope picker and the primary import action --
-          get the second line to themselves at a usable size. */}
-      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-panel px-3 py-3 sm:px-6">
-        <div className="order-1 flex items-center gap-3">
-          <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
-        </div>
+      {/* One row at every width: title, scope picker, then the actions hard
+          right. What buys the room on a phone is the scope picker flexing to
+          whatever is left over, "transactions" dropping off the import button,
+          and the connection badge hiding -- the feed it names is already
+          spelled out in the notice bar below on a narrow screen. */}
+      <header className="flex flex-nowrap items-center gap-2 border-b border-border bg-panel px-3 py-3 sm:px-6">
+        {/* Below 360px the scope picker cannot show "All accounts" in full with
+            this heading also on the row, and a picker truncated to "All acco"
+            is worse than no heading -- the bottom tab bar already names the
+            section and marks it current. Everything at 360px and up keeps it. */}
+        <h1 className="hidden shrink-0 text-[15px] font-semibold text-foreground min-[360px]:block sm:text-[16px]">
+          Portfolio
+        </h1>
 
-        <div className="order-3 flex w-full items-center gap-2 sm:order-2 sm:w-auto">
-          <select
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            aria-label="Scope the portfolio to a person or account"
-            className="min-w-0 flex-1 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground sm:flex-none"
-          >
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          aria-label="Scope the portfolio to a person or account"
+          className="min-w-0 flex-1 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground sm:flex-none"
+        >
             <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
             <optgroup label="By person">
               {people.map((p) => (
@@ -585,7 +587,11 @@ export function PortfolioApp() {
                 </option>
               ))}
             </optgroup>
-          </select>
+        </select>
+
+        {/* Hard right, and in one group so the primary action sits beside the
+            tools rather than on a line of its own. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
           <Btn
             variant="primary"
             onClick={() => {
@@ -605,11 +611,10 @@ export function PortfolioApp() {
               setImporting(true);
             }}
           >
-            <span className="whitespace-nowrap">Import transactions</span>
+            <span className="whitespace-nowrap">
+              Import<span className="hidden sm:inline"> transactions</span>
+            </span>
           </Btn>
-        </div>
-
-        <div className="order-2 flex items-center gap-2 sm:order-3">
           <Btn
             onClick={refreshPrices}
             title="Refetch quotes now"
@@ -621,8 +626,16 @@ export function PortfolioApp() {
             </span>
           </Btn>
           {/* Beside the refresh control because it answers the question that
-              control raises: refreshed from where. */}
-          <SchwabBadge />
+              control raises: refreshed from where. Hidden on a phone, where
+              its two words are the difference between this bar fitting on one
+              line and not -- the same status is spelled out in the feed notice
+              further down the page. */}
+          {/* `contents`, not `inline-flex`: the badge renders nothing until a
+              Schwab app is configured, and a wrapper that generates a box
+              would still claim one of this row's gaps when it is empty. */}
+          <span className="hidden sm:contents">
+            <SchwabBadge />
+          </span>
           <PortfolioMenu
             portfolio={portfolio}
             canLoadDemo={portfolio.transactions.length === 0}
