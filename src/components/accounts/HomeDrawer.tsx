@@ -317,7 +317,7 @@ export function HomeDrawer({
         )}
 
         {isFinanced && (
-          <div className="flex flex-wrap items-end gap-2">
+          <div className="grid grid-cols-2 items-end gap-2 sm:flex sm:flex-wrap">
             <Field label="Interest Rate (per year)">
               <PercentInput reg={register("mortgageRate")} placeholder="e.g. 6.5" />
             </Field>
