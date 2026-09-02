@@ -456,7 +456,7 @@ export function PerformancePanel({
 
   if (portfolio.transactions.length === 0) {
     return (
-      <div className="p-3 sm:p-5">
+      <div className="px-3 py-4 sm:px-6">
         {/* The switch stays even with nothing to measure -- without it there
             is no way back to the other view from an empty portfolio. */}
         {viewToggle}
@@ -468,7 +468,7 @@ export function PerformancePanel({
   }
 
   return (
-    <div className="p-3 sm:p-5">
+    <div className="px-3 py-4 sm:px-6">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {viewToggle}
         <Segmented

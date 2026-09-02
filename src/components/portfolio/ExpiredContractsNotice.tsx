@@ -58,7 +58,7 @@ export function ExpiredContractsNotice({ contracts, onRecord }: ExpiredContracts
   if (contracts.length === 0) return null;
 
   return (
-    <div className="border-b border-border bg-panel-2 px-3 sm:px-6 py-3">
+    <div className="rounded-lg border border-accent/40 bg-accent/10 p-3">
       <div className="mb-2 text-[12.5px] font-medium text-foreground">
         {contracts.length === 1
           ? "1 option contract is still open past its expiry"

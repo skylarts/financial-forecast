@@ -173,7 +173,7 @@ export function BySymbolPanel({
 
   if (all.length === 0) {
     return (
-      <div className="p-3 sm:p-5">
+      <div className="px-3 py-4 sm:px-6">
         {/* The switch stays even with nothing to rank -- without it there is
             no way back to the other view from an empty portfolio. */}
         {viewToggle}
@@ -185,7 +185,7 @@ export function BySymbolPanel({
   }
 
   return (
-    <div className="p-3 sm:p-5">
+    <div className="px-3 py-4 sm:px-6">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {viewToggle}
         <Segmented
@@ -225,10 +225,10 @@ export function BySymbolPanel({
         <p className="py-8 text-center text-[13px] text-dim">No names match those filters.</p>
       ) : (
         <div className="overflow-x-auto">
-          <div className="max-h-[70vh] overflow-auto rounded-md border border-border-soft">
+          <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="sticky top-0 z-10 border-b border-border bg-panel">
+              <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
                 <SortHeader label="Stock" column="symbol" align="left" sort={sort} onToggle={toggle} />
                 <SortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
                 <SortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
@@ -340,7 +340,7 @@ export function BySymbolPanel({
               })}
             </tbody>
             <tfoot>
-              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel font-semibold">
+              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
                 <td className={`${CELL} text-left text-foreground`}>Total</td>
                 <td className={CELL}></td>
                 <td className={CELL}></td>

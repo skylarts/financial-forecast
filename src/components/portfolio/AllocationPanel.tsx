@@ -272,7 +272,7 @@ export function AllocationPanel({
   };
 
   return (
-    <div className="space-y-6 p-3 sm:p-5">
+    <div className="space-y-6 px-3 py-4 sm:px-6">
       <div className="flex flex-wrap items-center gap-2">
         {/* Seven segments made this the widest control in the app, and the
             labels are long enough that the strip wrapped on a narrow window.
