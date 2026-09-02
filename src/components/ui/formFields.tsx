@@ -18,6 +18,22 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
+/**
+ * Two fields sharing one line.
+ *
+ * The drawers stack every field full width, which is right for a name or an
+ * account picker but wrong for a pair that is really a single idea -- a start
+ * and an end date most of all. Stacked, the two dates read as unrelated
+ * settings that happen to be adjacent, and each spends a whole line on a box
+ * that needs about half of one. Side by side they read as the range they are.
+ *
+ * `items-end` so the inputs line up along their bottom edge even when one
+ * label wraps to two lines and the other doesn't.
+ */
+export function FieldRow({ children }: { children: ReactNode }) {
+  return <div className="grid grid-cols-2 items-end gap-3">{children}</div>;
+}
+
 /** Small "i" badge that reveals `text` in a tooltip on hover/focus -- for
  *  explanatory detail that shouldn't sit inline and lengthen a label. */
 export function InfoTooltip({ text }: { text: string }) {

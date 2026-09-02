@@ -50,6 +50,21 @@ const TX_GROUPINGS: readonly GroupingOption<TxGrouping>[] = [
 
 const INPUT =
   "rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none focus:border-accent";
+/**
+ * Form rows are a two-column grid on a phone and the original free-wrapping
+ * flex row from `sm` up.
+ *
+ * Wrapping alone put fields wherever they happened to fall -- the two dates
+ * landed on separate rows while the wide Type dropdown sat next to a short
+ * date box. A grid makes the pairing a decision instead: short numerics pair
+ * off (shares/price, amount/fees), and anything that needs the width says so
+ * with `col-span-2`.
+ */
+const FORM_ROW = "grid grid-cols-2 items-end gap-2 sm:flex sm:flex-wrap";
+/** Labels are grid items, so they must be allowed to shrink inside a column. */
+const FIELD = "min-w-0 text-[11.5px] text-dim-2";
+/** Full-width in its column on a phone; the fixed width returns at `sm`. */
+const FIELD_WIDE = "col-span-2 min-w-0 text-[11.5px] text-dim-2 sm:col-auto";
 const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
 type TxColumn = "date" | "account" | "type" | "symbol" | "quantity" | "price" | "amount" | "lot";
@@ -170,13 +185,16 @@ function TransactionForm({
 
   return (
     <div className="mb-4 rounded-md border border-border bg-panel-2 p-3">
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="text-[11.5px] text-dim-2">
+      {/* Account gets its own line -- it holds a name, not a number, and is
+          the one field here that is routinely long. Date and Type then split
+          the next line evenly rather than the dropdown crowding out the date. */}
+      <div className={FORM_ROW}>
+        <label className={FIELD_WIDE}>
           <span className="mb-0.5 block">Account</span>
           <select
             value={form.accountId}
             onChange={(e) => set({ accountId: e.target.value })}
-            className={`${INPUT} w-36`}
+            className={`${INPUT} w-full sm:w-36`}
           >
             {accounts.map((account) => (
               <option key={account.id} value={account.id}>
@@ -185,16 +203,21 @@ function TransactionForm({
             ))}
           </select>
         </label>
-        <label className="text-[11.5px] text-dim-2">
+        <label className={FIELD}>
           <span className="mb-0.5 block">Date</span>
-          <input type="date" value={form.date} onChange={(e) => set({ date: e.target.value })} className={INPUT} />
+          <input
+            type="date"
+            value={form.date}
+            onChange={(e) => set({ date: e.target.value })}
+            className={`${INPUT} w-full sm:w-auto`}
+          />
         </label>
-        <label className="text-[11.5px] text-dim-2">
+        <label className={FIELD}>
           <span className="mb-0.5 block">Type</span>
           <select
             value={form.type}
             onChange={(e) => set({ type: e.target.value as TransactionType })}
-            className={INPUT}
+            className={`${INPUT} w-full sm:w-auto`}
           >
             {TRANSACTION_TYPE_GROUPS.map((group) => (
               <optgroup key={group.label} label={group.label}>
@@ -220,39 +243,39 @@ function TransactionForm({
       )}
 
       {isSpinoff && (
-        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md border border-border-soft bg-panel p-2">
+        <div className={`${FORM_ROW} mt-2 rounded-md border border-border-soft bg-panel p-2`}>
           <SymbolField
             value={form.spinoffSymbol}
             onChange={(spinoffSymbol) => set({ spinoffSymbol })}
             label="New symbol"
           />
-          <label className="text-[11.5px] text-dim-2">
+          <label className={FIELD}>
             <span className="mb-0.5 block">Share ratio</span>
             <input
               value={form.spinoffShareRatio}
               onChange={(e) => set({ spinoffShareRatio: e.target.value })}
               placeholder="0.3333"
               title="New shares issued per one existing share, e.g. 1 VLTO for every 3 DHR is 0.3333."
-              className={`${INPUT} w-24 text-right`}
+              className={`${INPUT} w-full text-right sm:w-24`}
             />
           </label>
-          <label className="text-[11.5px] text-dim-2">
+          <label className={FIELD}>
             <span className="mb-0.5 block">Basis retained</span>
             <input
               value={form.spinoffBasisRetained}
               onChange={(e) => set({ spinoffBasisRetained: e.target.value })}
               placeholder="88.34"
               title="Percent of cost basis staying with the existing symbol -- from the company's Form 8937. 0 for a full exchange or reorganization, where the existing symbol stops existing."
-              className={`${INPUT} w-24 text-right`}
+              className={`${INPUT} w-full text-right sm:w-24`}
             />
           </label>
         </div>
       )}
 
-      <div className="mt-2 flex flex-wrap items-end gap-2">
+      <div className={`${FORM_ROW} mt-2`}>
         {!isSpinoff && (
           <>
-            <label className="text-[11.5px] text-dim-2">
+            <label className={FIELD}>
               <span className="mb-0.5 block">
                 {form.type === "split" ? "Ratio" : isOptionLifecycleType(form.type) ? "Contracts" : "Shares"}
               </span>
@@ -260,10 +283,10 @@ function TransactionForm({
                 value={form.quantity}
                 onChange={(e) => set({ quantity: e.target.value })}
                 placeholder={form.type === "split" ? "2" : isOptionLifecycleType(form.type) ? "1" : "10"}
-                className={`${INPUT} w-24 text-right`}
+                className={`${INPUT} w-full text-right sm:w-24`}
               />
             </label>
-            <label className="text-[11.5px] text-dim-2">
+            <label className={FIELD}>
               <span className="mb-0.5 block">Price</span>
               <input
                 value={form.price}
@@ -272,55 +295,55 @@ function TransactionForm({
                 // worth nothing, and an exercise settles through its stock leg.
                 disabled={isOptionLifecycleType(form.type)}
                 placeholder={isOptionLifecycleType(form.type) ? "—" : "220.50"}
-                className={`${INPUT} w-24 text-right disabled:opacity-40`}
+                className={`${INPUT} w-full text-right disabled:opacity-40 sm:w-24`}
               />
             </label>
-            <label className="text-[11.5px] text-dim-2">
+            <label className={FIELD}>
               <span className="mb-0.5 block">Amount</span>
               <input
                 value={form.amount}
                 onChange={(e) => set({ amount: e.target.value })}
                 placeholder="auto"
                 title="Leave blank to compute from shares × price."
-                className={`${INPUT} w-24 text-right`}
+                className={`${INPUT} w-full text-right sm:w-24`}
               />
             </label>
-            <label className="text-[11.5px] text-dim-2">
+            <label className={FIELD}>
               <span className="mb-0.5 block">Fees</span>
               <input
                 value={form.fees}
                 onChange={(e) => set({ fees: e.target.value })}
                 placeholder="0"
-                className={`${INPUT} w-20 text-right`}
+                className={`${INPUT} w-full text-right sm:w-20`}
               />
             </label>
           </>
         )}
         {(opensLot || closesLot) && (
-          <label className="text-[11.5px] text-dim-2">
+          <label className={FIELD_WIDE}>
             <span className="mb-0.5 block">Lot ID</span>
             <input
               value={form.lotId}
               onChange={(e) => set({ lotId: e.target.value })}
               placeholder="auto"
               title={lotHint}
-              className={`${INPUT} w-44`}
+              className={`${INPUT} w-full sm:w-44`}
             />
           </label>
         )}
         {opensLot && (
-          <label className="text-[11.5px] text-dim-2">
+          <label className={FIELD_WIDE}>
             <span className="mb-0.5 block">Acquired</span>
             <input
               type="date"
               value={form.acquiredDate}
               onChange={(e) => set({ acquiredDate: e.target.value })}
               title="For transferred-in shares, the original purchase date that starts the holding period."
-              className={INPUT}
+              className={`${INPUT} w-full sm:w-auto`}
             />
           </label>
         )}
-        <div className="flex items-center gap-1.5">
+        <div className="col-span-2 flex items-center gap-1.5 sm:col-auto">
           <Btn
             variant="primary"
             onClick={() => {
@@ -526,17 +549,17 @@ export function TransactionsPanel({
   const splitValid = splitFraction > 0 && splitFraction < 1;
 
   return (
-    <div className="p-5">
+    <div className="p-3 sm:p-5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-[14px] font-semibold text-foreground">
           Transactions
           <span className="ml-2 text-[12px] font-normal text-dim-2">{rows.length} rows</span>
         </h2>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto sm:items-center">
           <select
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
-            className={INPUT}
+            className={`${INPUT} w-full sm:w-auto`}
           >
             <option value="all">All types</option>
             {TRANSACTION_TYPE_GROUPS.map((group) => (
@@ -550,19 +573,30 @@ export function TransactionsPanel({
               </optgroup>
             ))}
           </select>
-          <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-            From
-            <input
-              type="date"
-              value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
-              className={INPUT}
-            />
-          </label>
-          <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-            To
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={INPUT} />
-          </label>
+          {/* From and To are one control -- a range -- so they share a row and
+              are never split by a wrap. Their labels sit above the boxes on a
+              phone rather than inline: inline, "From" is wider than "To" and
+              pushed the two date boxes out of alignment with each other. */}
+          <div className="grid w-full grid-cols-2 items-end gap-2 sm:flex sm:w-auto sm:items-center">
+            <label className="min-w-0 text-[11.5px] text-dim-2 sm:flex sm:items-center sm:gap-1">
+              <span className="mb-0.5 block sm:mb-0">From</span>
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className={`${INPUT} w-full sm:w-auto`}
+              />
+            </label>
+            <label className="min-w-0 text-[11.5px] text-dim-2 sm:flex sm:items-center sm:gap-1">
+              <span className="mb-0.5 block sm:mb-0">To</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className={`${INPUT} w-full sm:w-auto`}
+              />
+            </label>
+          </div>
           <FilterStatus
             shown={rows.length}
             total={portfolio.transactions.length}

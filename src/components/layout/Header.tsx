@@ -329,7 +329,7 @@ export function Header({
 
   return (
     <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-3 py-3 sm:px-6 sm:py-3.5">
-      <div className="flex items-center gap-2.5">
+      <div className="order-1 flex items-center gap-2.5">
         <span
           aria-hidden
           className="block h-5 w-2 rounded-[3px] bg-gradient-to-b from-accent-line to-accent"
@@ -350,9 +350,17 @@ export function Header({
           On a phone the five never fit, so the row takes the full width and
           scrolls sideways, bled to the screen edge by a negative margin that
           cancels the header gutter -- a tab clipped by the edge is what tells
-          you there is more to swipe to. */}
+          you there is more to swipe to.
+
+          `order` puts it on the SECOND line on a phone, under the title and
+          the action buttons. The top-right corner is the most reachable and
+          most looked-at spot in the bar, so it belongs to the controls that
+          act on the plan; a tab strip that merely says where you are does not
+          earn it, and having the strip there pushed the buttons down to a
+          third line. From `sm` up everything fits one line in reading order:
+          title, views, actions. */}
       <nav
-        className="scroll-strip -mx-3 -mb-3.5 flex w-full items-center gap-0.5 px-3 sm:mx-0 sm:w-auto sm:px-0"
+        className="scroll-strip order-3 -mx-3 -mb-3 flex w-full items-center gap-0.5 px-3 sm:order-2 sm:mx-0 sm:-mb-3.5 sm:w-auto sm:px-0"
         aria-label="Views"
       >
         {VIEWS.map((v) => (
@@ -372,7 +380,10 @@ export function Header({
         ))}
       </nav>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Pinned to the top-right corner at every width: on a phone `order-2`
+          keeps it on the title's line, so the plan controls are always in the
+          same place rather than moving as the tab strip wraps. */}
+      <div className="order-2 flex items-center gap-2 sm:order-3">
         {scenarios.length > 2 ? (
           <ScenarioSwitcher scenario={scenario} />
         ) : (

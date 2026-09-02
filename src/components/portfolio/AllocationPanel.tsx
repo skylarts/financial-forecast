@@ -115,8 +115,17 @@ function AllocationBars({
               className="h-2.5 w-2.5 shrink-0 rounded-sm"
               style={{ backgroundColor: colorFor(i) }}
             />
-            <div className="w-40 shrink-0 truncate text-[12px] text-dim">{slice.label}</div>
-            <div className="h-3 flex-1 overflow-hidden rounded-sm bg-panel-2">
+            {/* The label takes whatever room is left on a phone; from `sm` up
+                it goes back to a fixed column so the bars line up with each
+                other. */}
+            <div className="min-w-0 flex-1 truncate text-[12px] text-dim sm:w-40 sm:flex-none">
+              {slice.label}
+            </div>
+            {/* The proportion bar is the first thing to go on a narrow screen.
+                Label, percentage and dollar value together already overran the
+                width, and the donut directly above says the same thing -- so
+                the bar is the redundant one, not the number it was clipping. */}
+            <div className="hidden h-3 flex-1 overflow-hidden rounded-sm bg-panel-2 sm:block">
               <div
                 className="h-full rounded-sm"
                 style={{
@@ -125,10 +134,10 @@ function AllocationBars({
                 }}
               />
             </div>
-            <div className="w-16 shrink-0 text-right text-[12px] tabular-nums text-dim">
+            <div className="w-12 shrink-0 text-right text-[12px] tabular-nums text-dim sm:w-16">
               {(slice.weight * 100).toFixed(1)}%
             </div>
-            <div className="w-24 shrink-0 text-right text-[12px] tabular-nums text-foreground">
+            <div className="shrink-0 text-right text-[12px] tabular-nums text-foreground sm:w-24">
               {money(slice.value)}
             </div>
           </div>
@@ -263,7 +272,7 @@ export function AllocationPanel({
   };
 
   return (
-    <div className="space-y-6 p-5">
+    <div className="space-y-6 p-3 sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
         {/* Seven segments made this the widest control in the app, and the
             labels are long enough that the strip wrapped on a narrow window.
@@ -296,7 +305,10 @@ export function AllocationPanel({
             </span>
           </label>
         )}
-        <span className="ml-auto text-[11.5px] tabular-nums text-dim-2">
+        {/* `ml-auto` alone made this wrap onto its own line and sit hard
+            right, reading as a stray fragment; on a phone it lines up under
+            the controls it describes instead. */}
+        <span className="w-full text-[11.5px] tabular-nums text-dim-2 sm:ml-auto sm:w-auto sm:text-right">
           {dimension === "theme" ? (
             <span title="A holding tagged more than once counts at full value in each of its tags, so these slices can add up to more than your total.">
               {slices.length} theme{slices.length === 1 ? "" : "s"}, tags can overlap

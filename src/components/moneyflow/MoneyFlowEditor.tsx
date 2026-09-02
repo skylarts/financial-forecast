@@ -197,24 +197,11 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 onChange={(patch) => updateSplitStop(stop.id, patch)}
               />
               <BalanceBoundNote account={accounts.find((a) => a.id === stop.accountId)} kind="ceiling" />
-              <label className="flex items-center gap-1">
-                Start
-                <input
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="date"
-                  value={stop.startDate ?? ""}
-                  onChange={(e) => updateSplitStop(stop.id, { startDate: e.target.value === "" ? null : e.target.value })}
-                />
-              </label>
-              <label className="flex items-center gap-1">
-                End
-                <input
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="date"
-                  value={stop.endDate ?? ""}
-                  onChange={(e) => updateSplitStop(stop.id, { endDate: e.target.value === "" ? null : e.target.value })}
-                />
-              </label>
+              <ActiveWindowFields
+                startDate={stop.startDate ?? ""}
+                endDate={stop.endDate ?? ""}
+                onChange={(patch) => updateSplitStop(stop.id, patch)}
+              />
             </div>
           </div>
         ))}
@@ -296,24 +283,11 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 onChange={(patch) => updateDrainStop(stop.id, patch)}
               />
               <BalanceBoundNote account={accounts.find((a) => a.id === stop.accountId)} kind="floor" />
-              <label className="flex items-center gap-1">
-                Start
-                <input
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="date"
-                  value={stop.startDate ?? ""}
-                  onChange={(e) => updateDrainStop(stop.id, { startDate: e.target.value === "" ? null : e.target.value })}
-                />
-              </label>
-              <label className="flex items-center gap-1">
-                End
-                <input
-                  className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                  type="date"
-                  value={stop.endDate ?? ""}
-                  onChange={(e) => updateDrainStop(stop.id, { endDate: e.target.value === "" ? null : e.target.value })}
-                />
-              </label>
+              <ActiveWindowFields
+                startDate={stop.startDate ?? ""}
+                endDate={stop.endDate ?? ""}
+                onChange={(patch) => updateDrainStop(stop.id, patch)}
+              />
             </div>
           </div>
         ))}
@@ -333,6 +307,52 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
  * which is edited on the account and shown here only as context -- a limit
  * bounds the FLOW, a bound the resulting BALANCE, and both apply.
  */
+/**
+ * The window a routing stop is active for.
+ *
+ * Start and End are one setting, so they share a row. Wrapping them
+ * independently put them on separate lines, and because the inline labels are
+ * different widths ("Start" is wider than "End") the two date boxes did not
+ * even line up with each other -- they read as two unrelated fields rather
+ * than the two ends of one range. On a phone the labels move above the boxes,
+ * which is what actually makes the boxes align.
+ */
+function ActiveWindowFields({
+  startDate,
+  endDate,
+  onChange,
+}: {
+  startDate: string;
+  endDate: string;
+  onChange: (patch: { startDate?: string | null; endDate?: string | null }) => void;
+}) {
+  const box =
+    "w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground sm:w-auto";
+  const blank = (value: string) => (value === "" ? null : value);
+  return (
+    <div className="grid w-full grid-cols-2 items-end gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
+      <label className="min-w-0 sm:flex sm:items-center sm:gap-1">
+        <span className="mb-0.5 block sm:mb-0">Start</span>
+        <input
+          className={box}
+          type="date"
+          value={startDate}
+          onChange={(e) => onChange({ startDate: blank(e.target.value) })}
+        />
+      </label>
+      <label className="min-w-0 sm:flex sm:items-center sm:gap-1">
+        <span className="mb-0.5 block sm:mb-0">End</span>
+        <input
+          className={box}
+          type="date"
+          value={endDate}
+          onChange={(e) => onChange({ endDate: blank(e.target.value) })}
+        />
+      </label>
+    </div>
+  );
+}
+
 function FlowLimitFields({
   label,
   tooltip,

@@ -551,14 +551,23 @@ export function PortfolioApp() {
   return (
     <>
       <ThemeSync />
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-panel px-3 sm:px-6 py-3">
-        <div className="flex flex-wrap items-center gap-3">
+      {/* Two lines on a phone, one from `sm` up. The split is by role, not by
+          what happens to fit: the title and the always-available tools (refresh,
+          connection status, overflow) hold the top line so the menu sits in the
+          same top-right corner as the forecast's, and the two controls you
+          actually operate -- the scope picker and the primary import action --
+          get the second line to themselves at a usable size. */}
+      <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-panel px-3 py-3 sm:px-6">
+        <div className="order-1 flex items-center gap-3">
           <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
+        </div>
+
+        <div className="order-3 flex w-full items-center gap-2 sm:order-2 sm:w-auto">
           <select
             value={scope}
             onChange={(e) => setScope(e.target.value)}
             aria-label="Scope the portfolio to a person or account"
-            className="max-w-[60vw] rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground sm:max-w-none"
+            className="min-w-0 flex-1 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground sm:flex-none"
           >
             <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
             <optgroup label="By person">
@@ -577,21 +586,6 @@ export function PortfolioApp() {
               ))}
             </optgroup>
           </select>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Btn
-            onClick={refreshPrices}
-            title="Refetch quotes now"
-            ariaLabel="Refresh prices"
-            className="px-2.5"
-          >
-            <span aria-hidden className={pricesLoading ? "inline-block animate-spin" : undefined}>
-              ↻
-            </span>
-          </Btn>
-          {/* Beside the refresh control because it answers the question that
-              control raises: refreshed from where. */}
-          <SchwabBadge />
           <Btn
             variant="primary"
             onClick={() => {
@@ -611,8 +605,24 @@ export function PortfolioApp() {
               setImporting(true);
             }}
           >
-            Import transactions
+            <span className="whitespace-nowrap">Import transactions</span>
           </Btn>
+        </div>
+
+        <div className="order-2 flex items-center gap-2 sm:order-3">
+          <Btn
+            onClick={refreshPrices}
+            title="Refetch quotes now"
+            ariaLabel="Refresh prices"
+            className="px-2.5"
+          >
+            <span aria-hidden className={pricesLoading ? "inline-block animate-spin" : undefined}>
+              ↻
+            </span>
+          </Btn>
+          {/* Beside the refresh control because it answers the question that
+              control raises: refreshed from where. */}
+          <SchwabBadge />
           <PortfolioMenu
             portfolio={portfolio}
             canLoadDemo={portfolio.transactions.length === 0}

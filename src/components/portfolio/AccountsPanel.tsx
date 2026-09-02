@@ -240,20 +240,17 @@ export function AccountsPanel({
   const editing = rows.find((r) => r.account.id === settingsFor) ?? null;
 
   return (
-    <div className="p-5">
-      <div className="mb-3 flex items-start justify-between gap-4">
-        <div>
+    <div className="p-3 sm:p-5">
+      {/* Heading and its action share the top line; the explanation sits under
+          both. Wrapping the paragraph in beside the button squeezed "Add
+          account" into a two-line sliver of a button. */}
+      <div className="mb-3">
+        <div className="mb-1 flex items-center justify-between gap-3">
           <h2 className="text-[14px] font-semibold text-foreground">Accounts</h2>
-          <p className="max-w-2xl text-[12px] text-dim">
-            Each account can be linked to its counterpart in the forecast, so this tracker&apos;s
-            real market value becomes the plan&apos;s starting balance. Open an account&apos;s
-            settings to change its links, owner or type.
-          </p>
-        </div>
-        <Btn
-          variant="primary"
-          onClick={() =>
-            addAccount({
+          <Btn
+            variant="primary"
+            onClick={() =>
+              addAccount({
               name: "New account",
               institution: "",
               type: "taxable",
@@ -265,9 +262,15 @@ export function AccountsPanel({
               schwabAccountHash: null,
             })
           }
-        >
-          Add account
-        </Btn>
+          >
+            <span className="whitespace-nowrap">Add account</span>
+          </Btn>
+        </div>
+        <p className="max-w-2xl text-[12px] text-dim">
+          Each account can be linked to its counterpart in the forecast, so this tracker&apos;s
+          real market value becomes the plan&apos;s starting balance. Open an account&apos;s
+          settings to change its links, owner or type.
+        </p>
       </div>
 
       {portfolio.accounts.length === 0 ? (

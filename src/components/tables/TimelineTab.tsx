@@ -230,11 +230,20 @@ export function TimelineTab({
                 className={`cursor-pointer border-t border-border hover:bg-background/40 ${row.excluded ? "opacity-50" : ""}`}
                 onClick={row.open}
               >
-                <td className="whitespace-nowrap py-2 pl-2 text-dim">{row.date}</td>
-                <td className="py-2">
-                  <span className={`rounded px-2 py-0.5 text-xs ${TONE_CLASS[row.tone]}`}>{row.badge}</span>
+                <td className="whitespace-nowrap py-2 pl-2 align-top text-[11px] text-dim sm:text-sm">{row.date}</td>
+                {/* `whitespace-nowrap` because a pill that wraps renders as two
+                    half-pills stacked on top of each other -- "Social Security"
+                    and "Have a kid" both did on a phone. The smaller type and
+                    tighter padding below `sm` are what buy the room to keep it
+                    on one line in a narrow column. */}
+                <td className="py-2 pr-2 align-top">
+                  <span
+                    className={`inline-block whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] sm:px-2 sm:text-xs ${TONE_CLASS[row.tone]}`}
+                  >
+                    {row.badge}
+                  </span>
                 </td>
-                <td className="py-2 pr-2">
+                <td className="py-2 pr-2 align-top text-[12px] sm:text-sm">
                   <span className="font-medium">{row.name}</span>
                   {row.detail && <span className="text-dim"> — {row.detail}</span>}
                   {row.excluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
@@ -253,7 +262,7 @@ export function TimelineTab({
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border bg-panel">
-        <div className="flex items-center justify-between border-b border-border px-2 py-2 text-xs font-semibold text-dim">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-2 py-2 text-xs font-semibold text-dim">
           <span>Automatic Withdrawals &amp; RMDs</span>
           {(hiddenGroupCount > 0 || showSmallMovements) && (
             <button

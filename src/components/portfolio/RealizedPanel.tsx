@@ -142,7 +142,7 @@ export function RealizedPanel({
   const labelSpan = 5;
 
   return (
-    <div className="p-5">
+    <div className="p-3 sm:p-5">
       <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
           label="Realized YTD"
