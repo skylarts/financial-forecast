@@ -278,7 +278,7 @@ export function SummaryCards({
   const pct = (value: number | null) => (loading && value === null ? "…" : percent(value));
 
   return (
-    <div className="grid gap-3 px-6 py-4 md:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 px-3 sm:px-6 py-4 md:grid-cols-2 xl:grid-cols-4">
       <div className="rounded-lg border border-border bg-panel px-4 py-3">
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[13px] text-foreground">My portfolio</span>

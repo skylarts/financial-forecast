@@ -41,7 +41,7 @@ export function PriceFeedNotice({
   if (unknown.length === 0 && unavailable.length === 0 && stale.length === 0) return null;
 
   return (
-    <div className="space-y-1.5 border-b border-border bg-panel-2 px-6 py-2.5 text-[12.5px]">
+    <div className="space-y-1.5 border-b border-border bg-panel-2 px-3 sm:px-6 py-2.5 text-[12.5px]">
       {unavailable.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-negative">Couldn&apos;t reach the price feed for</span>

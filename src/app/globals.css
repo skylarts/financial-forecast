@@ -154,6 +154,83 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+   Small-screen shell.
+
+   The layout is one responsive tree rather than a phone build and a desktop
+   build: every breakpoint here is a width query, so a narrow desktop window,
+   a split-screen tablet and a phone all get the treatment that fits, and no
+   component has to ask what device it is on.
+   --------------------------------------------------------------------------- */
+
+/* `MobileTabBar` is fixed, so it sits outside flow and would otherwise cover
+   the last row of whatever is scrolled to the bottom. Reserve its height plus
+   the home-indicator inset. Above `md` the rail is back and the bar is gone. */
+.app-shell {
+  padding-bottom: calc(3.25rem + env(safe-area-inset-bottom));
+}
+
+@media (min-width: 768px) {
+  .app-shell {
+    padding-bottom: 0;
+  }
+}
+
+/* Nothing may push the page sideways: a phone that scrolls horizontally makes
+   every vertical swipe feel broken. Wide content (tables, chart canvases) is
+   expected to scroll inside its own container instead -- every data table
+   already does (the forecast tables additionally pin their first column; the
+   portfolio ones can't while they're `border-collapse`, which defeats a
+   sticky cell).
+
+   `clip`, emphatically not `hidden`. `hidden` makes this element a scroll
+   container, which silently breaks `position: sticky` for every descendant --
+   measured here: with `hidden` the side rail scrolled away with the page
+   instead of pinning. `clip` contains the overflow just as well without
+   creating that scroll container. Browsers too old for `clip` fall back to
+   `visible`, which only costs the safety net; the layout below doesn't
+   overflow on its own. */
+html,
+body {
+  overflow-x: clip;
+}
+
+/* A row of tabs or chips that would wrap into an unreadable pile on a phone
+   scrolls sideways instead, bleeding to the screen edge so it's visibly
+   scrollable. The scrollbar is hidden because the content is the affordance;
+   on desktop these rows fit and this class is inert. */
+.scroll-strip {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.scroll-strip::-webkit-scrollbar {
+  display: none;
+}
+
+/* Touch targets. Pointer-coarse rather than a width query: it's the input
+   device, not the screen size, that decides whether a 24px button is a
+   reasonable thing to aim at. */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  summary,
+  select {
+    min-height: 32px;
+  }
+
+  /* iOS Safari zooms the whole page in when you focus a control whose text is
+     under 16px, and never zooms back out -- which left every form in this app
+     (all of it 12-14px) stranding the user at 1.5x with the layout off-screen.
+     16px is the threshold that suppresses that, so touch devices get it and
+     pointer devices keep the denser type. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Overview bento grid.
 
    Named areas rather than per-tile column spans: with spans, a tile whose

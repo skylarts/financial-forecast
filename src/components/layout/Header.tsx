@@ -328,7 +328,7 @@ export function Header({
   const closeAssumptions = useAssumptionsStore((s) => s.closeAssumptions);
 
   return (
-    <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-6 py-3.5">
+    <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-3 py-3 sm:px-6 sm:py-3.5">
       <div className="flex items-center gap-2.5">
         <span
           aria-hidden
@@ -345,8 +345,16 @@ export function Header({
       </div>
 
       {/* The five top-level views. Underline (not a filled pill) marks the
-          current one, so the primary fill stays reserved for actions. */}
-      <nav className="-mb-3.5 flex items-center gap-0.5 overflow-x-auto" aria-label="Views">
+          current one, so the primary fill stays reserved for actions.
+
+          On a phone the five never fit, so the row takes the full width and
+          scrolls sideways, bled to the screen edge by a negative margin that
+          cancels the header gutter -- a tab clipped by the edge is what tells
+          you there is more to swipe to. */}
+      <nav
+        className="scroll-strip -mx-3 -mb-3.5 flex w-full items-center gap-0.5 px-3 sm:mx-0 sm:w-auto sm:px-0"
+        aria-label="Views"
+      >
         {VIEWS.map((v) => (
           <button
             key={v}
@@ -364,19 +372,29 @@ export function Header({
         ))}
       </nav>
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {scenarios.length > 2 ? (
           <ScenarioSwitcher scenario={scenario} />
         ) : (
-          <nav className="flex items-center gap-1 rounded-lg border border-border bg-panel p-1">
-            {scenarios.map((s) => (
-              <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
-            ))}
-            <NewScenarioControl scenario={scenario} />
-          </nav>
+          <>
+            {/* A phone gets the same dropdown that three-plus scenarios trigger
+                on desktop: the side-by-side tab row plus "+ New Scenario" is
+                wider than the screen and pushed the rest of the bar onto a
+                third line, spending a quarter of the viewport on chrome. */}
+            <div className="sm:hidden">
+              <ScenarioSwitcher scenario={scenario} />
+            </div>
+            <nav className="hidden items-center gap-1 rounded-lg border border-border bg-panel p-1 sm:flex">
+              {scenarios.map((s) => (
+                <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
+              ))}
+              <NewScenarioControl scenario={scenario} />
+            </nav>
+          </>
         )}
-        <Btn id="assumptions-button" variant="primary" onClick={openAssumptions}>
-          ⚙ Assumptions
+        <Btn id="assumptions-button" variant="primary" onClick={openAssumptions} ariaLabel="Assumptions">
+          <span aria-hidden>⚙</span>
+          <span className="hidden sm:inline"> Assumptions</span>
         </Btn>
         <OverflowMenu onOpenWizard={openWizard} />
       </div>

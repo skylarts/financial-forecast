@@ -551,14 +551,14 @@ export function PortfolioApp() {
   return (
     <>
       <ThemeSync />
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-panel px-6 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-panel px-3 sm:px-6 py-3">
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-[16px] font-semibold text-foreground">Portfolio</h1>
           <select
             value={scope}
             onChange={(e) => setScope(e.target.value)}
             aria-label="Scope the portfolio to a person or account"
-            className="rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground"
+            className="max-w-[60vw] rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground sm:max-w-none"
           >
             <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
             <optgroup label="By person">
@@ -622,7 +622,7 @@ export function PortfolioApp() {
       </header>
 
       {flash && (
-        <div className="flex items-center justify-between gap-3 border-b border-border bg-panel-2 px-6 py-2 text-[12.5px] text-foreground">
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-panel-2 px-3 sm:px-6 py-2 text-[12.5px] text-foreground">
           <span>{flash.text}</span>
           <div className="flex shrink-0 items-center gap-3">
             {flash.undoBatch && (
@@ -643,7 +643,7 @@ export function PortfolioApp() {
       )}
 
       {analysis.warnings.length > 0 && (
-        <div className="border-b border-border bg-panel-2 px-6 py-2">
+        <div className="border-b border-border bg-panel-2 px-3 sm:px-6 py-2">
           <details>
             <summary className="cursor-pointer text-[12.5px] text-accent">
               {analysis.warnings.length === 1
@@ -688,13 +688,13 @@ export function PortfolioApp() {
           summary cards because it does not apply to those -- the cards answer
           to the account picker in the header, which is the one scope control
           with a wider reach than the tabs. */}
-      <div className="flex flex-wrap items-center gap-2 px-6 pb-3 pt-1">
+      <div className="flex flex-wrap items-center gap-2 px-3 sm:px-6 pb-3 pt-1">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search symbol or name"
           aria-label="Search the portfolio"
-          className="w-56 rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent"
+          className="w-full rounded-md border border-border bg-panel-2 px-2 py-1.5 text-[12.5px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56"
         />
         <FilterMenu
           sections={filterSections}
@@ -714,13 +714,17 @@ export function PortfolioApp() {
         />
       </div>
 
-      <div className="border-b border-border px-6">
-        <Segmented options={TABS} value={tab} onChange={setTab} size="sm" ariaLabel="Portfolio view" />
+      {/* Six tabs never fit a phone, so the strip scrolls sideways and bleeds
+          to the screen edge rather than wrapping into a block. */}
+      <div className="scroll-strip border-b border-border px-3 sm:px-6">
+        <div className="w-max">
+          <Segmented options={TABS} value={tab} onChange={setTab} size="sm" ariaLabel="Portfolio view" />
+        </div>
       </div>
 
       <main className="flex-1">
         {tab === "holdings" && (
-          <div className="p-5">
+          <div className="p-3 sm:p-5">
             {/* Only the side filter is Holdings' own now -- search and the
                 facets moved to the bar above the tabs. */}
             {hasShorts && (
