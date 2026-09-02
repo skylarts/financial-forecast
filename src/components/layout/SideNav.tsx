@@ -17,8 +17,13 @@ interface Section {
  * joins the forecast and the tracker -- nothing else needs to change.
  */
 const SECTIONS: Section[] = [
-  { href: "/", label: "Forecast", icon: "◈", hint: "Household net-worth projection" },
-  { href: "/portfolio", label: "Portfolio", icon: "◑", hint: "Holdings, tax lots, and performance" },
+  // A trend line for the forward-looking projection, a grid for the tool
+  // that's mostly dense tables (Holdings, Transactions, Accounts) -- picked
+  // over the previous ◈/◑ pair (arbitrary shapes with no tie to what each
+  // tool does) after checking both render solid, not thin/tofu, at the 13px
+  // collapsed-rail size and hold up in every theme x active-state combination.
+  { href: "/", label: "Forecast", icon: "⬈", hint: "Household net-worth projection" },
+  { href: "/portfolio", label: "Portfolio", icon: "▦", hint: "Holdings, tax lots, and performance" },
 ];
 
 const COLLAPSE_KEY = "sidenav-collapsed";
