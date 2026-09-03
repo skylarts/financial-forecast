@@ -14,13 +14,14 @@ export interface FilterSection<K extends string> {
 /**
  * Every filter behind one button, and what's on shown as chips beside it.
  *
- * Class, Theme and Type were three buttons of their own. Each said "Class · 2"
- * when narrowed, which tells you a filter exists but not what it is -- finding
- * that out meant opening the menu. Now they share a panel, and the answer is
- * on the outside: one chip per chosen value, each removable on its own.
+ * Class, Theme and Type were three buttons of their own, and Accounts was a
+ * dropdown next to them. Each button said "Class · 2" when narrowed, which
+ * tells you a filter exists but not what it is -- finding that out meant
+ * opening the menu. Now they share a panel, and the answer is on the outside:
+ * one chip per chosen value, each removable on its own.
  *
- * The panel keeps all three lists on screen together rather than nesting a
- * menu per section, so picking a class and then a theme is one visit.
+ * The panel keeps every list on screen together rather than nesting a menu per
+ * section, so picking an account and then a theme is one visit.
  */
 export function FilterMenu<K extends string>({
   sections,
@@ -59,6 +60,22 @@ export function FilterMenu<K extends string>({
     onChange(section.key, { ...section.state, selected: next });
   };
 
+  /**
+   * Ticks a run of options, or unticks them once they're all already ticked.
+   * Backs both the section's own All/None and each group heading, which are
+   * the same gesture over a different set of rows.
+   */
+  const toggleAll = (section: FilterSection<K>, options: readonly FacetOption[]) => {
+    const values = options.map((o) => o.value);
+    const next = new Set(section.state.selected);
+    const all = values.every((v) => next.has(v));
+    for (const value of values) {
+      if (all) next.delete(value);
+      else next.add(value);
+    }
+    onChange(section.key, { ...section.state, selected: next });
+  };
+
   return (
     <div ref={wrap} className="relative">
       <button
@@ -79,7 +96,12 @@ export function FilterMenu<K extends string>({
         <div
           role="dialog"
           aria-label="Filters"
-          className="absolute left-0 z-20 mt-1 w-72 overflow-hidden rounded-md border border-border bg-panel shadow-lg"
+          // Anchored under the button on a wide screen. On a phone the button
+          // sits far enough right that a 288px panel hanging off its left edge
+          // runs past the screen -- and `overflow-x: clip` on the page would
+          // silently cut the half that hangs over -- so there it goes `fixed`
+          // and spans the viewport instead, keeping only its vertical spot.
+          className="absolute left-0 z-20 mt-1 w-72 overflow-hidden rounded-md border border-border bg-panel shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:w-auto"
         >
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
             <span className="text-[10.5px] font-semibold uppercase tracking-wide text-dim-2">
@@ -99,7 +121,25 @@ export function FilterMenu<K extends string>({
             {sections.map((section) => (
               <section key={section.key} className="border-b border-border-soft last:border-b-0">
                 <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-2">
-                  <span className="text-[11px] font-semibold text-foreground">{section.label}</span>
+                  <span className="flex-1 truncate text-[11px] font-semibold text-foreground">
+                    {section.label}
+                  </span>
+                  {/* One click for the whole section, and the same click back
+                      out again once everything is ticked -- which is the
+                      quickest route to "all of them except this one", and on
+                      Accounts the quickest route back to the whole portfolio.
+                      Hidden when there is nothing to tick. */}
+                  {section.options.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => toggleAll(section, section.options)}
+                      className="text-[10px] uppercase tracking-wide text-dim-2 transition-colors hover:text-foreground"
+                    >
+                      {section.options.every((o) => section.state.selected.has(o.value))
+                        ? "None"
+                        : "All"}
+                    </button>
+                  )}
                   {/* Show/Hide is what makes "everything except my ETFs" one
                       click rather than ticking every other type. */}
                   <div className="flex overflow-hidden rounded border border-border text-[10px]">
@@ -125,19 +165,40 @@ export function FilterMenu<K extends string>({
                   </p>
                 ) : (
                   <div className="pb-1">
-                    {section.options.map((option) => (
-                      <label
-                        key={option.value}
-                        className="flex cursor-pointer items-center gap-2 px-3 py-1 text-[12px] hover:bg-panel-2"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={section.state.selected.has(option.value)}
-                          onChange={() => toggle(section, option.value)}
-                        />
-                        <span className="flex-1 truncate text-foreground">{option.label}</span>
-                        <span className="tabular-nums text-dim-2">{option.count}</span>
-                      </label>
+                    {section.options.map((option, i) => (
+                      <div key={option.value}>
+                        {/* A group heading, once per run of options that share
+                            one -- and a tick-them-all button, which is what
+                            picking a person out of the old account picker
+                            used to do in one click. */}
+                        {option.group !== undefined &&
+                          option.group !== section.options[i - 1]?.group && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                toggleAll(
+                                  section,
+                                  section.options.filter((o) => o.group === option.group),
+                                )
+                              }
+                              title={`Select every option under ${option.group}`}
+                              className="mt-1.5 block w-full px-3 pb-0.5 text-left text-[10.5px] font-semibold uppercase tracking-wide text-dim-2 hover:text-foreground"
+                            >
+                              {option.group}
+                            </button>
+                          )}
+                        <label className="flex cursor-pointer items-center gap-2 px-3 py-1 text-[12px] hover:bg-panel-2">
+                          <input
+                            type="checkbox"
+                            checked={section.state.selected.has(option.value)}
+                            onChange={() => toggle(section, option.value)}
+                          />
+                          <span className="flex-1 truncate text-foreground">{option.label}</span>
+                          {option.count !== undefined && (
+                            <span className="tabular-nums text-dim-2">{option.count}</span>
+                          )}
+                        </label>
+                      </div>
                     ))}
                   </div>
                 )}

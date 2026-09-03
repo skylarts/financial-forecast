@@ -23,13 +23,6 @@ import { usePlanStore } from "@/store/usePlanStore";
 import { usePrices } from "@/store/usePriceStore";
 import { useSecurityProfiles } from "@/store/useSecurityProfiles";
 import { money, shortDate } from "@/lib/portfolio/format";
-import {
-  accountIdsInScope,
-  accountScope,
-  ALL_ACCOUNTS_SCOPE,
-  JOINT_OWNER_SCOPE,
-  ownerScope,
-} from "@/lib/portfolio/scope";
 import { buildDemoPortfolio } from "@/lib/portfolio/demoPortfolio";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
@@ -50,8 +43,10 @@ import { SchwabConnection } from "./SchwabConnection";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 import { FilterStatus } from "./FilterStatus";
 import { FilterChips, FilterMenu, type FilterSection } from "./FilterMenu";
-import type { FacetState } from "@/components/ui/facets";
+import { EMPTY_FACET, type FacetState } from "@/components/ui/facets";
 import {
+  accountFacetOptions,
+  accountIdsForFacet,
   assetClassFacetOptions,
   emptyHoldingFacets,
   holdingFacetsActive,
@@ -61,6 +56,9 @@ import {
   type HoldingFacets,
 } from "./filters";
 import { useMarketIndexStore } from "@/store/useMarketIndexes";
+
+/** Every section in the filter panel: the three holding facets, plus accounts. */
+type FilterKey = "account" | (keyof HoldingFacets & string);
 
 /**
  * Both panels pull in Recharts, and only one tab is ever showing at a time --
@@ -136,7 +134,6 @@ export function PortfolioApp() {
 
   const [tab, setTab] = useState<Tab>("holdings");
   const [performanceView, setPerformanceView] = useState<PerformanceView>("overTime");
-  const [scope, setScope] = useState<string>(ALL_ACCOUNTS_SCOPE);
   const [selected, setSelected] = useState<PositionSelection | null>(null);
   const [importing, setImporting] = useState(false);
   /**
@@ -157,6 +154,8 @@ export function PortfolioApp() {
   // on Allocation and moving to Performance meant picking Crypto again.
   const [search, setSearch] = useState("");
   const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
+  /** Which accounts are in play. Empty (the default) means all of them. */
+  const [accountFacet, setAccountFacet] = useState<FacetState>(EMPTY_FACET);
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
   const [grouping, setGrouping] = useState<HoldingGrouping>("none");
   const holdingCollapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
@@ -265,11 +264,11 @@ export function PortfolioApp() {
     setFlash(`Updated ${count} forecast balance${count === 1 ? "" : "s"}.`),
   );
 
-  // null = every account (the "all" scope); otherwise the exact account ids
-  // the current scope covers, whether it names one account or one person.
+  // null = every account; otherwise the exact ids the account facet leaves in
+  // play, sleeves included.
   const scopeAccountIds = useMemo(
-    () => accountIdsInScope(portfolio.accounts, scope),
-    [portfolio.accounts, scope],
+    () => accountIdsForFacet(portfolio.accounts, accountFacet),
+    [portfolio.accounts, accountFacet],
   );
   // A few consumers (the holdings table's account column, the transaction
   // form's default account) only make sense narrowed to a single account,
@@ -347,20 +346,40 @@ export function PortfolioApp() {
     () => instrumentTypeFacetOptions(analysis.holdings, facets),
     [analysis.holdings, facets],
   );
+  const accountOptions = useMemo(
+    () => accountFacetOptions(portfolio.accounts, people),
+    [portfolio.accounts, people],
+  );
+  // What the row count under the bar describes: the filters that narrow rows
+  // *within* the current set of accounts. The account facet is deliberately
+  // not one of them -- it changes which holdings exist at all, so it moves the
+  // count's total rather than the number in front of it, and "12 of 12" would
+  // be the only thing it could ever say.
   const sharedFiltersActive = search !== "" || holdingFacetsActive(facets);
 
-  // One shape for all three, so the panel and the chips can walk them without
-  // knowing which facet is which.
-  const filterSections = useMemo<FilterSection<keyof HoldingFacets & string>[]>(
+  const clearAllFilters = () => {
+    setSearch("");
+    setFacets(emptyHoldingFacets());
+    setAccountFacet(EMPTY_FACET);
+  };
+
+  // One shape for all four, so the panel and the chips can walk them without
+  // knowing which facet is which. The order is widest-first: Accounts decides
+  // which accounts are valued at all, then Type sorts the instruments, then
+  // Class and Theme cut across what is left.
+  const filterSections = useMemo<FilterSection<FilterKey>[]>(
     () => [
+      { key: "account", label: "Accounts", options: accountOptions, state: accountFacet },
+      { key: "instrumentType", label: "Type", options: instrumentTypeOptions, state: facets.instrumentType },
       { key: "assetClass", label: "Class", options: assetClassOptions, state: facets.assetClass },
       { key: "theme", label: "Theme", options: themeOptions, state: facets.theme },
-      { key: "instrumentType", label: "Type", options: instrumentTypeOptions, state: facets.instrumentType },
     ],
-    [assetClassOptions, themeOptions, instrumentTypeOptions, facets],
+    [accountOptions, accountFacet, assetClassOptions, themeOptions, instrumentTypeOptions, facets],
   );
-  const setFacet = (key: keyof HoldingFacets, next: FacetState) =>
-    setFacets((f) => ({ ...f, [key]: next }));
+  const setFacet = (key: FilterKey, next: FacetState) => {
+    if (key === "account") setAccountFacet(next);
+    else setFacets((f) => ({ ...f, [key]: next }));
+  };
 
   const knownThemes = useMemo(() => allThemes(portfolio.securities.map((s) => s.themes)), [portfolio.securities]);
   const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
@@ -476,13 +495,19 @@ export function PortfolioApp() {
       case "account": {
         setTab("holdings");
         const match = portfolio.accounts.find((a) => a.name === label);
-        if (match) setScope(accountScope(match.id));
+        if (match) setAccountFacet({ mode: "include", selected: new Set([match.id]) });
         break;
       }
       case "owner": {
         setTab("holdings");
         const person = people.find((p) => p.name === label);
-        setScope(person ? ownerScope(person.id) : JOINT_OWNER_SCOPE);
+        const ownerId = person?.id ?? null;
+        // Top-level accounts only: a sleeve comes along with its parent, and
+        // naming it as well would only put a second chip on the same account.
+        const owned = portfolio.accounts.filter(
+          (a) => a.ownerId === ownerId && a.parentAccountId === null,
+        );
+        setAccountFacet({ mode: "include", selected: new Set(owned.map((a) => a.id)) });
         break;
       }
       case "accountType": {
@@ -657,37 +682,16 @@ export function PortfolioApp() {
       {/* The control bar: everything that narrows what the views below show,
           in one strip on the panel surface directly under the header. It is
           the forecast's ViewBar in the same position with the same treatment
-          -- there, the year range and dollar mode; here, the account scope,
-          the search box, and the facet filters.
+          -- there, the year range and dollar mode; here, the search box and
+          the filters.
 
-          The scope picker moved down out of the header to join them. It was
-          the odd one out up there: a control that reshapes every view, sitting
-          in the row reserved for actions. */}
+          Accounts used to be a dropdown of its own out here, next to the
+          filter button. One choice at a time meant "her Roth and the joint
+          brokerage" was not a question you could ask, and it put the answer to
+          "which accounts?" in a different place from every other answer. It is
+          a section in the panel now, and its chips sit with the rest. */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-panel px-3 py-2 sm:px-6 sm:py-2.5">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <select
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            aria-label="Scope the portfolio to a person or account"
-            className="min-w-0 max-w-full rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px] text-foreground"
-          >
-            <option value={ALL_ACCOUNTS_SCOPE}>All accounts</option>
-            <optgroup label="By person">
-              {people.map((p) => (
-                <option key={p.id} value={ownerScope(p.id)}>
-                  {p.name}
-                </option>
-              ))}
-              <option value={JOINT_OWNER_SCOPE}>Joint</option>
-            </optgroup>
-            <optgroup label="By account">
-              {portfolio.accounts.map((a) => (
-                <option key={a.id} value={accountScope(a.id)}>
-                  {a.name}
-                </option>
-              ))}
-            </optgroup>
-          </select>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -695,11 +699,7 @@ export function PortfolioApp() {
             aria-label="Search the portfolio"
             className="min-w-[8rem] flex-1 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56 sm:flex-none"
           />
-          <FilterMenu
-            sections={filterSections}
-            onChange={setFacet}
-            onClearAll={() => setFacets(emptyHoldingFacets())}
-          />
+          <FilterMenu sections={filterSections} onChange={setFacet} onClearAll={clearAllFilters} />
           <FilterChips sections={filterSections} onChange={setFacet} />
         </div>
         <FilterStatus
@@ -707,10 +707,7 @@ export function PortfolioApp() {
           total={analysis.holdings.length}
           noun="holdings"
           active={sharedFiltersActive}
-          onClear={() => {
-            setSearch("");
-            setFacets(emptyHoldingFacets());
-          }}
+          onClear={clearAllFilters}
         />
       </div>
 
