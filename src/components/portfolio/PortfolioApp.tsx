@@ -364,14 +364,15 @@ export function PortfolioApp() {
   };
 
   // One shape for all four, so the panel and the chips can walk them without
-  // knowing which facet is which. Accounts leads: it decides which accounts are
-  // valued at all, so it is the widest thing in the panel.
+  // knowing which facet is which. The order is widest-first: Accounts decides
+  // which accounts are valued at all, then Type sorts the instruments, then
+  // Class and Theme cut across what is left.
   const filterSections = useMemo<FilterSection<FilterKey>[]>(
     () => [
       { key: "account", label: "Accounts", options: accountOptions, state: accountFacet },
+      { key: "instrumentType", label: "Type", options: instrumentTypeOptions, state: facets.instrumentType },
       { key: "assetClass", label: "Class", options: assetClassOptions, state: facets.assetClass },
       { key: "theme", label: "Theme", options: themeOptions, state: facets.theme },
-      { key: "instrumentType", label: "Type", options: instrumentTypeOptions, state: facets.instrumentType },
     ],
     [accountOptions, accountFacet, assetClassOptions, themeOptions, instrumentTypeOptions, facets],
   );
