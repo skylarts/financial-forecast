@@ -573,27 +573,31 @@ export function TransactionsPanel({
               </optgroup>
             ))}
           </select>
-          {/* From and To are one control -- a range -- so they share a row and
-              are never split by a wrap. Their labels sit above the boxes on a
-              phone rather than inline: inline, "From" is wider than "To" and
-              pushed the two date boxes out of alignment with each other. */}
-          <div className="grid w-full grid-cols-2 items-end gap-2 sm:flex sm:w-auto sm:items-center">
-            <label className="min-w-0 text-[11.5px] text-dim-2 sm:flex sm:items-center sm:gap-1">
-              <span className="mb-0.5 block sm:mb-0">From</span>
+          {/* From and To are one control -- a range -- so they share a unit and
+              are never split by a wrap. Each label sits inline to the left of
+              its own box rather than above it, and the box is sized to its
+              content (a short date) rather than stretched -- a stretched,
+              stacked pair was the fix for a real overflow bug, but the
+              overflow came from forcing the box to 100% of a too-narrow grid
+              column, not from the box needing the width. Left to size itself,
+              it doesn't overflow, and the pair fits on one row. */}
+          <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 sm:w-auto">
+            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+              <span>From</span>
               <input
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className={`${INPUT} w-full sm:w-auto`}
+                className={INPUT}
               />
             </label>
-            <label className="min-w-0 text-[11.5px] text-dim-2 sm:flex sm:items-center sm:gap-1">
-              <span className="mb-0.5 block sm:mb-0">To</span>
+            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
+              <span>To</span>
               <input
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className={`${INPUT} w-full sm:w-auto`}
+                className={INPUT}
               />
             </label>
           </div>
