@@ -14,62 +14,9 @@ import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButt
 import { Btn } from "@/components/ui/controls";
 import { VIEWS, type View } from "@/lib/views";
 
-function ScenarioTab({ scenario, active }: { scenario: Scenario; active: boolean }) {
-  const setActiveScenarioId = usePlanStore((s) => s.setActiveScenarioId);
-  const renameScenario = usePlanStore((s) => s.renameScenario);
-  const deleteScenario = usePlanStore((s) => s.deleteScenario);
-  const scenarioCount = usePlanStore((s) => s.plan.scenarios.length);
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(scenario.name);
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onBlur={() => {
-          setEditing(false);
-          if (name.trim()) renameScenario(scenario.id, name.trim());
-          else setName(scenario.name);
-        }}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg outline-none"
-      />
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => setActiveScenarioId(scenario.id)}
-      onDoubleClick={() => setEditing(true)}
-      title="Double-click to rename"
-      className={`group flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${
-        active ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"
-      }`}
-    >
-      {scenario.name}
-      {scenarioCount > 1 && (
-        <span
-          role="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (confirm(`Delete scenario "${scenario.name}"?`)) deleteScenario(scenario.id);
-          }}
-          className="hidden text-xs opacity-70 hover:opacity-100 group-hover:inline"
-        >
-          ✕
-        </span>
-      )}
-    </button>
-  );
-}
-
 type CreateMode = "duplicate" | "scratch";
 
-function NewScenarioControl({ scenario, inline }: { scenario: Scenario; inline?: boolean }) {
-  void inline; // reserved for callers that need a different layout inside a nested menu; button-in-menu works fine as-is today
+function NewScenarioControl({ scenario }: { scenario: Scenario }) {
   const scenarios = usePlanStore((s) => s.plan.scenarios);
   const duplicateScenario = usePlanStore((s) => s.duplicateScenario);
   const addBlankScenario = usePlanStore((s) => s.addBlankScenario);
@@ -102,7 +49,7 @@ function NewScenarioControl({ scenario, inline }: { scenario: Scenario; inline?:
         onBlur={() => commit(mode, sourceId)}
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
         placeholder="Scenario name"
-        className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none"
+        className="rounded-md border border-border bg-background px-3 py-1.5 text-[12.5px] text-foreground outline-none"
       />
     );
   }
@@ -112,7 +59,7 @@ function NewScenarioControl({ scenario, inline }: { scenario: Scenario; inline?:
       <button
         type="button"
         onClick={() => setMenuOpen((v) => !v)}
-        className="rounded-md px-3 py-1.5 text-sm text-dim hover:text-foreground"
+        className="rounded-md px-3 py-1.5 text-[12.5px] text-dim hover:text-foreground"
       >
         + New Scenario
       </button>
@@ -127,20 +74,20 @@ function NewScenarioControl({ scenario, inline }: { scenario: Scenario; inline?:
                 setMode("duplicate");
               }
             }}
-            className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
+            className="block w-full rounded px-3 py-2 text-left text-[12.5px] text-dim hover:bg-accent/15 hover:text-foreground"
           >
             Duplicate existing plan
           </button>
           <button
             type="button"
             onClick={() => setMode("scratch")}
-            className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
+            className="block w-full rounded px-3 py-2 text-left text-[12.5px] text-dim hover:bg-accent/15 hover:text-foreground"
           >
             Start from scratch
           </button>
           {sourceId !== null && (
             <div className="mt-1 border-t border-border pt-1">
-              <div className="px-3 pb-1 pt-2 text-xs text-dim">Duplicate which scenario?</div>
+              <div className="px-3 pb-1 pt-2 text-[11px] text-dim">Duplicate which scenario?</div>
               {scenarios.map((s) => (
                 <button
                   key={s.id}
@@ -149,7 +96,7 @@ function NewScenarioControl({ scenario, inline }: { scenario: Scenario; inline?:
                     setSourceId(s.id);
                     setMode("duplicate");
                   }}
-                  className="block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
+                  className="block w-full rounded px-3 py-2 text-left text-[12.5px] text-dim hover:bg-accent/15 hover:text-foreground"
                 >
                   {s.name}
                 </button>
@@ -162,9 +109,9 @@ function NewScenarioControl({ scenario, inline }: { scenario: Scenario; inline?:
   );
 }
 
-// Once there are 3+ scenarios, a row of tabs gets cluttered -- collapse into
-// a dropdown showing just the active scenario, with the same rename/delete
-// and "+ New Scenario" affordances available inside the open menu.
+// A single button showing the active scenario, opening into a dropdown with
+// every other scenario (rename by double-click, delete via the ✕) plus the
+// "+ New Scenario" control at the bottom.
 function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
   const scenarios = usePlanStore((s) => s.plan.scenarios);
   const setActiveScenarioId = usePlanStore((s) => s.setActiveScenarioId);
@@ -194,7 +141,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
       <button
         type="button"
         onClick={() => setMenuOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-md border border-border bg-panel px-3 py-1.5 text-sm font-medium text-foreground hover:border-accent"
+        className="flex items-center gap-1.5 rounded-md border border-border bg-panel px-3 py-1.5 text-[12.5px] font-medium text-foreground hover:border-accent"
       >
         {scenario.name}
         <span className="text-dim">▾</span>
@@ -210,7 +157,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
                   onChange={(e) => setName(e.target.value)}
                   onBlur={commitRename}
                   onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-                  className="my-0.5 flex-1 rounded bg-pri px-2 py-1.5 text-sm text-pri-fg outline-none"
+                  className="my-0.5 flex-1 rounded bg-pri px-2 py-1.5 text-[12.5px] text-pri-fg outline-none"
                 />
               ) : (
                 <button
@@ -224,7 +171,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
                     setRenamingId(s.id);
                   }}
                   title="Double-click to rename"
-                  className={`flex-1 rounded px-2 py-1.5 text-left text-sm ${
+                  className={`flex-1 rounded px-2 py-1.5 text-left text-[12.5px] ${
                     s.id === scenario.id ? "bg-accent/15 font-semibold text-foreground" : "text-dim hover:text-foreground"
                   }`}
                 >
@@ -238,7 +185,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
                     e.stopPropagation();
                     if (confirm(`Delete scenario "${s.name}"?`)) deleteScenario(s.id);
                   }}
-                  className="hidden px-1 text-xs text-dim opacity-70 hover:opacity-100 group-hover:inline"
+                  className="hidden px-1 text-[11px] text-dim opacity-70 hover:opacity-100 group-hover:inline"
                   title="Delete scenario"
                 >
                   ✕
@@ -247,7 +194,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
             </div>
           ))}
           <div className="mt-1 border-t border-border pt-1">
-            <NewScenarioControl scenario={scenario} inline />
+            <NewScenarioControl scenario={scenario} />
           </div>
         </div>
       )}
@@ -321,7 +268,6 @@ export function Header({
   view: View;
   onViewChange: (v: View) => void;
 }) {
-  const scenarios = usePlanStore((s) => s.plan.scenarios);
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const openWizard = useWizardStore((s) => s.openWizard);
   const assumptionsOpen = useAssumptionsStore((s) => s.open);
@@ -345,25 +291,7 @@ export function Header({
 
       {/* Pinned to the top-right corner at every width. */}
       <div className="flex items-center gap-2">
-        {scenarios.length > 2 ? (
-          <ScenarioSwitcher scenario={scenario} />
-        ) : (
-          <>
-            {/* A phone gets the same dropdown that three-plus scenarios trigger
-                on desktop: the side-by-side tab row plus "+ New Scenario" is
-                wider than the screen and pushed the rest of the bar onto a
-                third line, spending a quarter of the viewport on chrome. */}
-            <div className="sm:hidden">
-              <ScenarioSwitcher scenario={scenario} />
-            </div>
-            <nav className="hidden items-center gap-1 rounded-lg border border-border bg-panel p-1 sm:flex">
-              {scenarios.map((s) => (
-                <ScenarioTab key={s.id} scenario={s} active={s.id === scenario.id} />
-              ))}
-              <NewScenarioControl scenario={scenario} />
-            </nav>
-          </>
-        )}
+        <ScenarioSwitcher scenario={scenario} />
         <Btn id="assumptions-button" variant="primary" onClick={openAssumptions} ariaLabel="Assumptions">
           <span aria-hidden>⚙</span>
           <span className="hidden sm:inline"> Assumptions</span>
