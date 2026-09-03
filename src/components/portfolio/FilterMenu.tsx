@@ -60,9 +60,13 @@ export function FilterMenu<K extends string>({
     onChange(section.key, { ...section.state, selected: next });
   };
 
-  /** Ticks a whole group, or unticks it once it's already fully ticked. */
-  const toggleGroup = (section: FilterSection<K>, group: string) => {
-    const values = section.options.filter((o) => o.group === group).map((o) => o.value);
+  /**
+   * Ticks a run of options, or unticks them once they're all already ticked.
+   * Backs both the section's own All/None and each group heading, which are
+   * the same gesture over a different set of rows.
+   */
+  const toggleAll = (section: FilterSection<K>, options: readonly FacetOption[]) => {
+    const values = options.map((o) => o.value);
     const next = new Set(section.state.selected);
     const all = values.every((v) => next.has(v));
     for (const value of values) {
@@ -117,7 +121,25 @@ export function FilterMenu<K extends string>({
             {sections.map((section) => (
               <section key={section.key} className="border-b border-border-soft last:border-b-0">
                 <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-2">
-                  <span className="text-[11px] font-semibold text-foreground">{section.label}</span>
+                  <span className="flex-1 truncate text-[11px] font-semibold text-foreground">
+                    {section.label}
+                  </span>
+                  {/* One click for the whole section, and the same click back
+                      out again once everything is ticked -- which is the
+                      quickest route to "all of them except this one", and on
+                      Accounts the quickest route back to the whole portfolio.
+                      Hidden when there is nothing to tick. */}
+                  {section.options.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => toggleAll(section, section.options)}
+                      className="text-[10px] uppercase tracking-wide text-dim-2 transition-colors hover:text-foreground"
+                    >
+                      {section.options.every((o) => section.state.selected.has(o.value))
+                        ? "None"
+                        : "All"}
+                    </button>
+                  )}
                   {/* Show/Hide is what makes "everything except my ETFs" one
                       click rather than ticking every other type. */}
                   <div className="flex overflow-hidden rounded border border-border text-[10px]">
@@ -153,7 +175,12 @@ export function FilterMenu<K extends string>({
                           option.group !== section.options[i - 1]?.group && (
                             <button
                               type="button"
-                              onClick={() => toggleGroup(section, option.group as string)}
+                              onClick={() =>
+                                toggleAll(
+                                  section,
+                                  section.options.filter((o) => o.group === option.group),
+                                )
+                              }
                               title={`Select every option under ${option.group}`}
                               className="mt-1.5 block w-full px-3 pb-0.5 text-left text-[10.5px] font-semibold uppercase tracking-wide text-dim-2 hover:text-foreground"
                             >
