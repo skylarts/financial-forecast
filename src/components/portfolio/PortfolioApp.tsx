@@ -334,6 +334,13 @@ export function PortfolioApp() {
     [scopedHoldings, sideFilter],
   );
 
+  // Same shared scope as everywhere else, narrowed to positions -- cash is
+  // already a class, so there's nothing on it to classify.
+  const classifiableHoldingSymbols = useMemo(
+    () => [...new Set(scopedHoldings.filter((h) => h.kind === "position").map((h) => h.symbol))],
+    [scopedHoldings],
+  );
+
   const assetClassOptions = useMemo(
     () => assetClassFacetOptions(analysis.holdings, facets),
     [analysis.holdings, facets],
@@ -846,22 +853,29 @@ export function PortfolioApp() {
               <div className="flex flex-col gap-1.5">
                 {/* Positions only -- cash is already a class, and offering to
                     reclassify it as an equity is an invitation to a wrong
-                    allocation with no way to tell afterwards. */}
-                {[
-                  ...new Set(
-                    analysis.holdings.filter((h) => h.kind === "position").map((h) => h.symbol),
-                  ),
-                ].map((symbol) => (
-                  <SecurityEditorRow
-                    key={symbol}
-                    symbol={symbol}
-                    security={securityFor(symbol)}
-                    profile={securityProfiles[symbol]}
-                    fetching={classifying}
-                    knownThemes={knownThemes}
-                    onSave={upsertSecurity}
-                  />
-                ))}
+                    allocation with no way to tell afterwards. Scoped to the
+                    same search/facets/account filters as the rest of the
+                    tab, so narrowing to e.g. Crypto up top also narrows what
+                    there is to classify down here. */}
+                {classifiableHoldingSymbols.length === 0 ? (
+                  <p className="py-4 text-center text-[12.5px] text-dim">
+                    {sharedFiltersActive
+                      ? "No holdings match those filters."
+                      : "Nothing to classify yet."}
+                  </p>
+                ) : (
+                  classifiableHoldingSymbols.map((symbol) => (
+                    <SecurityEditorRow
+                      key={symbol}
+                      symbol={symbol}
+                      security={securityFor(symbol)}
+                      profile={securityProfiles[symbol]}
+                      fetching={classifying}
+                      knownThemes={knownThemes}
+                      onSave={upsertSecurity}
+                    />
+                  ))
+                )}
               </div>
             </div>
           </AllocationPanel>
