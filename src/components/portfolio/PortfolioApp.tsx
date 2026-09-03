@@ -33,6 +33,7 @@ import {
 import { buildDemoPortfolio } from "@/lib/portfolio/demoPortfolio";
 import { Btn, Segmented } from "@/components/ui/controls";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
+import { NavMenuButton } from "@/components/layout/SideNav";
 import { HoldingsTable, type HoldingGrouping } from "./HoldingsTable";
 import { useCollapsedGroups } from "./grouping";
 import { PositionDetail, type PositionSelection } from "./PositionDetail";
@@ -561,13 +562,11 @@ export function PortfolioApp() {
           tables) read as things layered *on* the page rather than as more
           chrome. */}
       <header className="flex flex-wrap items-center justify-between gap-x-5 gap-y-3 border-b border-border px-3 py-3 sm:px-6 sm:py-3.5">
-        <div className="flex items-center gap-2.5">
-          <span
-            aria-hidden
-            className="block h-5 w-2 rounded-[3px] bg-gradient-to-b from-accent-line to-accent"
-          />
-          <h1 className="text-[15px] font-bold leading-tight tracking-tight">Portfolio</h1>
-        </div>
+        {/* Same as the forecast: the name is also the handle on the section
+            drawer. */}
+        <h1 className="text-[15px] font-bold leading-tight tracking-tight">
+          <NavMenuButton>Portfolio</NavMenuButton>
+        </h1>
 
         {/* Pinned to the top-right corner at every width, same as the forecast:
             the corner belongs to the controls that act on your data, not to a

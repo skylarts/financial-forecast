@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -18,8 +18,8 @@ interface Section {
  * rather than text glyphs because neither shape exists as a character -- the
  * only compass in Unicode is the color emoji, which would ignore the rail's
  * state colors entirely, and nothing at all draws an arrow that dips partway
- * along. Stroking in `currentColor` keeps that inheritance: dim on the rail,
- * `pri-fg` on the active pill, `accent` in the tab bar, with no per-icon rules.
+ * along. Stroking in `currentColor` keeps that inheritance: dim on a resting
+ * link, `pri-fg` on the active pill, with no per-icon color rules.
  */
 function IconFrame({ size, children }: { size: number; children: ReactNode }) {
   return (
@@ -80,31 +80,40 @@ const SECTIONS: Section[] = [
   },
 ];
 
-const COLLAPSE_KEY = "sidenav-collapsed";
-
 /**
- * The collapsed flag lives in localStorage, which React can't see. Exposing it
- * as an external store rather than copying it into state on mount means the
- * server render and the first client render agree (both "expanded"), and the
- * saved value takes over on hydration without an extra render pass.
+ * Whether the drawer is showing. It lives outside React because its two ends
+ * are far apart in the tree -- the button is inside each tool's own header,
+ * the drawer is a sibling of the entire page in the root layout -- and a
+ * provider spanning them would buy nothing over a module-level flag.
+ *
+ * It deliberately does not persist. The drawer is a momentary menu, not a
+ * layout preference; one left open yesterday should not be covering the page
+ * today.
  */
-const collapseListeners = new Set<() => void>();
+const openListeners = new Set<() => void>();
+let navOpen = false;
 
-const collapseStore = {
+const navStore = {
   subscribe(listener: () => void) {
-    collapseListeners.add(listener);
-    return () => collapseListeners.delete(listener);
+    openListeners.add(listener);
+    return () => openListeners.delete(listener);
   },
-  getSnapshot: () =>
-    typeof window !== "undefined" && window.localStorage.getItem(COLLAPSE_KEY) === "true",
-  /** The server has no storage, so it always renders the rail expanded. */
+  getSnapshot: () => navOpen,
+  /** The server has no drawer state, so it always renders it closed. */
   getServerSnapshot: () => false,
+  set(next: boolean) {
+    if (navOpen === next) return;
+    navOpen = next;
+    for (const listener of openListeners) listener();
+  },
   toggle() {
-    const next = !collapseStore.getSnapshot();
-    window.localStorage.setItem(COLLAPSE_KEY, String(next));
-    for (const listener of collapseListeners) listener();
+    navStore.set(!navOpen);
   },
 };
+
+function useNavOpen(): boolean {
+  return useSyncExternalStore(navStore.subscribe, navStore.getSnapshot, navStore.getServerSnapshot);
+}
 
 function isActive(pathname: string, href: string): boolean {
   // "/" would otherwise prefix-match every route.
@@ -112,107 +121,155 @@ function isActive(pathname: string, href: string): boolean {
 }
 
 /**
- * The desktop rail. Hidden below `md`, where a 176px column would eat half a
- * phone's width -- that layout hands its job to `MobileTabBar` instead.
+ * The button each tool wraps around its own name in the top-left corner. With
+ * the rail hidden, that name is the only thing up there, so it has to carry
+ * the news that a menu is behind it: the three-line mark every other app uses
+ * for exactly this, a box that separates it from the plain heading it used to
+ * be, and a chevron that flips over while the drawer is open.
+ *
+ * The tool's name stays the label rather than being replaced by a generic
+ * "Menu" -- it is still the answer to "where am I?", and trading that for a
+ * verb would buy an affordance the mark and the chevron already provide.
  */
-export function SideNav() {
-  const pathname = usePathname();
-  const collapsed = useSyncExternalStore(
-    collapseStore.subscribe,
-    collapseStore.getSnapshot,
-    collapseStore.getServerSnapshot,
-  );
+export function NavMenuButton({ children }: { children: ReactNode }) {
+  const open = useNavOpen();
 
   return (
-    <nav
-      aria-label="Sections"
-      className={`sticky top-0 hidden h-screen shrink-0 flex-col border-r border-border bg-panel-2 transition-[width] duration-150 md:flex ${
-        collapsed ? "w-[56px]" : "w-[176px]"
+    <button
+      type="button"
+      onClick={navStore.toggle}
+      aria-expanded={open}
+      aria-haspopup="menu"
+      title="Switch tools"
+      className={`group -ml-1 flex items-center gap-2 rounded-md border px-2 py-1 text-foreground transition-colors ${
+        open ? "border-accent bg-panel-2" : "border-border bg-panel-2/50 hover:border-accent hover:bg-panel-2"
       }`}
     >
-      <div className="flex items-center gap-2 px-3 py-4">
-        <span className="text-[15px] leading-none text-accent">❖</span>
-        {!collapsed && (
-          <span className="truncate text-[13px] font-semibold text-foreground">Money</span>
-        )}
-      </div>
-
-      <ul className="flex flex-1 flex-col gap-0.5 px-2">
-        {SECTIONS.map((section) => {
-          const active = isActive(pathname, section.href);
-          const Icon = section.icon;
-          return (
-            <li key={section.href}>
-              <Link
-                href={section.href}
-                aria-current={active ? "page" : undefined}
-                // Collapsed, the icon is the only thing left in the link, and
-                // it's decorative -- name the link explicitly rather than
-                // leaning on `title` to stand in for one.
-                aria-label={collapsed ? section.label : undefined}
-                title={collapsed ? `${section.label} — ${section.hint}` : section.hint}
-                className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors ${
-                  active
-                    ? "bg-pri font-semibold text-pri-fg"
-                    : "text-dim hover:bg-panel-3 hover:text-foreground"
-                } ${collapsed ? "justify-center" : ""}`}
-              >
-                <Icon size={15} />
-                {!collapsed && <span className="truncate">{section.label}</span>}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-
-      <button
-        type="button"
-        onClick={collapseStore.toggle}
-        title={collapsed ? "Expand navigation" : "Collapse navigation"}
-        aria-expanded={!collapsed}
-        className="m-2 rounded-md border border-border px-2 py-1.5 text-[12px] text-dim-2 transition-colors hover:border-accent hover:text-foreground"
+      <svg
+        viewBox="0 0 24 24"
+        width={14}
+        height={14}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        aria-hidden
+        focusable="false"
+        className="shrink-0 text-accent"
       >
-        {collapsed ? "»" : "« Collapse"}
-      </button>
-    </nav>
+        <path d="M3 6h18M3 12h18M3 18h18" />
+      </svg>
+      {children}
+      <span
+        aria-hidden
+        className={`text-[10px] leading-none text-dim transition-transform group-hover:text-foreground ${
+          open ? "rotate-180" : ""
+        }`}
+      >
+        ▾
+      </span>
+    </button>
   );
 }
 
 /**
- * The phone equivalent of the rail: a fixed bottom bar, the convention every
- * mobile OS already trained people on. Bottom rather than top because it sits
- * in thumb reach, and because the top of these pages is already dense with the
- * scenario/scope controls.
+ * The section rail, now a drawer rather than a standing column: it slides in
+ * over the page when the name in the top-left is clicked and gets out of the
+ * way again as soon as a tool is picked. With two sections, a permanent 176px
+ * column had little to do all day except take the width.
  *
- * It's `fixed`, so it's out of flow -- `app-shell` in globals.css reserves the
- * matching bottom padding, including the home-indicator inset, so the last row
- * of a table is never trapped underneath it.
+ * Being `fixed`, it never occupies layout space -- the page underneath keeps
+ * the whole window at every width, open or closed. It's also the only section
+ * nav there is: a phone opens this same drawer from the same button rather
+ * than getting a bottom tab bar of its own, so there is one list of sections
+ * to maintain and one place to look for it whatever you're holding.
  */
-export function MobileTabBar() {
+export function SideNav() {
   const pathname = usePathname();
+  const open = useNavOpen();
+  const panelRef = useRef<HTMLElement>(null);
+
+  // Any navigation ends the drawer's job, whether it came from a link in here
+  // or from the back button.
+  useEffect(() => {
+    navStore.set(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") navStore.set(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  // Opening should also move the keyboard into the drawer; otherwise Tab from
+  // the header walks the page behind it instead.
+  useEffect(() => {
+    if (open) panelRef.current?.querySelector("a")?.focus();
+  }, [open]);
 
   return (
-    <nav
-      aria-label="Sections"
-      className="fixed inset-x-0 bottom-0 z-40 flex border-t border-border bg-panel-2 pb-[env(safe-area-inset-bottom)] md:hidden"
-    >
-      {SECTIONS.map((section) => {
-        const active = isActive(pathname, section.href);
-        const Icon = section.icon;
-        return (
-          <Link
-            key={section.href}
-            href={section.href}
-            aria-current={active ? "page" : undefined}
-            className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
-              active ? "text-accent" : "text-dim"
-            }`}
+    <>
+      {/* Mounted only while open, so it can't swallow clicks the rest of the
+          time. A click anywhere off the drawer closes it, which is the gesture
+          people already expect from a menu that covers the page. */}
+      {open && (
+        <button
+          type="button"
+          aria-label="Close navigation"
+          onClick={() => navStore.set(false)}
+          className="fixed inset-0 z-40 cursor-default bg-black/40"
+        />
+      )}
+
+      <nav
+        ref={panelRef}
+        aria-label="Sections"
+        // Kept mounted so the slide has something to animate, but out of the
+        // tab order and the accessibility tree while it sits off-screen.
+        inert={!open}
+        className={`fixed inset-y-0 left-0 z-50 flex w-[210px] flex-col border-r border-border bg-panel-2 shadow-xl transition-transform duration-150 ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex justify-end px-2 py-2">
+          <button
+            type="button"
+            onClick={() => navStore.set(false)}
+            aria-label="Close navigation"
+            className="rounded-md px-2 py-1 text-[13px] text-dim-2 transition-colors hover:bg-panel-3 hover:text-foreground"
           >
-            <Icon size={18} />
-            {section.label}
-          </Link>
-        );
-      })}
-    </nav>
+            ✕
+          </button>
+        </div>
+
+        <ul className="flex flex-1 flex-col gap-0.5 px-2">
+          {SECTIONS.map((section) => {
+            const active = isActive(pathname, section.href);
+            const Icon = section.icon;
+            return (
+              <li key={section.href}>
+                <Link
+                  href={section.href}
+                  aria-current={active ? "page" : undefined}
+                  title={section.hint}
+                  onClick={() => navStore.set(false)}
+                  className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors ${
+                    active
+                      ? "bg-pri font-semibold text-pri-fg"
+                      : "text-dim hover:bg-panel-3 hover:text-foreground"
+                  }`}
+                >
+                  <Icon size={15} />
+                  <span className="truncate">{section.label}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    </>
   );
 }
