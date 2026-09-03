@@ -2,8 +2,15 @@ export interface FacetOption {
   value: string;
   label: string;
   /** How many rows this option currently matches, so picking between two
-   *  near-empty options doesn't mean guessing which one does anything. */
-  count: number;
+   *  near-empty options doesn't mean guessing which one does anything.
+   *
+   *  Optional, because not every facet can answer it honestly: the account
+   *  facet decides which rows exist at all, so counting its own options would
+   *  mean valuing the portfolio again once per account. */
+  count?: number;
+  /** Heading this option sits under in the menu -- accounts group by whose
+   *  they are. Options sharing a group must arrive next to each other. */
+  group?: string;
 }
 
 export interface FacetState {
