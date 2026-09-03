@@ -489,7 +489,7 @@ export function CashFlowTable({
   );
 
   const emptyRow = (text: string) => (
-    <tr className="text-xs text-dim">
+    <tr className="text-[11.5px] text-dim">
       <td className="py-2.5 pl-10" colSpan={col}>
         {text}
       </td>
@@ -499,9 +499,9 @@ export function CashFlowTable({
   return (
     <div className="flex flex-col gap-2">
       <div className="max-h-[85vh] overflow-auto rounded-lg border border-border bg-panel">
-        <table className="w-full border-separate border-spacing-0 text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:pr-6 [&_thead_th:first-child]:border-r [&_thead_th:first-child]:border-border [&_thead_th:first-child]:pr-6">
+        <table className="w-full border-separate border-spacing-0 text-[12.5px] tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:pr-6 [&_thead_th:first-child]:border-r [&_thead_th:first-child]:border-border [&_thead_th:first-child]:pr-6">
           <thead>
-            <tr className="text-left text-xs text-dim">
+            <tr className="text-left text-[11px] text-dim">
               <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-3 pl-2 font-medium">Category</th>
               {periods.map((p, yi) => (
                 <th
@@ -618,7 +618,7 @@ export function CashFlowTable({
                                       <tr className="text-dim hover:bg-accent/15">
                                         <td className="py-2.5 pl-14">
                                           Deposited / saved
-                                          {a.fromPaycheck && <span className="ml-2 text-xs italic">from paycheck</span>}
+                                          {a.fromPaycheck && <span className="ml-2 text-[11px] italic">from paycheck</span>}
                                         </td>
                                         {cells((yi) => depositOf(a.id, yi))}
                                       </tr>
@@ -645,11 +645,11 @@ export function CashFlowTable({
                                         {hasTax && isOpen(`wd:acct:${a.id}`) && (
                                           <>
                                             <tr className="border-t border-border text-dim hover:bg-accent/15">
-                                              <td className="py-2.5 pl-[5.5rem] text-xs italic">Estimated withholding</td>
+                                              <td className="py-2.5 pl-[5.5rem] text-[11px] italic">Estimated withholding</td>
                                               {cells((yi) => wdTaxMaps[yi].get(a.id) ?? 0)}
                                             </tr>
                                             <tr className="border-t border-border text-dim hover:bg-accent/15">
-                                              <td className="py-2.5 pl-[5.5rem] text-xs italic">Net withdrawal</td>
+                                              <td className="py-2.5 pl-[5.5rem] text-[11px] italic">Net withdrawal</td>
                                               {cells((yi) => (wdGrossMaps[yi].get(a.id) ?? 0) - (wdTaxMaps[yi].get(a.id) ?? 0))}
                                             </tr>
                                           </>
@@ -715,7 +715,7 @@ export function CashFlowTable({
                 {spacerRow("spacer:taxes")}
                 <tr className="cursor-pointer border-t border-dim/25 hover:bg-accent/15" onClick={() => toggle("taxes")}>
                   <td className="py-3 pl-2 font-bold">
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-dim">
                       <ToggleLabel label="Taxes (informational)" expanded={isOpen("taxes")} onToggle={() => toggle("taxes")} />
                       <InfoTooltip
                         text={
