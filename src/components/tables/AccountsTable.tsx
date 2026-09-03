@@ -56,7 +56,7 @@ function RollforwardRows({ accountId, periods, mode }: { accountId: Id; periods:
   return (
     <>
       {fields.map((f) => (
-        <tr key={f.label} className={`border-t border-border text-xs hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
+        <tr key={f.label} className={`border-t border-border text-[11.5px] hover:bg-accent/15 ${f.strong ? "text-foreground font-medium" : "text-dim"}`}>
           <td className="py-2 pl-14">{f.label}</td>
           {periods.map((p, i) => {
             const hover = colHoverProps(i, col, setCol);
@@ -117,11 +117,11 @@ function AccountRow({
           <span className="mr-1 inline-block w-3 text-dim">{expanded ? "▾" : "▸"}</span>
           {account.name}
           {account.isExtraSavings && (
-            <span className="ml-2 text-xs text-dim" title="The spending hub: income lands here, expenses pay from here, and each month's surplus is swept out to your split targets -- so a $0 balance is normal and healthy.">
+            <span className="ml-2 text-[11px] text-dim" title="The spending hub: income lands here, expenses pay from here, and each month's surplus is swept out to your split targets -- so a $0 balance is normal and healthy.">
               (spending hub)
             </span>
           )}
-          {account.isExcluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
+          {account.isExcluded && <span className="ml-2 text-[11px] text-dim">(excluded)</span>}
           {editable && (
             <button
               type="button"
@@ -323,9 +323,9 @@ export function AccountsTable({
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <div className="max-h-[85vh] overflow-auto">
         <ColHoverContext.Provider value={{ col: hoveredCol, setCol: setHoveredCol }}>
-        <table className="w-full border-separate border-spacing-0 text-sm tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:pr-6 [&_thead_th:first-child]:border-r [&_thead_th:first-child]:border-border [&_thead_th:first-child]:pr-6">
+        <table className="w-full border-separate border-spacing-0 text-[12.5px] tabular-nums [&_thead_th]:sticky [&_thead_th]:top-0 [&_thead_th]:border-b [&_thead_th]:border-border [&_thead_th]:bg-panel-2 [&_thead_th:not(:first-child)]:z-20 [&_tbody_td:first-child]:sticky [&_tbody_td:first-child]:left-0 [&_tbody_td:first-child]:z-10 [&_tbody_td:first-child]:bg-panel [&_tbody_tr:hover>td:first-child]:!bg-[color-mix(in_srgb,var(--panel)_85%,var(--accent)_15%)] [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [&_tbody_td:first-child]:border-r [&_tbody_td:first-child]:border-border [&_tbody_td:first-child]:pr-6 [&_thead_th:first-child]:border-r [&_thead_th:first-child]:border-border [&_thead_th:first-child]:pr-6">
           <thead>
-            <tr className="text-left text-xs text-dim">
+            <tr className="text-left text-[11px] text-dim">
               <th className="sticky left-0 top-0 z-30 border-b border-border bg-panel-2 py-3 pl-2 font-medium">Account</th>
               {periods.map((p, i) => (
                 <th
@@ -393,7 +393,7 @@ export function AccountsTable({
         </table>
         </ColHoverContext.Provider>
         </div>
-        <p className="border-t border-border px-2 py-2.5 text-xs text-dim">
+        <p className="border-t border-border px-2 py-2.5 text-[11px] text-dim">
           Click an account to see its {isMonthly ? "month-by-month" : "year-by-year"}{" "}
           rollforward. A home&rsquo;s mortgage is edited as part of
           that home, not standalone. Extra Savings is the spending hub &mdash; its surplus is swept out monthly,

@@ -212,12 +212,12 @@ export function TimelineTab({
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border bg-panel">
-        <div className="border-b border-border px-2 py-2 text-xs font-semibold text-dim">
+        <div className="border-b border-border px-2 py-2 text-[11px] font-semibold text-dim">
           Timeline — income, expenses &amp; life events, in date order
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-[12.5px]">
           <thead>
-            <tr className="border-b border-border text-left text-xs text-dim">
+            <tr className="border-b border-border text-left text-[11px] text-dim">
               <th className="py-2 pl-2 font-medium">Date</th>
               <th className="py-2 font-medium">Type</th>
               <th className="py-2 pr-2 font-medium">Description</th>
@@ -230,7 +230,7 @@ export function TimelineTab({
                 className={`cursor-pointer border-t border-border hover:bg-background/40 ${row.excluded ? "opacity-50" : ""}`}
                 onClick={row.open}
               >
-                <td className="whitespace-nowrap py-2 pl-2 align-top text-[11px] text-dim sm:text-sm">{row.date}</td>
+                <td className="whitespace-nowrap py-2 pl-2 align-top text-[10.5px] text-dim sm:text-[12.5px]">{row.date}</td>
                 {/* `whitespace-nowrap` because a pill that wraps renders as two
                     half-pills stacked on top of each other -- "Social Security"
                     and "Have a kid" both did on a phone. The smaller type and
@@ -238,15 +238,15 @@ export function TimelineTab({
                     on one line in a narrow column. */}
                 <td className="py-2 pr-2 align-top">
                   <span
-                    className={`inline-block whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] sm:px-2 sm:text-xs ${TONE_CLASS[row.tone]}`}
+                    className={`inline-block whitespace-nowrap rounded px-1.5 py-0.5 text-[9.5px] sm:px-2 sm:text-[11px] ${TONE_CLASS[row.tone]}`}
                   >
                     {row.badge}
                   </span>
                 </td>
-                <td className="py-2 pr-2 align-top text-[12px] sm:text-sm">
+                <td className="py-2 pr-2 align-top text-[11.5px] sm:text-[12.5px]">
                   <span className="font-medium">{row.name}</span>
                   {row.detail && <span className="text-dim"> — {row.detail}</span>}
-                  {row.excluded && <span className="ml-2 text-xs text-dim">(excluded)</span>}
+                  {row.excluded && <span className="ml-2 text-[11px] text-dim">(excluded)</span>}
                 </td>
               </tr>
             ))}
@@ -262,7 +262,7 @@ export function TimelineTab({
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border bg-panel">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-2 py-2 text-xs font-semibold text-dim">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-2 py-2 text-[11px] font-semibold text-dim">
           <span>Automatic Withdrawals &amp; RMDs</span>
           {(hiddenGroupCount > 0 || showSmallMovements) && (
             <button
@@ -276,9 +276,9 @@ export function TimelineTab({
             </button>
           )}
         </div>
-        <table className="w-full text-sm">
+        <table className="w-full text-[12.5px]">
           <thead>
-            <tr className="border-b border-border text-left text-xs text-dim">
+            <tr className="border-b border-border text-left text-[11px] text-dim">
               <th className="py-2 pl-2 font-medium">Year</th>
               <th className="py-2 font-medium">Kind</th>
               <th className="py-2 font-medium">Account</th>
@@ -295,7 +295,7 @@ export function TimelineTab({
                     onClick={() => toggleYear(year)}
                   >
                     <td className="py-1.5 pl-2 font-medium text-dim">
-                      <span className="mr-1 inline-block w-3 text-xs text-dim">{yearExpanded ? "▾" : "▸"}</span>
+                      <span className="mr-1 inline-block w-3 text-[11px] text-dim">{yearExpanded ? "▾" : "▸"}</span>
                       {year}
                     </td>
                     <td className="py-1.5 text-dim">
@@ -314,10 +314,10 @@ export function TimelineTab({
                             onClick={() => toggleGroup(group.key)}
                           >
                             <td className="py-1.5 pl-6 text-dim">
-                              <span className="mr-1 inline-block w-3 text-xs text-dim">{expanded ? "▾" : "▸"}</span>
+                              <span className="mr-1 inline-block w-3 text-[11px] text-dim">{expanded ? "▾" : "▸"}</span>
                             </td>
                             <td className="py-1.5">
-                              <span className="rounded bg-positive/20 px-2 py-0.5 text-xs text-positive">
+                              <span className="rounded bg-positive/20 px-2 py-0.5 text-[11px] text-positive">
                                 {LEDGER_KIND_LABELS[group.kind]}
                               </span>
                             </td>
@@ -332,10 +332,10 @@ export function TimelineTab({
                           {expanded &&
                             group.entries.map((entry, i) => (
                               <tr key={`${group.key}-${i}`} className="border-t border-border/50 bg-background/20">
-                                <td className="py-1 pl-10 text-xs text-dim">{entry.date}</td>
+                                <td className="py-1 pl-10 text-[11.5px] text-dim">{entry.date}</td>
                                 <td className="py-1" />
-                                <td className="py-1 text-xs text-dim">{entry.note}</td>
-                                <td className="py-1 pr-2 text-right text-xs text-dim">{fmt(entry.amount)}</td>
+                                <td className="py-1 text-[11.5px] text-dim">{entry.note}</td>
+                                <td className="py-1 pr-2 text-right text-[11.5px] text-dim">{fmt(entry.amount)}</td>
                               </tr>
                             ))}
                         </Fragment>
