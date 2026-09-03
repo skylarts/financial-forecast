@@ -573,11 +573,15 @@ export function TransactionsPanel({
               </optgroup>
             ))}
           </select>
-          {/* From and To are one control -- a range -- so they share a row and
+          {/* From and To are one control -- a range -- so they share a unit and
               are never split by a wrap. Their labels sit above the boxes on a
               phone rather than inline: inline, "From" is wider than "To" and
-              pushed the two date boxes out of alignment with each other. */}
-          <div className="grid w-full grid-cols-2 items-end gap-2 sm:flex sm:w-auto sm:items-center">
+              pushed the two date boxes out of alignment with each other. They
+              stack (rather than sitting in two grid columns) below the sm
+              breakpoint because native date inputs on iPhone-width screens
+              don't reliably shrink to half the row -- they overflow past the
+              screen edge instead. */}
+          <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:items-center">
             <label className="min-w-0 text-[11.5px] text-dim-2 sm:flex sm:items-center sm:gap-1">
               <span className="mb-0.5 block sm:mb-0">From</span>
               <input
