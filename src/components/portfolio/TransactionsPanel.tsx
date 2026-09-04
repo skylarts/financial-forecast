@@ -26,7 +26,7 @@ import { Btn } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
 import { useSort, type SortAccessors } from "./useSort";
 import { HEAD, SortHeader } from "./SortHeader";
-import { FOOT, FROZEN_CELL, FROZEN_CELL_TINTED, FrozenLabel, TABLE } from "./frozenColumn";
+import { FOOT, FOOT_FROZEN, FROZEN_CELL, FROZEN_CELL_TINTED, FrozenLabel, TABLE } from "./frozenColumn";
 import {
   buildGroups,
   GroupHeaderRow,
@@ -831,9 +831,12 @@ export function TransactionsPanel({
                         noun="row"
                         collapsed={collapsed}
                         onToggle={() => collapse.toggle(group.key)}
-                        // Date, Account, Type, Symbol -- none of which totals
-                        // across rows of different types.
+                        // The checkbox, then Date, Account, Type and Symbol
+                        // -- none of which totals across rows of different
+                        // types. The checkbox column comes before the frozen
+                        // one and scrolls under it.
                         labelSpan={5}
+                        leadSpan={1}
                         cells={[
                           <span
                             key="qty"
@@ -980,9 +983,9 @@ export function TransactionsPanel({
             </tbody>
             <tfoot>
               <tr>
-                <td className={`${FOOT} text-left text-foreground`} colSpan={5}>
-                  <FrozenLabel>Total</FrozenLabel>
-                </td>
+                <td className={FOOT}></td>
+                <td className={`${FOOT_FROZEN} text-left text-foreground`}>Total</td>
+                <td className={FOOT} colSpan={3}></td>
                 {(() => {
                   const netQuantity = rows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
                   return (

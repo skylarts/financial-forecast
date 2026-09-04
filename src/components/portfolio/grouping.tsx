@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { FrozenLabel } from "./frozenColumn";
+import { Chevron } from "./Chevron";
+import { FROZEN_CELL_GROUP, FrozenGroupLabel } from "./frozenColumn";
 
 /**
  * Shared grouping machinery for the portfolio tables.
@@ -141,6 +142,9 @@ export function useCollapsedGroups(
   );
 }
 
+/** Every cell on a group's row: its label, its subtotals, the gaps between. */
+const CELL = "border-b border-border px-3 py-1.5 text-[11.5px]";
+
 /**
  * A group's header and subtotal row.
  *
@@ -155,6 +159,7 @@ export function GroupHeaderRow({
   collapsed,
   onToggle,
   labelSpan,
+  leadSpan = 0,
   cells,
 }: {
   label: string;
@@ -165,44 +170,56 @@ export function GroupHeaderRow({
   onToggle: () => void;
   /** How many leading columns the label and its toggle span. */
   labelSpan: number;
+  /** How many of those come before the frozen column. Transactions' checkbox
+   *  is the only one: it scrolls under the frozen column rather than being
+   *  part of it, on a group's row as on any other. */
+  leadSpan?: number;
   /** One node per trailing column, right-aligned. `null` renders an empty cell. */
   cells: readonly React.ReactNode[];
 }) {
+  // The label sits in the frozen column itself rather than in one cell
+  // spanning up to it. Spanning was what let the label scroll away: a sticky
+  // child only sticks as far as its own cell reaches, so on a wide table the
+  // group name eventually slid off and the figures behind it slid over the
+  // top. Being the frozen column, it now stays put and they pass underneath.
+  const trailingSpan = labelSpan - leadSpan - 1;
   return (
     // The border is on the cells, not the row: these tables are
     // `border-separate` so their label column can be frozen, and a separated
     // table draws no `tr` borders at all.
     <tr className="bg-panel-2">
-      <td colSpan={labelSpan} className="border-b border-border px-3 py-1.5 text-left">
-        <FrozenLabel>
+      {leadSpan > 0 && <td colSpan={leadSpan} className={`${CELL} text-left`} />}
+      <td className={`${CELL} ${FROZEN_CELL_GROUP} text-left`}>
+        <FrozenGroupLabel>
           <button
             type="button"
             onClick={onToggle}
             aria-expanded={!collapsed}
             title={collapsed ? `Show ${label}` : `Hide ${label}`}
-            className="flex items-center gap-1.5 text-[11.5px] font-semibold text-dim transition-colors hover:text-foreground"
+            className="flex max-w-full items-center gap-1.5 whitespace-nowrap text-[11.5px] font-semibold text-dim transition-colors hover:text-foreground"
           >
-            <span
-              aria-hidden
-              className={`inline-block text-[9px] text-dim-2 transition-transform ${
-                collapsed ? "" : "rotate-90"
-              }`}
-            >
-              ▶
-            </span>
-            {label}
-            <span className="font-normal text-dim-2">
-              {count} {count === 1 ? noun : `${noun}s`}
+            <Chevron open={!collapsed} />
+            {/* Held to the frozen column's width on a phone, these two are
+                competing for a column only as wide as a date, and the name is
+                what identifies the group -- "S.. 8 rows" says nothing. So the
+                count gives up its noun first, leaving the bare number, and
+                only then does the name ellipsise. The number keeps `shrink-0`
+                either way: a half-drawn count reads as a wrong number. */}
+            <span className="truncate">{label}</span>
+            <span className="shrink-0 font-normal text-dim-2">
+              {count}
+              <span className="hidden sm:inline"> {count === 1 ? noun : `${noun}s`}</span>
             </span>
           </button>
-        </FrozenLabel>
+        </FrozenGroupLabel>
       </td>
+      {trailingSpan > 0 && <td colSpan={trailingSpan} className={CELL} />}
       {cells.map((cell, i) => (
         <td
           // Positional by nature: these are columns, not entities, and they
           // never reorder within a table.
           key={i}
-          className="border-b border-border px-3 py-1.5 text-right text-[11.5px] font-semibold tabular-nums"
+          className={`${CELL} text-right font-semibold tabular-nums`}
         >
           {cell}
         </td>
@@ -210,6 +227,7 @@ export function GroupHeaderRow({
     </tr>
   );
 }
+
 
 /**
  * Opens or shuts every group at once, beside the grouping control.
@@ -224,15 +242,56 @@ export function GroupHeaderRow({
  */
 export function GroupToggle({ collapse }: { collapse: CollapseState }) {
   const expand = collapse.allCollapsed;
+  const label = expand ? "Expand all" : "Collapse all";
   return (
     <button
       type="button"
       onClick={expand ? collapse.expandAll : collapse.collapseAll}
       title={expand ? "Open every group" : "Shut every group"}
-      className="whitespace-nowrap rounded border border-transparent px-1.5 py-0.5 text-[10.5px] font-medium normal-case tracking-normal text-dim-2 transition-colors hover:border-border hover:text-foreground"
+      aria-label={label}
+      className="flex shrink-0 items-center whitespace-nowrap rounded border border-transparent px-1.5 py-0.5 text-[10.5px] font-medium normal-case tracking-normal text-dim-2 transition-colors hover:border-border hover:text-foreground"
     >
-      {expand ? "Expand all" : "Collapse all"}
+      {/* Wordless on a phone. This sits in a table header only as wide as its
+          own contents, and the words made it a third stacked line of chrome
+          above the first row of data. */}
+      <ExpandIcon open={expand} />
+      <span className="hidden sm:inline">{label}</span>
     </button>
+  );
+}
+
+/**
+ * A double chevron, down to open every group and up to shut them.
+ *
+ * Not the two chevrons drawn apart and together that this sort of control
+ * often uses: at the twelve pixels there is room for here, chevrons pointing
+ * at each other make an x, and an x in a corner of a table reads as "close
+ * this", which is the one thing the button does not do.
+ */
+function ExpandIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 12 12"
+      className="h-3 w-3 sm:hidden"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {open ? (
+        <>
+          <path d="M3 3 6 6 9 3" />
+          <path d="M3 7 6 10 9 7" />
+        </>
+      ) : (
+        <>
+          <path d="M3 6 6 3 9 6" />
+          <path d="M3 10 6 7 9 10" />
+        </>
+      )}
+    </svg>
   );
 }
 
@@ -316,8 +375,11 @@ export function GroupMenu<K extends string>({
   return (
     // The wrapper is what the portalled menu measures against, so the toggle
     // sitting inside it has to not move the button -- hence `items-center` on
-    // an inline flex rather than the two of them wrapping independently.
-    <span ref={wrap} className="relative inline-flex flex-wrap items-center gap-1 normal-case">
+    // an inline flex rather than the two of them wrapping independently. And
+    // no wrapping within it either: the two controls are then one item as far
+    // as the header column's width is concerned, and share a line instead of
+    // stacking into two.
+    <span ref={wrap} className="relative inline-flex items-center gap-1 normal-case">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -330,7 +392,18 @@ export function GroupMenu<K extends string>({
             : "border-transparent text-dim-2 hover:border-border hover:text-foreground"
         }`}
       >
-        {grouped ? current?.label : "Group"} ▾
+        {grouped ? (
+          <>
+            {/* "By account" reads better in a sentence, but the column this
+                sits in is barely wider than the words; the "By" is the half
+                that carries no information. */}
+            <span className="hidden sm:inline">{current?.label}</span>
+            <span className="sm:hidden">{withoutBy(current?.label ?? "")}</span>
+          </>
+        ) : (
+          "Group"
+        )}{" "}
+        ▾
       </button>
       {open &&
         at &&
@@ -369,7 +442,19 @@ export function GroupMenu<K extends string>({
   );
 }
 
-/** Marks a column header as the one the table is currently grouped by. */
+/** "By account" -> "Account". Anything not phrased that way is left alone. */
+function withoutBy(label: string): string {
+  const rest = label.replace(/^By /, "");
+  return rest === label ? label : rest[0].toUpperCase() + rest.slice(1);
+}
+
+/**
+ * Marks a column header as the one the table is currently grouped by.
+ *
+ * Joined by a non-breaking space: a header narrow enough to wrap put the mark
+ * on a line of its own underneath, which on a phone cost the whole header row
+ * a second line for one glyph.
+ */
 export function groupedColumnMarker(activeColumn: string | undefined, column: string): string {
-  return activeColumn === column ? " ⌄" : "";
+  return activeColumn === column ? "\u00a0⌄" : "";
 }

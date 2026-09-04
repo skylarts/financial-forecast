@@ -16,7 +16,7 @@ import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { useSort, type SortAccessors } from "./useSort";
 import { SortHeader } from "./SortHeader";
-import { FOOT, FROZEN_CELL, FrozenLabel, TABLE } from "./frozenColumn";
+import { FOOT, FOOT_FROZEN, FROZEN_CELL, FrozenLabel, TABLE } from "./frozenColumn";
 import { MoreRows, useRowWindow } from "./rowWindow";
 
 const CELL = "border-b border-border-soft px-3 py-2 text-[12.5px] tabular-nums";
@@ -318,9 +318,8 @@ export function RealizedPanel({
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td className={`${FOOT} text-left text-foreground`} colSpan={labelSpan}>
-                      <FrozenLabel>Total</FrozenLabel>
-                    </td>
+                    <td className={`${FOOT_FROZEN} text-left text-foreground`}>Total</td>
+                    <td className={FOOT} colSpan={labelSpan - 1}></td>
                     <td className={`${FOOT} text-right text-foreground`}>
                       {money(sorted.reduce((s, lot) => s + lot.costBasis, 0))}
                     </td>

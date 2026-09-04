@@ -24,6 +24,7 @@ import {
 } from "@/engine/portfolio/metrics";
 import { money } from "@/lib/portfolio/format";
 import { ownerLabel } from "@/lib/people";
+import { Chevron } from "./Chevron";
 import { holdingFacetsActive, matchesHoldingFacets, type HoldingFacets } from "./filters";
 
 const DIMENSIONS = [
@@ -235,12 +236,7 @@ function AllocationBars({
               title={open ? `Close ${slice.label}` : `See what makes up ${slice.label}`}
               note={`${members.length} holding${members.length === 1 ? "" : "s"}`}
               lead={
-                <span
-                  aria-hidden
-                  className={`w-3 shrink-0 text-[9px] text-dim-2 transition-transform ${open ? "rotate-90" : ""}`}
-                >
-                  ▶
-                </span>
+                <Chevron open={open} className="h-3 w-3" />
               }
             />
             {open &&

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSchwabStatus } from "@/lib/portfolio/useSchwabStatus";
+import { Chevron } from "./Chevron";
 import { SchwabAppSettings } from "./SchwabAppSettings";
 
 /**
@@ -175,12 +176,7 @@ function Bar({
                 className="flex items-center gap-1.5 text-left text-dim transition-colors hover:text-foreground"
               >
                 {headline}
-                <span
-                  aria-hidden
-                  className={`inline-block text-[9px] text-dim-2 transition-transform ${open ? "rotate-90" : ""}`}
-                >
-                  ▶
-                </span>
+                <Chevron open={open} />
               </button>
             ) : (
               <span className="text-dim">{headline}</span>

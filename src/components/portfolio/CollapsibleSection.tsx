@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Chevron } from "./Chevron";
 
 /**
  * A titled block under the allocation charts that folds away.
@@ -34,12 +35,7 @@ export function CollapsibleSection({
         className="flex w-full items-baseline justify-between gap-3 text-left"
       >
         <h3 className="flex shrink-0 items-baseline gap-1.5 text-[13px] font-semibold text-foreground">
-          <span
-            aria-hidden
-            className={`inline-block text-[9px] text-dim-2 transition-transform ${open ? "rotate-90" : ""}`}
-          >
-            ▶
-          </span>
+          <Chevron open={open} />
           {title}
         </h3>
         <span className="min-w-0 truncate text-right text-[11.5px] text-dim-2">{summary}</span>
