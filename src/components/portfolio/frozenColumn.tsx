@@ -111,19 +111,25 @@ export function FrozenLabel({ children }: { children: ReactNode }) {
  *   scrolling columns pass behind it and are cut off at its edge, the way
  *   they are cut off by the frozen column's header.
  *
- * That lean-out assumes the trailing columns it crosses are empty. On a phone
- * they usually aren't -- the leading columns (Shares, Avg cost...) are too
- * narrow to hold the label, so it was reaching straight through them into the
- * first column with real figures (Value) and cutting those off mid-digit
- * instead of the blank space this was designed to cross. Capped to the same
- * width as the frozen column itself below `sm`, same as any other cell in it,
- * so the label just ellipsises there instead. Above `sm` there's room for the
- * lean-out to land on the blank columns it was meant for, so the cap lifts.
+ * That lean-out assumes the columns it crosses are empty. On a phone they
+ * aren't: the frozen column is only as wide as a date, so the label reached
+ * straight past it over figures that are being read, and stopped wherever its
+ * text happened to end -- mid-column, mid-digit.
+ *
+ * So below `sm` the `w-0` comes off and the label counts towards the column's
+ * width like any other cell, up to the same `FROZEN_WIDTH` cap the column
+ * already honours there. Holding it to a date-sized column instead was the
+ * other way to stop the bleed, and it cost more than it saved: "Alex R.." and
+ * "Alex 4.." are the same label. Widening by the width of an account name
+ * costs about 30px, and nothing ends up underneath anything.
+ *
+ * Above `sm` the cap lifts, `w-0` returns, and the label leans out as before,
+ * where there is blank table to lean over.
  */
 export function FrozenGroupLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="w-0">
-      <div className={`w-max ${FROZEN_WIDTH} truncate bg-panel-2 pr-3`}>{children}</div>
+    <div className={`w-max ${FROZEN_WIDTH} sm:w-0`}>
+      <div className="w-max max-w-full overflow-hidden bg-panel-2 pr-3 sm:max-w-none">{children}</div>
     </div>
   );
 }

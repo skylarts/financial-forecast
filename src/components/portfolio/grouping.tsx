@@ -196,12 +196,19 @@ export function GroupHeaderRow({
             onClick={onToggle}
             aria-expanded={!collapsed}
             title={collapsed ? `Show ${label}` : `Hide ${label}`}
-            className="flex items-center gap-1.5 whitespace-nowrap text-[11.5px] font-semibold text-dim transition-colors hover:text-foreground"
+            className="flex max-w-full items-center gap-1.5 whitespace-nowrap text-[11.5px] font-semibold text-dim transition-colors hover:text-foreground"
           >
             <Chevron open={!collapsed} />
-            {label}
-            <span className="font-normal text-dim-2">
-              {count} {count === 1 ? noun : `${noun}s`}
+            {/* Held to the frozen column's width on a phone, these two are
+                competing for a column only as wide as a date, and the name is
+                what identifies the group -- "S.. 8 rows" says nothing. So the
+                count gives up its noun first, leaving the bare number, and
+                only then does the name ellipsise. The number keeps `shrink-0`
+                either way: a half-drawn count reads as a wrong number. */}
+            <span className="truncate">{label}</span>
+            <span className="shrink-0 font-normal text-dim-2">
+              {count}
+              <span className="hidden sm:inline"> {count === 1 ? noun : `${noun}s`}</span>
             </span>
           </button>
         </FrozenGroupLabel>
