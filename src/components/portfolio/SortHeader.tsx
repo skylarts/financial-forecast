@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { FROZEN_STICKY, FROZEN_WIDTH } from "./frozenColumn";
+import { FROZEN_STICKY } from "./frozenColumn";
 import { sortMarker, type SortState } from "./useSort";
 
 /**
@@ -60,14 +60,13 @@ export function SortHeader<K extends string>({
       title={title}
     >
       <span
-        // The frozen column's header wraps rather than spilling into the
-        // column beside it: capped to a phone-sized width, its label and its
-        // grouping control don't always fit on one line. `gap-y` for the
-        // width where they don't, so the two lines aren't flush against one
-        // another.
-        className={`flex items-center gap-x-1.5 gap-y-1 ${justify} ${
-          frozen ? `flex-wrap ${FROZEN_WIDTH} sm:flex-nowrap` : ""
-        }`}
+        // The frozen column's header stays on one line, and the column widens
+        // to hold it. It used to wrap instead, capped to a phone-sized width,
+        // which stacked the grouping control under the column name and made
+        // the header two lines tall on a phone -- a row of chrome above the
+        // data that read as a second, emptier header. The column it widens is
+        // the frozen one, so what it costs is scrolling, not anything hidden.
+        className={`flex items-center gap-x-1.5 ${justify} ${frozen ? "whitespace-nowrap" : ""}`}
       >
         <button
           type="button"
