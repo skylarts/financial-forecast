@@ -37,6 +37,7 @@ import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import type { AllocationDimension } from "./AllocationPanel";
 import { BasketManager } from "./BasketManager";
+import { CollapsibleSection } from "./CollapsibleSection";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { SchwabBadge } from "./SchwabBadge";
@@ -351,6 +352,20 @@ export function PortfolioApp() {
   const classifiableHoldingSymbols = useMemo(
     () => [...new Set(scopedHoldings.filter((h) => h.kind === "position").map((h) => h.symbol))],
     [scopedHoldings],
+  );
+
+  /**
+   * Holdings the feed and the user have both left as "other" -- the ones the
+   * allocation charts can't place. Counted over what's actually on screen, so
+   * the figure matches the list it summarises.
+   */
+  const unclassifiedCount = useMemo(
+    () =>
+      classifiableHoldingSymbols.filter((symbol) => {
+        const security = portfolio.securities.find((s) => normalizeSymbol(s.symbol) === symbol);
+        return (security?.assetClass ?? "other") === "other";
+      }).length,
+    [classifiableHoldingSymbols, portfolio.securities],
   );
 
   const assetClassOptions = useMemo(
@@ -868,15 +883,23 @@ export function PortfolioApp() {
               onRemove={removeBasket}
               onAssign={assignToBasket}
             />
-            <div>
-              <div className="mb-2 flex items-baseline justify-between">
-                <h3 className="text-[13px] font-semibold text-foreground">Classify holdings</h3>
-                <span className="text-[11.5px] text-dim-2">
-                  {classifying
-                    ? "Reading classes from the feed…"
-                    : "Classes come from the feed. Edit a symbol to split its class, tag it, or fix its type."}
-                </span>
-              </div>
+            {/* Open by default, unlike Baskets: this list is how a holding
+                gets a class at all, and a portfolio full of unclassified names
+                would have nothing but empty charts and a shut drawer to
+                explain why. The summary carries the count of what still needs
+                a class, so folding it away doesn't hide that there's work in
+                there. */}
+            <CollapsibleSection
+              title="Classify holdings"
+              defaultOpen
+              summary={
+                classifying
+                  ? "Reading classes from the feed…"
+                  : unclassifiedCount > 0
+                    ? `${unclassifiedCount} unclassified — edit a symbol to set its class, split it, or tag it.`
+                    : "Classes come from the feed. Edit a symbol to split its class, tag it, or fix its type."
+              }
+            >
               <div className="flex flex-col gap-1.5">
                 {/* Positions only -- cash is already a class, and offering to
                     reclassify it as an equity is an invitation to a wrong
@@ -904,7 +927,7 @@ export function PortfolioApp() {
                   ))
                 )}
               </div>
-            </div>
+            </CollapsibleSection>
           </AllocationPanel>
         )}
 
