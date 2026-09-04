@@ -111,14 +111,19 @@ export function FrozenLabel({ children }: { children: ReactNode }) {
  *   scrolling columns pass behind it and are cut off at its edge, the way
  *   they are cut off by the frozen column's header.
  *
- * The pinning is the cell's, not this element's: the cell it sits in is the
- * frozen column, so it is already pinned and already painted above the rest
- * of its row.
+ * That lean-out assumes the trailing columns it crosses are empty. On a phone
+ * they usually aren't -- the leading columns (Shares, Avg cost...) are too
+ * narrow to hold the label, so it was reaching straight through them into the
+ * first column with real figures (Value) and cutting those off mid-digit
+ * instead of the blank space this was designed to cross. Capped to the same
+ * width as the frozen column itself below `sm`, same as any other cell in it,
+ * so the label just ellipsises there instead. Above `sm` there's room for the
+ * lean-out to land on the blank columns it was meant for, so the cap lifts.
  */
 export function FrozenGroupLabel({ children }: { children: ReactNode }) {
   return (
     <div className="w-0">
-      <div className="w-max bg-panel-2 pr-3">{children}</div>
+      <div className={`w-max ${FROZEN_WIDTH} truncate bg-panel-2 pr-3`}>{children}</div>
     </div>
   );
 }
