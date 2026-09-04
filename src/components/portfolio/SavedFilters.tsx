@@ -83,7 +83,9 @@ export function SavedFilters<K extends string>({
   };
 
   return (
-    <div ref={wrap} className="relative">
+    // `static` on a phone hands the panel below off to the filter bar, which is
+    // the positioned ancestor there -- see the note on the panel.
+    <div ref={wrap} className="relative max-sm:static">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -103,8 +105,10 @@ export function SavedFilters<K extends string>({
           // Same escape hatch as the filter panel: on a phone this button sits
           // far enough right that a fixed-width panel hanging off its left
           // edge would run past the screen, and the page's `overflow-x: clip`
-          // would quietly cut the half that hangs over.
-          className="absolute left-0 z-20 mt-1 w-64 overflow-hidden rounded-md border border-border bg-panel shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:w-auto"
+          // would quietly cut the half that hangs over -- so it spans the
+          // filter bar, which is the positioned ancestor once the wrapper goes
+          // `static`.
+          className="absolute left-0 z-20 mt-1 w-64 overflow-hidden rounded-md border border-border bg-panel shadow-lg max-sm:inset-x-3 max-sm:top-full max-sm:w-auto"
         >
           <div className="border-b border-border px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-dim-2">
             Saved filters
