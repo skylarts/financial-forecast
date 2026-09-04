@@ -135,7 +135,9 @@ export function SavedFilters<K extends string>({
                   </button>
                   <button
                     type="button"
-                    onClick={() => removeSavedFilter(filter.id)}
+                    onClick={() => {
+                      if (confirm(`Delete "${filter.name}"?`)) removeSavedFilter(filter.id);
+                    }}
                     title={`Delete ${filter.name}`}
                     className="px-2 py-1.5 text-dim-2 transition-colors hover:text-negative"
                   >
