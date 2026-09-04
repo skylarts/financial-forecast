@@ -118,3 +118,58 @@ export function assertAssignableParent(
   }
   return null;
 }
+
+/**
+ * Where an account's rows belong when a table is grouped by account.
+ *
+ * "Pre-Tax" and "Roth" are tax treatments, not accounts: grouping on the bare
+ * account name made them top-level groups, and worse, merged two people's
+ * 401(k) sleeves into one "Roth" pile. A sleeve therefore groups under its
+ * parent and subdivides within it, so the money reads as one 401(k) that
+ * happens to be split two ways.
+ */
+export interface AccountGroup {
+  /** The parent group: stable across sleeves, so the whole family folds as one. */
+  key: string;
+  label: string;
+  /** The subdivision inside that group, or null for an account with no sleeves. */
+  subKey: string | null;
+  subLabel: string | null;
+}
+
+/**
+ * Every account's grouping, keyed by account id.
+ *
+ * A parent that holds rows of its own gets a subdivision too -- otherwise its
+ * rows would sit directly under a header whose subtotal also covers the
+ * sleeves listed below it, which reads as double counting.
+ */
+export function accountGroups(
+  accounts: readonly PortfolioAccount[],
+): Map<string, AccountGroup> {
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const map = new Map<string, AccountGroup>();
+
+  for (const account of accounts) {
+    const parent =
+      account.parentAccountId === null ? null : byId.get(account.parentAccountId) ?? null;
+    if (parent) {
+      map.set(account.id, {
+        key: parent.id,
+        label: parent.name,
+        subKey: account.id,
+        subLabel: account.name,
+      });
+      continue;
+    }
+    const split = hasSleeves(accounts, account.id);
+    map.set(account.id, {
+      key: account.id,
+      label: account.name,
+      subKey: split ? `${account.id}:own` : null,
+      subLabel: split ? "Unassigned" : null,
+    });
+  }
+
+  return map;
+}

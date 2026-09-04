@@ -8,6 +8,8 @@ import { useSort, type SortAccessors, type SortState } from "./useSort";
 import { SortHeader } from "./SortHeader";
 import {
   buildGroups,
+  buildNestedGroups,
+  nestedAccountLabel,
   GroupHeaderRow,
   GroupMenu,
   groupedColumnMarker,
@@ -16,6 +18,7 @@ import {
   type Group,
   type GroupingOption,
 } from "./grouping";
+import type { AccountGroup } from "@/lib/portfolio/accountTree";
 import { UNTAGGED } from "./filters";
 import { FOOT, FOOT_FROZEN, FROZEN_CELL, FROZEN_WIDTH, TABLE } from "./frozenColumn";
 
@@ -157,20 +160,26 @@ export function groupsFor(
   grouping: HoldingGrouping,
   accountNames: Map<string, string>,
   sort: SortState<Column>,
+  accountGroups?: Map<string, AccountGroup>,
 ): Group<Row>[] {
-  if (grouping === "none") return [{ key: "", label: "", rows: [...rows] }];
+  if (grouping === "none") {
+    return [{ key: "", label: "", rows: [...rows], totalRows: [...rows], depth: 0, parentKey: null }];
+  }
 
-  const labelFor = (row: Row) =>
-    row.groupLabel ??
-    (grouping === "account"
-      ? accountNames.get(row.accountId) ?? "Unknown account"
-      : grouping === "instrumentType"
-        ? INSTRUMENT_TYPE_LABELS[row.instrumentType] ?? row.instrumentType
-        : row.side === "short"
-          ? "Short positions"
-          : "Long positions");
+  // By account nests, because a pre-tax/Roth sleeve is a subdivision of one
+  // account rather than an account in its own right.
+  const built =
+    grouping === "account"
+      ? buildNestedGroups(rows, (row) => nestedAccountLabel(row.accountId, accountNames, accountGroups))
+      : buildGroups(rows, (row) =>
+          row.groupLabel ??
+          (grouping === "instrumentType"
+            ? INSTRUMENT_TYPE_LABELS[row.instrumentType] ?? row.instrumentType
+            : row.side === "short"
+              ? "Short positions"
+              : "Long positions"),
+        );
 
-  const built = buildGroups(rows, labelFor);
   const total = GROUP_TOTALS[sort.key];
   if (!total) return built;
   return orderGroupsBy(built, (grouped) => grouped.reduce((sum, row) => sum + total(row), 0), sort.direction);
@@ -179,6 +188,7 @@ export function groupsFor(
 export function HoldingsTable({
   holdings,
   accountNames,
+  accountGroups,
   showAccount,
   grouping,
   onGroupingChange,
@@ -187,6 +197,9 @@ export function HoldingsTable({
 }: {
   holdings: Holding[];
   accountNames: Map<string, string>;
+  /** Which parent each account groups under, so a pre-tax/Roth sleeve nests
+   *  inside its 401(k) instead of standing beside it. */
+  accountGroups: Map<string, AccountGroup>;
   showAccount: boolean;
   grouping: HoldingGrouping;
   onGroupingChange: (next: HoldingGrouping) => void;
@@ -218,8 +231,8 @@ export function HoldingsTable({
   const sorted = useMemo(() => apply(rows), [apply, rows]);
 
   const groups = useMemo(
-    () => groupsFor(sorted, grouping, accountNames, sort),
-    [sorted, grouping, accountNames, sort],
+    () => groupsFor(sorted, grouping, accountNames, sort, accountGroups),
+    [sorted, grouping, accountNames, sort, accountGroups],
   );
 
   if (holdings.length === 0) {
@@ -282,16 +295,21 @@ export function HoldingsTable({
         </thead>
         <tbody>
           {groups.map((group) => {
-            const totals = totalsFor(group.rows);
+            const totals = totalsFor(group.totalRows);
             const collapsed = grouping !== "none" && collapse.isCollapsed(group.key);
+            // A subdivision disappears with the account it belongs to, header
+            // and all -- a collapsed group that still lists its sleeves has
+            // not collapsed.
+            if (group.parentKey !== null && collapse.isCollapsed(group.parentKey)) return null;
             return (
             <Fragment key={group.key || "all"}>
               {grouping !== "none" && (
                 <GroupHeaderRow
                   label={group.label}
-                  count={group.rows.length}
+                  count={group.totalRows.length}
                   collapsed={collapsed}
                   onToggle={() => collapse.toggle(group.key)}
+                  depth={group.depth}
                   labelSpan={labelSpan}
                   cells={[
                     <span key="value" className="text-foreground">

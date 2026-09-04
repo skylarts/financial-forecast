@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { AccountGroup } from "@/lib/portfolio/accountTree";
 import { Chevron } from "./Chevron";
 import { FROZEN_CELL_GROUP, FrozenGroupLabel } from "./frozenColumn";
 
@@ -20,7 +21,18 @@ export interface Group<T> {
    *  so two groups that happen to render the same text can't collapse as one. */
   key: string;
   label: string;
+  /** The rows this group draws. A parent in a nested grouping draws none of
+   *  its own -- its children draw them all -- so this is empty there. */
   rows: T[];
+  /** What the group's subtotals cover. Identical to `rows` for a flat group;
+   *  for a nested parent it is the whole family, which is the number a reader
+   *  expects beside an account's name whether or not it is split in two. */
+  totalRows: T[];
+  /** 0 for a top-level group, 1 for a subdivision inside one. */
+  depth: number;
+  /** The group this one sits inside, so a table can hide it when that one is
+   *  collapsed without having to walk the list. */
+  parentKey: string | null;
 }
 
 /**
@@ -44,7 +56,84 @@ export function buildGroups<T>(rows: readonly T[], labelFor: (row: T) => string)
     else map.set(label, [row]);
   }
 
-  return [...map.entries()].map(([label, groupRows]) => ({ key: label, label, rows: groupRows }));
+  return [...map.entries()].map(([label, groupRows]) => ({
+    key: label,
+    label,
+    rows: groupRows,
+    totalRows: groupRows,
+    depth: 0,
+    parentKey: null,
+  }));
+}
+
+/** How a row is filed when groups nest: a parent, and a subdivision within it. */
+export interface NestedLabel {
+  key: string;
+  label: string;
+  /** null when the group has no subdivisions -- the rows hang off it directly. */
+  subKey: string | null;
+  subLabel: string | null;
+}
+
+/**
+ * Buckets rows two levels deep, flattened into the order they render: each
+ * parent immediately followed by its own subdivisions.
+ *
+ * Flattened rather than nested because a table body is a flat list of `tr`s
+ * either way, and a flat list is what lets subdivisions keep the paging,
+ * collapse and subtotal machinery every group already has. A parent with only
+ * one subdivision keeps its rows itself: "Brokerage" then "Brokerage" again
+ * one indent in says nothing worth a row.
+ */
+export function buildNestedGroups<T>(
+  rows: readonly T[],
+  labelFor: (row: T) => NestedLabel,
+): Group<T>[] {
+  interface Bucket {
+    label: string;
+    rows: T[];
+    subs: Map<string, { label: string; rows: T[] }>;
+  }
+  const parents = new Map<string, Bucket>();
+
+  for (const row of rows) {
+    const at = labelFor(row);
+    let parent = parents.get(at.key);
+    if (!parent) {
+      parent = { label: at.label, rows: [], subs: new Map() };
+      parents.set(at.key, parent);
+    }
+    parent.rows.push(row);
+    if (at.subKey === null) continue;
+    const sub = parent.subs.get(at.subKey);
+    if (sub) sub.rows.push(row);
+    else parent.subs.set(at.subKey, { label: at.subLabel ?? at.label, rows: [row] });
+  }
+
+  const out: Group<T>[] = [];
+  for (const [key, parent] of parents) {
+    const split = parent.subs.size > 1;
+    out.push({
+      key,
+      label: parent.label,
+      rows: split ? [] : parent.rows,
+      totalRows: parent.rows,
+      depth: 0,
+      parentKey: null,
+    });
+    if (!split) continue;
+    for (const [subKey, sub] of parent.subs) {
+      out.push({
+        key: subKey,
+        label: sub.label,
+        rows: sub.rows,
+        totalRows: sub.rows,
+        depth: 1,
+        parentKey: key,
+      });
+    }
+  }
+  return out;
 }
 
 /**
@@ -66,10 +155,22 @@ export function orderGroupsBy<T>(
   direction: "asc" | "desc",
 ): Group<T>[] {
   const factor = direction === "asc" ? 1 : -1;
+  // Only the top level is reordered, each parent carrying its own
+  // subdivisions: ranking a flat list would scatter sleeves away from the
+  // account they belong to, which is the one thing the nesting exists to stop.
+  const children = new Map<string, Group<T>[]>();
+  for (const group of groups) {
+    if (group.parentKey === null) continue;
+    const bucket = children.get(group.parentKey);
+    if (bucket) bucket.push(group);
+    else children.set(group.parentKey, [group]);
+  }
+
   return groups
-    .map((group) => ({ group, rank: total(group.rows) }))
+    .filter((group) => group.parentKey === null)
+    .map((group) => ({ group, rank: total(group.totalRows) }))
     .sort((a, b) => (a.rank - b.rank) * factor)
-    .map((entry) => entry.group);
+    .flatMap((entry) => [entry.group, ...(children.get(entry.group.key) ?? [])]);
 }
 
 export interface CollapseState {
@@ -160,6 +261,7 @@ export function GroupHeaderRow({
   onToggle,
   labelSpan,
   leadSpan = 0,
+  depth = 0,
   cells,
 }: {
   label: string;
@@ -174,6 +276,9 @@ export function GroupHeaderRow({
    *  is the only one: it scrolls under the frozen column rather than being
    *  part of it, on a group's row as on any other. */
   leadSpan?: number;
+  /** 0 for a group, 1 for a subdivision inside one -- indented, so a sleeve
+   *  reads as part of the account above it rather than as another account. */
+  depth?: number;
   /** One node per trailing column, right-aligned. `null` renders an empty cell. */
   cells: readonly React.ReactNode[];
 }) {
@@ -187,7 +292,7 @@ export function GroupHeaderRow({
     // The border is on the cells, not the row: these tables are
     // `border-separate` so their label column can be frozen, and a separated
     // table draws no `tr` borders at all.
-    <tr className="bg-panel-2">
+    <tr className={depth > 0 ? "bg-panel" : "bg-panel-2"}>
       {leadSpan > 0 && <td colSpan={leadSpan} className={`${CELL} text-left`} />}
       <td className={`${CELL} ${FROZEN_CELL_GROUP} text-left`}>
         <FrozenGroupLabel>
@@ -196,7 +301,10 @@ export function GroupHeaderRow({
             onClick={onToggle}
             aria-expanded={!collapsed}
             title={collapsed ? `Show ${label}` : `Hide ${label}`}
-            className="flex max-w-full items-center gap-1.5 whitespace-nowrap text-[11.5px] font-semibold text-dim transition-colors hover:text-foreground"
+            style={depth > 0 ? { paddingLeft: depth * 14 } : undefined}
+            className={`flex max-w-full items-center gap-1.5 whitespace-nowrap text-[11.5px] transition-colors hover:text-foreground ${
+              depth > 0 ? "font-medium text-dim-2" : "font-semibold text-dim"
+            }`}
           >
             <Chevron open={!collapsed} />
             {/* Held to the frozen column's width on a phone, these two are
@@ -457,4 +565,24 @@ function withoutBy(label: string): string {
  */
 export function groupedColumnMarker(activeColumn: string | undefined, column: string): string {
   return activeColumn === column ? "\u00a0⌄" : "";
+}
+
+/**
+ * How one row files under an account, for `buildNestedGroups`.
+ *
+ * Falls back to the flat account name when the account is unknown to the
+ * grouping map -- a row whose account has been deleted still has to land
+ * somewhere visible.
+ */
+export function nestedAccountLabel(
+  accountId: string,
+  accountNames: Map<string, string>,
+  accountGroups?: Map<string, AccountGroup>,
+): NestedLabel {
+  const group = accountGroups?.get(accountId);
+  if (group) {
+    return { key: group.key, label: group.label, subKey: group.subKey, subLabel: group.subLabel };
+  }
+  const label = accountNames.get(accountId) ?? "Unknown account";
+  return { key: accountId, label, subKey: null, subLabel: null };
 }

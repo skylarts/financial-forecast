@@ -6,12 +6,15 @@ import type { PortfolioSummary } from "@/engine/portfolio/metrics";
 import { lotTermLabel, money, percent, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import {
   buildGroups,
+  buildNestedGroups,
+  nestedAccountLabel,
   GroupHeaderRow,
   GroupMenu,
   groupedColumnMarker,
   useCollapsedGroups,
   type GroupingOption,
 } from "./grouping";
+import type { AccountGroup } from "@/lib/portfolio/accountTree";
 import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { useSort, type SortAccessors } from "./useSort";
@@ -68,12 +71,16 @@ export function RealizedPanel({
   closedLots,
   summary,
   accountNames,
+  accountGroups,
   search,
   onSelectSymbol,
 }: {
   closedLots: ClosedLot[];
   summary: PortfolioSummary;
   accountNames: Map<string, string>;
+  /** Which parent each account groups under, so a pre-tax/Roth sleeve nests
+   *  inside its 401(k) instead of standing beside it. */
+  accountGroups: Map<string, AccountGroup>;
   /** Owned by the shared filter bar above the tabs. */
   search: string;
   /** Opens the detail drawer on the name a lot belongs to. */
@@ -128,18 +135,25 @@ export function RealizedPanel({
   const rowWindow = useRowWindow(sorted);
 
   const groups = useMemo(() => {
-    if (grouping === "none") return [{ key: "", label: "", rows: sorted }];
+    if (grouping === "none") {
+      return [{ key: "", label: "", rows: sorted, totalRows: sorted, depth: 0, parentKey: null }];
+    }
+    // By account nests: a pre-tax/Roth sleeve subdivides its 401(k) rather
+    // than standing beside it as an account of its own.
+    if (grouping === "account") {
+      return buildNestedGroups(sorted, (lot) =>
+        nestedAccountLabel(lot.accountId, accountNames, accountGroups),
+      );
+    }
     const labelFor = (lot: ClosedLot) =>
       grouping === "symbol"
         ? lot.symbol
-        : grouping === "account"
-          ? accountNames.get(lot.accountId) ?? "Unknown account"
-          : grouping === "term"
-            ? lotTermLabel(lot)
-            : lot.disposedDate.slice(0, 4);
+        : grouping === "term"
+          ? lotTermLabel(lot)
+          : lot.disposedDate.slice(0, 4);
 
     return buildGroups(sorted, labelFor);
-  }, [sorted, grouping, accountNames]);
+  }, [sorted, grouping, accountNames, accountGroups]);
 
   // Opens collapsed: picking a grouping here is asking for the subtotals --
   // the hundreds of underlying rows are what the grouping was meant to fold away.
@@ -244,19 +258,22 @@ export function RealizedPanel({
                 </thead>
                 <tbody>
                   {groups.map((group) => {
-                    const costBasis = group.rows.reduce((s, lot) => s + lot.costBasis, 0);
-                    const proceeds = group.rows.reduce((s, lot) => s + lot.proceeds, 0);
-                    const gain = group.rows.reduce((s, lot) => s + lot.gain, 0);
+                    const costBasis = group.totalRows.reduce((s, lot) => s + lot.costBasis, 0);
+                    const proceeds = group.totalRows.reduce((s, lot) => s + lot.proceeds, 0);
+                    const gain = group.totalRows.reduce((s, lot) => s + lot.gain, 0);
                     const collapsed = grouping !== "none" && collapse.isCollapsed(group.key);
+                    // A subdivision folds away with the account it belongs to.
+                    if (group.parentKey !== null && collapse.isCollapsed(group.parentKey)) return null;
                     return (
                       <Fragment key={group.key || "all"}>
                         {grouping !== "none" && (
                           <GroupHeaderRow
                             label={group.label}
-                            count={group.rows.length}
+                            count={group.totalRows.length}
                             noun="lot"
                             collapsed={collapsed}
                             onToggle={() => collapse.toggle(group.key)}
+                            depth={group.depth}
                             labelSpan={labelSpan}
                             cells={[
                               <span key="basis" className="text-dim">
