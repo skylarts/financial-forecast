@@ -168,13 +168,12 @@ export function PortfolioApp() {
    * that distinguishes two lines that otherwise read the same -- the same fund
    * held in a taxable account and in a Roth is two different positions with two
    * different tax stories -- so an ungrouped list buries the one split that
-   * always matters. Opens expanded: see `startExpanded`.
+   * always matters. Opens with the accounts shut, so the first thing on screen
+   * is a handful of subtotals rather than every lot you own; "Expand all" sits
+   * next to the grouping control.
    */
   const [grouping, setGrouping] = useState<HoldingGrouping>("account");
-  const holdingCollapse = useCollapsedGroups(grouping, {
-    defaultCollapsed: true,
-    startExpanded: true,
-  });
+  const holdingCollapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
   // Classification covers everything ever held, not just what's open now --

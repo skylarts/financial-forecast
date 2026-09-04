@@ -513,14 +513,9 @@ export function TransactionsPanel({
   // back at its first page instead of re-drawing a previous expansion.
   const rowWindow = useRowWindow(rows);
 
-  // Picking a grouping is asking for the subtotals -- the hundreds of
-  // underlying rows are what the grouping was meant to fold away -- so a
-  // change collapses. The grouping the tab merely opens with is not a request
-  // for that, and starts expanded.
-  const collapse = useCollapsedGroups(grouping, {
-    defaultCollapsed: true,
-    startExpanded: true,
-  });
+  // Opens collapsed: grouping here is asking for the subtotals -- the hundreds
+  // of underlying rows are what the grouping was meant to fold away.
+  const collapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
   const groupedColumn = TX_GROUPINGS.find((g) => g.value === grouping)?.column;
 
   // A scope naming exactly one account (a single-account person, or the
