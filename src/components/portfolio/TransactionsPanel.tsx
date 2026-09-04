@@ -20,7 +20,11 @@ import {
 } from "@/domain/portfolio";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { scopedTo } from "@/lib/portfolio/scope";
-import { accountPath, accountTreeRows } from "@/lib/portfolio/accountTree";
+import {
+  accountGroups as accountGroupsOf,
+  accountPath,
+  accountTreeRows,
+} from "@/lib/portfolio/accountTree";
 import { money, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Btn } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
@@ -29,6 +33,8 @@ import { HEAD, SortHeader } from "./SortHeader";
 import { FOOT, FOOT_FROZEN, FROZEN_CELL, FROZEN_CELL_TINTED, FrozenLabel, TABLE } from "./frozenColumn";
 import {
   buildGroups,
+  buildNestedGroups,
+  nestedAccountLabel,
   GroupHeaderRow,
   GroupMenu,
   groupedColumnMarker,
@@ -496,19 +502,28 @@ export function TransactionsPanel({
   // the bar that owns it.
   const filtersActive = typeFilter !== "all" || fromDate !== "" || toDate !== "";
 
+  const accountGroups = useMemo(() => accountGroupsOf(portfolio.accounts), [portfolio.accounts]);
+
   const groups = useMemo(() => {
-    if (grouping === "none") return [{ key: "", label: "", rows }];
+    if (grouping === "none") {
+      return [{ key: "", label: "", rows, totalRows: rows, depth: 0, parentKey: null }];
+    }
+    // By account nests: a pre-tax/Roth sleeve subdivides its 401(k) rather
+    // than standing beside it as an account of its own.
+    if (grouping === "account") {
+      return buildNestedGroups(rows, (tx) =>
+        nestedAccountLabel(tx.accountId, accountNames, accountGroups),
+      );
+    }
     const labelFor = (tx: Transaction) =>
       grouping === "symbol"
         ? tx.symbol ?? "Cash & fees"
-        : grouping === "account"
-          ? accountNames.get(tx.accountId) ?? "Unknown account"
-          : grouping === "type"
-            ? TRANSACTION_TYPE_LABELS[tx.type]
-            : tx.date.slice(0, 7);
+        : grouping === "type"
+          ? TRANSACTION_TYPE_LABELS[tx.type]
+          : tx.date.slice(0, 7);
 
     return buildGroups(rows, labelFor);
-  }, [rows, grouping, accountNames]);
+  }, [rows, grouping, accountNames, accountGroups]);
 
   // Keyed on `rows`, so any filter, sort, or ledger change starts the table
   // back at its first page instead of re-drawing a previous expansion.
@@ -819,18 +834,21 @@ export function TransactionsPanel({
             </thead>
             <tbody>
               {groups.map((group) => {
-                const netCash = group.rows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
-                const netQuantity = group.rows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
+                const netCash = group.totalRows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
+                const netQuantity = group.totalRows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
                 const collapsed = grouping !== "none" && collapse.isCollapsed(group.key);
+                // A subdivision folds away with the account it belongs to.
+                if (group.parentKey !== null && collapse.isCollapsed(group.parentKey)) return null;
                 return (
                   <Fragment key={group.key || "all"}>
                     {grouping !== "none" && (
                       <GroupHeaderRow
                         label={group.label}
-                        count={group.rows.length}
+                        count={group.totalRows.length}
                         noun="row"
                         collapsed={collapsed}
                         onToggle={() => collapse.toggle(group.key)}
+                        depth={group.depth}
                         // The checkbox, then Date, Account, Type and Symbol
                         // -- none of which totals across rows of different
                         // types. The checkbox column comes before the frozen

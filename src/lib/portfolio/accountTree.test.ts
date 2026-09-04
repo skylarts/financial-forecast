@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PortfolioAccount } from "@/domain/portfolio";
 import {
   accountFamilyIds,
+  accountGroups,
   accountPath,
   accountTreeRows,
   assertAssignableParent,
@@ -122,5 +123,48 @@ describe("assertAssignableParent", () => {
 
   it("refuses a parent that no longer exists", () => {
     expect(assertAssignableParent(accounts, "brokerage", "ghost")).toMatch(/no longer exists/);
+  });
+});
+
+describe("account groups", () => {
+  it("files a sleeve under its parent, keeping its own name as the subdivision", () => {
+    const groups = accountGroups(accounts);
+    expect(groups.get("roth")).toEqual({
+      key: "k401",
+      label: "Texa$aver 401(k)",
+      subKey: "roth",
+      subLabel: "Roth",
+    });
+    expect(groups.get("pre")?.key).toBe("k401");
+  });
+
+  it("leaves a standalone account undivided", () => {
+    expect(accountGroups(accounts).get("brokerage")).toEqual({
+      key: "brokerage",
+      label: "Brokerage",
+      subKey: null,
+      subLabel: null,
+    });
+  });
+
+  it("gives a split parent's own rows a subdivision of their own", () => {
+    // Otherwise they would sit under a header whose subtotal already counts
+    // the sleeves listed below them.
+    expect(accountGroups(accounts).get("k401")).toEqual({
+      key: "k401",
+      label: "Texa$aver 401(k)",
+      subKey: "k401:own",
+      subLabel: "Unassigned",
+    });
+  });
+
+  it("keeps two people's Roth sleeves apart", () => {
+    const two = [
+      ...accounts,
+      account({ id: "k401b", name: "Hirva 401(k)" }),
+      account({ id: "rothb", name: "Roth", type: "roth_401k", parentAccountId: "k401b" }),
+    ];
+    const groups = accountGroups(two);
+    expect(groups.get("roth")?.key).not.toBe(groups.get("rothb")?.key);
   });
 });

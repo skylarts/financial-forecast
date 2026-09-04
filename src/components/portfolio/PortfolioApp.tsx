@@ -59,6 +59,7 @@ import {
   type HoldingFacets,
 } from "./filters";
 import { useMarketIndexStore } from "@/store/useMarketIndexes";
+import { accountGroups as accountGroupsOf } from "@/lib/portfolio/accountTree";
 
 /** Every section in the filter panel: the three holding facets, plus accounts. */
 type FilterKey = "account" | (keyof HoldingFacets & string);
@@ -303,6 +304,13 @@ export function PortfolioApp() {
     () => new Map(portfolio.accounts.map((a) => [a.id, a.name])),
     [portfolio.accounts],
   );
+
+  /**
+   * Which account each id groups under. A sleeve's own name is a tax
+   * treatment ("Pre-Tax", "Roth"), so grouping on it produced groups that
+   * weren't accounts and that merged two people's 401(k)s into one pile.
+   */
+  const accountGroups = useMemo(() => accountGroupsOf(portfolio.accounts), [portfolio.accounts]);
 
   /**
    * Every transaction the current account scope can see. The detail drawer
@@ -874,6 +882,7 @@ export function PortfolioApp() {
               <HoldingsTable
                 holdings={visibleHoldings}
                 accountNames={accountNames}
+                accountGroups={accountGroups}
                 showAccount={soleAccountId === null}
                 grouping={grouping}
                 onGroupingChange={setGrouping}
@@ -889,6 +898,7 @@ export function PortfolioApp() {
             holdings={analysis.holdings}
             accounts={portfolio.accounts}
             accountNames={accountNames}
+            accountGroups={accountGroups}
             people={people}
             baskets={portfolio.baskets}
             facets={facets}
@@ -978,6 +988,7 @@ export function PortfolioApp() {
             closedLots={analysis.closedLots}
             summary={summary}
             accountNames={accountNames}
+            accountGroups={accountGroups}
             search={search}
             onSelectSymbol={(symbol) => openPosition(symbol)}
           />

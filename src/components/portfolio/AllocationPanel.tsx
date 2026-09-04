@@ -26,6 +26,7 @@ import { money } from "@/lib/portfolio/format";
 import { ownerLabel } from "@/lib/people";
 import { Chevron } from "./Chevron";
 import { holdingFacetsActive, matchesHoldingFacets, type HoldingFacets } from "./filters";
+import type { AccountGroup } from "@/lib/portfolio/accountTree";
 
 const DIMENSIONS = [
   { value: "assetClass", label: "Asset class" },
@@ -263,6 +264,7 @@ export function AllocationPanel({
   holdings,
   accounts,
   accountNames,
+  accountGroups,
   people,
   baskets,
   facets,
@@ -274,6 +276,9 @@ export function AllocationPanel({
   holdings: Holding[];
   accounts: PortfolioAccount[];
   accountNames: Map<string, string>;
+  /** Which parent each account groups under: a pie slice per pre-tax/Roth
+   *  sleeve would split one 401(k) in two and merge two people's Roths. */
+  accountGroups: Map<string, AccountGroup>;
   people: readonly Person[];
   /** Groups of holdings treated as one position, which stand in for their
    *  members in the by-holding breakdown. */
@@ -346,7 +351,9 @@ export function AllocationPanel({
     const pick = (h: Holding): string => {
       switch (dimension) {
         case "account":
-          return accountNames.get(h.accountId) ?? "Unknown account";
+          return (
+            accountGroups.get(h.accountId)?.label ?? accountNames.get(h.accountId) ?? "Unknown account"
+          );
         case "owner":
           return accountOwners.get(h.accountId) ?? "Joint";
         case "accountType":
@@ -360,7 +367,16 @@ export function AllocationPanel({
       }
     };
     return buildAllocation(holdings, pick, { includeCash });
-  }, [filteredHoldings, dimension, includeCash, accountNames, accountTypes, accountOwners, basketOf]);
+  }, [
+    filteredHoldings,
+    dimension,
+    includeCash,
+    accountNames,
+    accountGroups,
+    accountTypes,
+    accountOwners,
+    basketOf,
+  ]);
 
   const hasCash = useMemo(() => filteredHoldings.some((h) => h.kind === "cash"), [filteredHoldings]);
   const total = slices.reduce((sum, s) => sum + s.value, 0);
