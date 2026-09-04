@@ -11,7 +11,11 @@ import { sortMarker, type SortState } from "./useSort";
  * `z-index` -- see `frozenColumn`.
  */
 const HEAD_BASE =
-  "sticky top-0 border-b border-border bg-panel-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
+  // `align-bottom` so that every label sits on the line directly above the
+  // first row of data. The default centres them, and the leading column's
+  // header is two lines tall on a phone, which left the rest of the labels
+  // floating at a height nothing else in the table shared.
+  "sticky top-0 border-b border-border bg-panel-2 px-3 py-2 align-bottom text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 
 export const HEAD = `${HEAD_BASE} z-10`;
 
@@ -58,8 +62,10 @@ export function SortHeader<K extends string>({
       <span
         // The frozen column's header wraps rather than spilling into the
         // column beside it: capped to a phone-sized width, its label and its
-        // grouping control no longer fit on one line.
-        className={`flex items-center gap-1.5 ${justify} ${
+        // grouping control don't always fit on one line. `gap-y` for the
+        // width where they don't, so the two lines aren't flush against one
+        // another.
+        className={`flex items-center gap-x-1.5 gap-y-1 ${justify} ${
           frozen ? `flex-wrap ${FROZEN_WIDTH} sm:flex-nowrap` : ""
         }`}
       >

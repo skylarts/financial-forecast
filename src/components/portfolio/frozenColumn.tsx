@@ -27,30 +27,34 @@ import type { ReactNode } from "react";
  */
 export const TABLE = "w-full border-separate border-spacing-0";
 
-const FROZEN_BASE =
+const FROZEN_PIN =
   // `border-r-border` spelled out because the row border these cells also
   // carry is the softer of the two weights, and a bare `border-border`
   // alongside it is two colour utilities racing on stylesheet order.
-  "sticky left-0 z-[2] border-r border-r-border group-hover:bg-panel-2";
+  "sticky left-0 z-[2] border-r border-r-border";
 
 /**
  * The frozen column's body cell.
  *
  * Opaque, because the rest of the row passes underneath it -- which also
  * means it can't pick up the row's hover tint the way a transparent cell
- * does, hence `group-hover` here and `group` on the row.
+ * does, hence `group-hover` here and `group` on the row. The pinning is kept
+ * separate from the colour so that each of these cells names one plain
+ * background and no more: two of those on one element resolve by stylesheet
+ * order rather than by the order they were written.
  */
-export const FROZEN_CELL = `${FROZEN_BASE} bg-panel`;
+export const FROZEN_CELL = `${FROZEN_PIN} bg-panel group-hover:bg-panel-2`;
 
 /**
  * The same cell on a row that carries a tint of its own -- a selected
  * transaction, say. The row's translucent tint can't just be left to show
  * through, because what is behind this cell is the rest of the table sliding
- * under it, so the tint is mixed into an opaque colour here instead. One
- * background utility or the other, never both: two of them on one element
- * resolve by stylesheet order, and the plain one wins.
+ * under it, so the tint is mixed into an opaque colour here instead.
  */
-export const FROZEN_CELL_TINTED = `${FROZEN_BASE} bg-[color-mix(in_srgb,var(--accent)_10%,var(--panel))]`;
+export const FROZEN_CELL_TINTED = `${FROZEN_PIN} bg-[color-mix(in_srgb,var(--accent)_10%,var(--panel))]`;
+
+/** The same cell on a group's header row, which is shaded to begin with. */
+export const FROZEN_CELL_GROUP = `${FROZEN_PIN} bg-panel-2`;
 
 /**
  * How wide the frozen column is allowed to get on a narrow screen.
@@ -78,11 +82,43 @@ export const FOOT = `${FOOT_BASE} z-10`;
 export const FOOT_FROZEN = `${FOOT_BASE} ${FROZEN_STICKY}`;
 
 /**
- * Keeps a label put in a cell that spans the frozen column instead of being
- * it -- a group header, a totals row. The cell itself can't be sticky without
+ * Keeps a label put in a cell that spans the whole table -- the "show more
+ * rows" footer under a long group. The cell can't be sticky itself without
  * sliding over the columns it spans, so its contents are, which parks the
- * label directly above the frozen column as the table scrolls.
+ * label at the left edge as the table scrolls.
+ *
+ * Only for cells that span every column. A cell spanning some of them runs
+ * out of containing block partway across, and a sticky child stops sticking
+ * there and scrolls away with it -- which is what a group's label used to do,
+ * and why it lives in `FrozenGroupLabel` below now.
  */
 export function FrozenLabel({ children }: { children: ReactNode }) {
   return <div className="sticky left-0 w-fit">{children}</div>;
+}
+
+/**
+ * A group's label, sitting in the frozen column and free to be wider than it.
+ *
+ * A group name and its row count are routinely wider than the column holding
+ * them -- "Joint Brokerage 9 positions" over a column of dates -- so this
+ * leans out across the empty columns beside it rather than being ellipsised
+ * down to "Joint Broke...". Two nested boxes, because both halves of that are
+ * needed at once:
+ *
+ * - the outer is `w-0`, so what it holds counts for nothing towards the
+ *   column's width and a table of dates keeps a date-sized frozen column;
+ * - the inner is opaque and only as wide as the label, so the figures in the
+ *   scrolling columns pass behind it and are cut off at its edge, the way
+ *   they are cut off by the frozen column's header.
+ *
+ * The pinning is the cell's, not this element's: the cell it sits in is the
+ * frozen column, so it is already pinned and already painted above the rest
+ * of its row.
+ */
+export function FrozenGroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="w-0">
+      <div className="w-max bg-panel-2 pr-3">{children}</div>
+    </div>
+  );
 }

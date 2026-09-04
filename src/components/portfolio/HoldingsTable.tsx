@@ -17,7 +17,7 @@ import {
   type GroupingOption,
 } from "./grouping";
 import { UNTAGGED } from "./filters";
-import { FOOT, FROZEN_CELL, FROZEN_WIDTH, FrozenLabel, TABLE } from "./frozenColumn";
+import { FOOT, FOOT_FROZEN, FROZEN_CELL, FROZEN_WIDTH, TABLE } from "./frozenColumn";
 
 export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "side" | "instrumentType";
 
@@ -410,9 +410,8 @@ export function HoldingsTable({
         </tbody>
         <tfoot>
           <tr>
-            <td className={`${FOOT} text-left text-foreground`} colSpan={labelSpan}>
-              <FrozenLabel>Total</FrozenLabel>
-            </td>
+            <td className={`${FOOT_FROZEN} text-left text-foreground`}>Total</td>
+            <td className={FOOT} colSpan={labelSpan - 1}></td>
             <td className={`${FOOT} text-right text-foreground`}>{money(grandTotals.marketValue)}</td>
             <td className={`${FOOT} text-right text-dim`}>{(grandTotals.weight * 100).toFixed(1)}%</td>
             <td className={`${FOOT} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
