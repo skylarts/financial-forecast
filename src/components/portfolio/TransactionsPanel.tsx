@@ -425,7 +425,10 @@ export function TransactionsPanel({
   const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [grouping, setGrouping] = useState<TxGrouping>("none");
+  /** Grouped by account out of the box, for the same reason Holdings is: a
+   *  ledger merged across accounts reads as one undifferentiated stream, and
+   *  which account a row belongs to is the fact that separates them. */
+  const [grouping, setGrouping] = useState<TxGrouping>("account");
 
   // Qualified with the parent, so a row filed under a sleeve reads as
   // "401(k) / Roth" rather than a bare "Roth" that could be anyone's.
@@ -510,8 +513,8 @@ export function TransactionsPanel({
   // back at its first page instead of re-drawing a previous expansion.
   const rowWindow = useRowWindow(rows);
 
-  // Opens collapsed: picking a grouping here is asking for the subtotals --
-  // the hundreds of underlying rows are what the grouping was meant to fold away.
+  // Opens collapsed: grouping here is asking for the subtotals -- the hundreds
+  // of underlying rows are what the grouping was meant to fold away.
   const collapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
   const groupedColumn = TX_GROUPINGS.find((g) => g.value === grouping)?.column;
 

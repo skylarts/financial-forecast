@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSchwabStatus } from "@/lib/portfolio/useSchwabStatus";
 import { SchwabAppSettings } from "./SchwabAppSettings";
@@ -52,14 +53,11 @@ export function SchwabConnection() {
   // be nowhere to store them.
   if (status.signInRequired) {
     return (
-      <Bar>
-        {outcome && <span className="w-full text-dim">{outcome}</span>}
-        <span className="text-dim">Using the public price feed</span>
-        <span className="text-dim-2">
-          — sign in to this app to use your Schwab connection. A brokerage connection belongs to an
-          account, so there is nobody to attach it to until you do.
-        </span>
-      </Bar>
+      <Bar
+        outcome={outcome}
+        headline="Using the public price feed"
+        detail="Sign in to this app to use your Schwab connection. A brokerage connection belongs to an account, so there is nobody to attach it to until you do."
+      />
     );
   }
 
@@ -69,13 +67,11 @@ export function SchwabConnection() {
   // so using this tool means registering an app of your own.
   if (!status.configured) {
     return (
-      <Bar>
-        {outcome && <span className="w-full text-dim">{outcome}</span>}
-        <span className="text-dim">Using the public price feed</span>
-        <span className="text-dim-2">
-          — connect your own Schwab app for your broker&apos;s own prices and transaction history.
-          Everything works either way.
-        </span>
+      <Bar
+        outcome={outcome}
+        headline="Using the public price feed"
+        detail="Connect your own Schwab app for your broker's own prices and transaction history. Everything works either way."
+      >
         <SchwabAppSettings onChanged={reload} />
       </Bar>
     );
@@ -90,14 +86,11 @@ export function SchwabConnection() {
   // would invite them to spend a Schwab login on a problem it cannot solve.
   if (status.connected && status.reachable === false) {
     return (
-      <Bar>
-        {outcome && <span className="w-full text-dim">{outcome}</span>}
-        <span className="text-dim">Schwab isn&apos;t answering right now</span>
-        <span className="text-dim-2">
-          — your connection is still signed in, so there is nothing to reconnect. This is usually a
-          temporary limit on Schwab&apos;s side. Prices are on the public feed until it clears.
-        </span>
-      </Bar>
+      <Bar
+        outcome={outcome}
+        headline="Schwab isn't answering right now"
+        detail="Your connection is still signed in, so there is nothing to reconnect. This is usually a temporary limit on Schwab's side. Prices are on the public feed until it clears."
+      />
     );
   }
 
@@ -108,35 +101,25 @@ export function SchwabConnection() {
   // paid for on every visit.
   if (status.connected && !expiringSoon) {
     if (!outcome) return null;
-    return (
-      <Bar>
-        <span className="w-full text-dim">{outcome}</span>
-      </Bar>
-    );
+    return <Bar outcome={outcome} />;
   }
 
   return (
-    <Bar>
-      {outcome && <span className="w-full text-dim">{outcome}</span>}
-      {status.connected ? (
-        <>
-          <span className="text-dim">
-            Schwab prices stop in{" "}
-            {status.daysRemaining === 0 ? "less than a day" : `${status.daysRemaining} days`}
-          </span>
-          <span className="text-dim-2">
-            — Schwab requires a fresh login every week. Prices fall back to the public feed until
-            you sign in again.
-          </span>
-        </>
-      ) : (
-        <>
-          <span className="text-dim">Using the public price feed</span>
-          <span className="text-dim-2">
-            — connect Schwab for your broker&apos;s own prices. Everything works either way.
-          </span>
-        </>
-      )}
+    <Bar
+      outcome={outcome}
+      headline={
+        status.connected
+          ? `Schwab prices stop in ${
+              status.daysRemaining === 0 ? "less than a day" : `${status.daysRemaining} days`
+            }`
+          : "Using the public price feed"
+      }
+      detail={
+        status.connected
+          ? "Schwab requires a fresh login every week. Prices fall back to the public feed until you sign in again."
+          : "Connect Schwab for your broker's own prices. Everything works either way."
+      }
+    >
       <a
         href="/api/schwab/authorize"
         className="rounded border border-border px-2 py-0.5 text-[12px] text-foreground hover:border-accent"
@@ -147,10 +130,65 @@ export function SchwabConnection() {
   );
 }
 
-function Bar({ children }: { children: React.ReactNode }) {
+/**
+ * One line of price-feed status, with the explanation folded behind it.
+ *
+ * The headline is the whole story for anyone who already knows what it means
+ * -- "Using the public price feed" says which prices you are looking at, which
+ * is the only part that has to be on screen. The paragraph underneath answers
+ * "what does that mean and can I change it", which is a question you ask once
+ * and then never again, but it was three lines of standing banner above every
+ * tab, on every visit, forever.
+ *
+ * Actions stay out where they always were. Folding away a headline's
+ * explanation is fine; folding away the button that fixes it is not.
+ */
+function Bar({
+  outcome,
+  headline,
+  detail,
+  children,
+}: {
+  /** What a just-finished sign-in attempt reported. Always shown: it is a
+   *  reply to something the user just did, not standing background. */
+  outcome?: string | null;
+  headline?: React.ReactNode;
+  /** The explanation behind the headline. Without one, the headline is plain
+   *  text rather than a disclosure that opens onto nothing. */
+  detail?: string;
+  /** Buttons and links, beside the headline and never folded. */
+  children?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border bg-panel p-3 text-[12.5px]">
-      {children}
+    <div className="rounded-lg border border-border bg-panel p-3 text-[12.5px]">
+      {outcome && <p className="mb-1.5 text-dim">{outcome}</p>}
+      {(headline || children) && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          {headline &&
+            (detail ? (
+              <button
+                type="button"
+                onClick={() => setOpen((o) => !o)}
+                aria-expanded={open}
+                title={open ? "Hide the explanation" : "What does this mean?"}
+                className="flex items-center gap-1.5 text-left text-dim transition-colors hover:text-foreground"
+              >
+                {headline}
+                <span
+                  aria-hidden
+                  className={`inline-block text-[9px] text-dim-2 transition-transform ${open ? "rotate-90" : ""}`}
+                >
+                  ▶
+                </span>
+              </button>
+            ) : (
+              <span className="text-dim">{headline}</span>
+            ))}
+          {children}
+        </div>
+      )}
+      {open && detail && <p className="mt-1.5 text-dim-2">{detail}</p>}
     </div>
   );
 }

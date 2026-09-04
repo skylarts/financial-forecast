@@ -205,22 +205,28 @@ export function GroupHeaderRow({
   );
 }
 
-/** Expand-all / collapse-all pair, shown next to a table's grouping control. */
-export function GroupToggles({ collapse }: { collapse: CollapseState }) {
-  const link =
-    "text-[11.5px] underline transition-colors hover:text-foreground disabled:no-underline disabled:opacity-40 disabled:hover:text-dim-2";
+/**
+ * Opens or shuts every group at once, beside the grouping control.
+ *
+ * One button rather than an expand/collapse pair, and in the header rather
+ * than inside the grouping menu, where this used to live: a pair always has
+ * one half greyed out, and a table that opens collapsed makes "expand
+ * everything" the first thing many people want -- not something to go hunting
+ * for a click deep in a dropdown. Half-open counts as open, so the button
+ * offers to shut things until everything is already shut; either way one more
+ * click gets back to where you were.
+ */
+export function GroupToggle({ collapse }: { collapse: CollapseState }) {
+  const expand = collapse.allCollapsed;
   return (
-    <span className="flex items-center gap-2 text-dim-2">
-      <button type="button" onClick={collapse.expandAll} disabled={collapse.allExpanded} className={link}>
-        Expand all
-      </button>
-      <span aria-hidden className="text-[11.5px] text-dim-2">
-        ·
-      </span>
-      <button type="button" onClick={collapse.collapseAll} disabled={collapse.allCollapsed} className={link}>
-        Collapse all
-      </button>
-    </span>
+    <button
+      type="button"
+      onClick={expand ? collapse.expandAll : collapse.collapseAll}
+      title={expand ? "Open every group" : "Shut every group"}
+      className="whitespace-nowrap rounded border border-transparent px-1.5 py-0.5 text-[10.5px] font-medium normal-case tracking-normal text-dim-2 transition-colors hover:border-border hover:text-foreground"
+    >
+      {expand ? "Expand all" : "Collapse all"}
+    </button>
   );
 }
 
@@ -302,14 +308,17 @@ export function GroupMenu<K extends string>({
   const grouped = value !== "none";
 
   return (
-    <span ref={wrap} className="relative inline-block normal-case">
+    // The wrapper is what the portalled menu measures against, so the toggle
+    // sitting inside it has to not move the button -- hence `items-center` on
+    // an inline flex rather than the two of them wrapping independently.
+    <span ref={wrap} className="relative inline-flex items-center gap-1 normal-case">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
         title={grouped ? `Grouped ${current?.label.toLowerCase()}` : "Group this table"}
-        className={`rounded border px-1.5 py-0.5 text-[10.5px] font-medium tracking-normal transition-colors ${
+        className={`whitespace-nowrap rounded border px-1.5 py-0.5 text-[10.5px] font-medium tracking-normal transition-colors ${
           grouped
             ? "border-accent text-accent"
             : "border-transparent text-dim-2 hover:border-border hover:text-foreground"
@@ -346,14 +355,10 @@ export function GroupMenu<K extends string>({
                 {option.label}
               </button>
             ))}
-            {collapse && grouped && (
-              <div className="flex items-center gap-2 border-t border-border px-3 py-1.5">
-                <GroupToggles collapse={collapse} />
-              </div>
-            )}
           </div>,
           document.body,
         )}
+      {collapse && grouped && <GroupToggle collapse={collapse} />}
     </span>
   );
 }

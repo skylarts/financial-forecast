@@ -159,6 +159,13 @@ export interface AllocationSlice {
   label: string;
   value: number;
   weight: number;
+  /**
+   * What a basket slice is made of, largest first, each carrying its own share
+   * of the same portfolio total -- so the members sum to exactly the basket's
+   * own value and weight. Absent on every ordinary slice, which is how a
+   * caller tells the two apart.
+   */
+  members?: AllocationSlice[];
 }
 
 /**
@@ -216,6 +223,63 @@ export function buildThemeAllocation(
 
   return [...grouped.entries()]
     .map(([label, value]) => ({ label, value, weight: total > 0 ? value / total : 0 }))
+    .sort((a, b) => b.value - a.value);
+}
+
+/**
+ * Allocation by holding, with baskets standing in for their members.
+ *
+ * A basket is a group the owner treats as one position, so it takes one slice
+ * carrying the summed value of everything inside it, and the members it
+ * replaced ride along under `members` for a view that wants to open it up.
+ * Membership partitions -- a symbol is in at most one basket -- so swapping a
+ * basket in for its members leaves the total, and every other slice's weight,
+ * exactly where it was.
+ *
+ * Cash never joins a basket: it is one row per account with no security behind
+ * it, and grouping it with positions would put money that isn't invested
+ * inside something being read as an investment.
+ */
+export function buildBasketAllocation(
+  holdings: readonly Holding[],
+  basketFor: (symbol: string) => { id: string; name: string } | null,
+  options: { includeCash?: boolean } = {},
+): AllocationSlice[] {
+  const rows = options.includeCash === false ? holdings.filter((h) => h.kind !== "cash") : holdings;
+  const total = rows.reduce((sum, h) => sum + h.marketValue, 0);
+  const share = (value: number) => (total > 0 ? value / total : 0);
+
+  // Keyed by basket id or by symbol, never by the label -- a basket named
+  // after a ticker it doesn't contain would otherwise quietly swallow it.
+  const grouped = new Map<string, { label: string; value: number; members: Map<string, number> | null }>();
+  for (const holding of rows) {
+    const symbol = holding.kind === "cash" ? "Cash" : holding.symbol;
+    const basket = holding.kind === "cash" ? null : basketFor(symbol);
+    const key = basket ? `basket:${basket.id}` : `symbol:${symbol}`;
+    let entry = grouped.get(key);
+    if (!entry) {
+      entry = { label: basket ? basket.name : symbol, value: 0, members: basket ? new Map() : null };
+      grouped.set(key, entry);
+    }
+    entry.value += holding.marketValue;
+    // One symbol can hold in several accounts; the basket's breakdown is by
+    // name, matching what the ungrouped view would have shown.
+    if (entry.members) entry.members.set(symbol, (entry.members.get(symbol) ?? 0) + holding.marketValue);
+  }
+
+  return [...grouped.values()]
+    .map((entry) => ({
+      label: entry.label,
+      value: entry.value,
+      weight: share(entry.value),
+      ...(entry.members
+        ? {
+            members: [...entry.members.entries()]
+              .map(([label, value]) => ({ label, value, weight: share(value) }))
+              .sort((a, b) => b.value - a.value),
+          }
+        : {}),
+    }))
     .sort((a, b) => b.value - a.value);
 }
 

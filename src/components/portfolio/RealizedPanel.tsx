@@ -78,7 +78,15 @@ export function RealizedPanel({
   /** Opens the detail drawer on the name a lot belongs to. */
   onSelectSymbol: (symbol: string) => void;
 }) {
-  const [grouping, setGrouping] = useState<RealizedGrouping>("none");
+  /**
+   * Grouped by tax year out of the box, opening shut.
+   *
+   * The other two tables group by account, because "which pot is this in" is
+   * their first question. A realized gain's first question is which return it
+   * lands on -- the year is what makes a number here owed or already settled,
+   * and a list running across years is a figure you can't file anything from.
+   */
+  const [grouping, setGrouping] = useState<RealizedGrouping>("year");
   const [outcome, setOutcome] = useState<Outcome>("all");
 
   const accessors = useMemo<SortAccessors<ClosedLot, Column>>(

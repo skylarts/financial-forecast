@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { idSchema } from "../common";
+import { basketSchema } from "./basket";
 import { securitySchema } from "./security";
 import { transactionSchema } from "./transaction";
 
@@ -120,5 +121,11 @@ export const portfolioSchema = z.object({
   accounts: z.array(portfolioAccountSchema).default([]),
   transactions: z.array(transactionSchema).default([]),
   securities: z.array(securitySchema).default([]),
+  /**
+   * Holdings grouped into things the owner treats as one position. Empty for
+   * every portfolio that has never set one up, which is the default and the
+   * shape of every save written before baskets existed.
+   */
+  baskets: z.array(basketSchema).default([]),
 });
 export type Portfolio = z.infer<typeof portfolioSchema>;

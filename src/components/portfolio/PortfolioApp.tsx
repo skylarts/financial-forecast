@@ -36,6 +36,8 @@ import { PortfolioMenu } from "./PortfolioMenu";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import type { AllocationDimension } from "./AllocationPanel";
+import { BasketManager } from "./BasketManager";
+import { CollapsibleSection } from "./CollapsibleSection";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { SchwabBadge } from "./SchwabBadge";
@@ -119,6 +121,10 @@ export function PortfolioApp() {
   const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
   const undoImport = usePortfolioStore((s) => s.undoImport);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
+  const addBasket = usePortfolioStore((s) => s.addBasket);
+  const renameBasket = usePortfolioStore((s) => s.renameBasket);
+  const removeBasket = usePortfolioStore((s) => s.removeBasket);
+  const assignToBasket = usePortfolioStore((s) => s.assignToBasket);
   const addAccount = usePortfolioStore((s) => s.addAccount);
   const loadPortfolio = usePortfolioStore((s) => s.loadPortfolio);
   usePortfolioCloudSync();
@@ -157,7 +163,16 @@ export function PortfolioApp() {
   /** Which accounts are in play. Empty (the default) means all of them. */
   const [accountFacet, setAccountFacet] = useState<FacetState>(EMPTY_FACET);
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
-  const [grouping, setGrouping] = useState<HoldingGrouping>("none");
+  /**
+   * Grouped by account out of the box. A holding's account is the first thing
+   * that distinguishes two lines that otherwise read the same -- the same fund
+   * held in a taxable account and in a Roth is two different positions with two
+   * different tax stories -- so an ungrouped list buries the one split that
+   * always matters. Opens with the accounts shut, so the first thing on screen
+   * is a handful of subtotals rather than every lot you own; "Expand all" sits
+   * next to the grouping control.
+   */
+  const [grouping, setGrouping] = useState<HoldingGrouping>("account");
   const holdingCollapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
@@ -336,9 +351,30 @@ export function PortfolioApp() {
 
   // Same shared scope as everywhere else, narrowed to positions -- cash is
   // already a class, so there's nothing on it to classify.
+  /** Every position held in scope, whatever the filters say -- the pool a
+   *  basket picks from. */
+  const basketableSymbols = useMemo(
+    () => [...new Set(analysis.holdings.filter((h) => h.kind === "position").map((h) => h.symbol))],
+    [analysis.holdings],
+  );
+
   const classifiableHoldingSymbols = useMemo(
     () => [...new Set(scopedHoldings.filter((h) => h.kind === "position").map((h) => h.symbol))],
     [scopedHoldings],
+  );
+
+  /**
+   * Holdings the feed and the user have both left as "other" -- the ones the
+   * allocation charts can't place. Counted over what's actually on screen, so
+   * the figure matches the list it summarises.
+   */
+  const unclassifiedCount = useMemo(
+    () =>
+      classifiableHoldingSymbols.filter((symbol) => {
+        const security = portfolio.securities.find((s) => normalizeSymbol(s.symbol) === symbol);
+        return (security?.assetClass ?? "other") === "other";
+      }).length,
+    [classifiableHoldingSymbols, portfolio.securities],
   );
 
   const assetClassOptions = useMemo(
@@ -836,20 +872,39 @@ export function PortfolioApp() {
             accounts={portfolio.accounts}
             accountNames={accountNames}
             people={people}
+            baskets={portfolio.baskets}
             facets={facets}
             onFacetsChange={setFacets}
             onDrillDown={handleDrillDown}
             onSelectSymbol={(symbol) => openPosition(symbol)}
           >
-            <div>
-              <div className="mb-2 flex items-baseline justify-between">
-                <h3 className="text-[13px] font-semibold text-foreground">Classify holdings</h3>
-                <span className="text-[11.5px] text-dim-2">
-                  {classifying
-                    ? "Reading classes from the feed…"
-                    : "Classes come from the feed. Edit a symbol to split its class, tag it, or fix its type."}
-                </span>
-              </div>
+            {/* Deliberately above the classify list rather than inside it: a
+                basket is about which holdings belong together, which is a
+                different question from what each one *is*, and burying it in a
+                per-symbol list would mean setting one up a row at a time.
+                Scoped to every held symbol, not the filtered set -- you can't
+                add a holding to a basket that the filters have hidden. */}
+            <BasketManager
+              baskets={portfolio.baskets}
+              symbols={basketableSymbols}
+              onCreate={addBasket}
+              onRename={renameBasket}
+              onRemove={removeBasket}
+              onAssign={assignToBasket}
+            />
+            {/* Folded away like Baskets. Classifying is setup work done once,
+                and the summary carries the count of what still has no class,
+                so a shut drawer never hides that there's work in there. */}
+            <CollapsibleSection
+              title="Classify holdings"
+              summary={
+                classifying
+                  ? "Reading classes from the feed…"
+                  : unclassifiedCount > 0
+                    ? `${unclassifiedCount} unclassified — edit a symbol to set its class, split it, or tag it.`
+                    : "Classes come from the feed. Edit a symbol to split its class, tag it, or fix its type."
+              }
+            >
               <div className="flex flex-col gap-1.5">
                 {/* Positions only -- cash is already a class, and offering to
                     reclassify it as an equity is an invitation to a wrong
@@ -877,7 +932,7 @@ export function PortfolioApp() {
                   ))
                 )}
               </div>
-            </div>
+            </CollapsibleSection>
           </AllocationPanel>
         )}
 
