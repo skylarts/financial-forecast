@@ -16,9 +16,10 @@ import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { useSort, type SortAccessors } from "./useSort";
 import { SortHeader } from "./SortHeader";
+import { FOOT, FROZEN_CELL, FrozenLabel, TABLE } from "./frozenColumn";
 import { MoreRows, useRowWindow } from "./rowWindow";
 
-const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
+const CELL = "border-b border-border-soft px-3 py-2 text-[12.5px] tabular-nums";
 
 type RealizedGrouping = "none" | "symbol" | "account" | "term" | "year";
 
@@ -194,15 +195,16 @@ export function RealizedPanel({
           ) : (
             <div className="overflow-x-auto">
               <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
-              <table className="w-full border-collapse">
+              <table className={TABLE}>
                 <thead>
-                  <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
+                  <tr>
                     <SortHeader
                       label={`Symbol${groupedColumnMarker(groupedColumn, "symbol")}`}
                       column="symbol"
                       align="left"
                       sort={sort}
                       onToggle={toggle}
+                      frozen
                       after={
                         <GroupMenu
                           options={GROUPINGS}
@@ -278,9 +280,9 @@ export function RealizedPanel({
                               key={`${lot.closeTxId}-${i}`}
                               onClick={() => onSelectSymbol(lot.symbol)}
                               title={`Open ${lot.symbol}`}
-                              className="cursor-pointer border-b border-border-soft transition-colors hover:bg-panel-2"
+                              className="group cursor-pointer transition-colors hover:bg-panel-2"
                             >
-                              <td className={`${CELL} text-left font-semibold text-foreground`}>
+                              <td className={`${CELL} ${FROZEN_CELL} text-left font-semibold text-foreground`}>
                                 {lot.symbol}
                               </td>
                               <td className={`${CELL} text-left text-dim`}>
@@ -298,13 +300,15 @@ export function RealizedPanel({
                         {!collapsed && group.rows.length > rowWindow.limit(group.key) && (
                           <tr>
                             <td colSpan={9} className="px-3 py-2">
-                              <MoreRows
-                                shown={rowWindow.limit(group.key)}
-                                total={group.rows.length}
-                                noun="lot"
-                                onMore={(count) => rowWindow.more(count, group.key)}
-                                onAll={() => rowWindow.all(group.rows.length, group.key)}
-                              />
+                              <FrozenLabel>
+                                <MoreRows
+                                  shown={rowWindow.limit(group.key)}
+                                  total={group.rows.length}
+                                  noun="lot"
+                                  onMore={(count) => rowWindow.more(count, group.key)}
+                                  onAll={() => rowWindow.all(group.rows.length, group.key)}
+                                />
+                              </FrozenLabel>
                             </td>
                           </tr>
                         )}
@@ -313,23 +317,23 @@ export function RealizedPanel({
                   })}
                 </tbody>
                 <tfoot>
-                  <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
-                    <td className={`${CELL} text-left text-foreground`} colSpan={labelSpan}>
-                      Total
+                  <tr>
+                    <td className={`${FOOT} text-left text-foreground`} colSpan={labelSpan}>
+                      <FrozenLabel>Total</FrozenLabel>
                     </td>
-                    <td className={`${CELL} text-right text-foreground`}>
+                    <td className={`${FOOT} text-right text-foreground`}>
                       {money(sorted.reduce((s, lot) => s + lot.costBasis, 0))}
                     </td>
-                    <td className={`${CELL} text-right text-foreground`}>
+                    <td className={`${FOOT} text-right text-foreground`}>
                       {money(sorted.reduce((s, lot) => s + lot.proceeds, 0))}
                     </td>
                     {(() => {
                       const totalGain = sorted.reduce((s, lot) => s + lot.gain, 0);
                       return (
-                        <td className={`${CELL} text-right ${toneFor(totalGain)}`}>{money(totalGain)}</td>
+                        <td className={`${FOOT} text-right ${toneFor(totalGain)}`}>{money(totalGain)}</td>
                       );
                     })()}
-                    <td className={CELL}></td>
+                    <td className={FOOT}></td>
                   </tr>
                 </tfoot>
               </table>

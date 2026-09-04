@@ -26,6 +26,7 @@ import { Btn } from "@/components/ui/controls";
 import { SymbolField } from "./SymbolField";
 import { useSort, type SortAccessors } from "./useSort";
 import { HEAD, SortHeader } from "./SortHeader";
+import { FOOT, FROZEN_CELL, FROZEN_CELL_TINTED, FrozenLabel, TABLE } from "./frozenColumn";
 import {
   buildGroups,
   GroupHeaderRow,
@@ -757,9 +758,9 @@ export function TransactionsPanel({
       ) : (
         <div className="overflow-x-auto">
           <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
-          <table className="w-full border-collapse">
+          <table className={TABLE}>
             <thead>
-              <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
+              <tr>
                 <th className={`${HEAD} w-8 text-center`}>
                   <input
                     type="checkbox"
@@ -778,6 +779,7 @@ export function TransactionsPanel({
                   align="left"
                   sort={sort}
                   onToggle={toggle}
+                  frozen
                   after={
                     <GroupMenu
                       options={TX_GROUPINGS}
@@ -886,7 +888,7 @@ export function TransactionsPanel({
                       ) : (
                         <tr
                           key={tx.id}
-                          className={`border-b border-border-soft hover:bg-panel-2 ${
+                          className={`group hover:bg-panel-2 ${
                             selected.has(tx.id) ? "bg-accent/10" : ""
                           }`}
                         >
@@ -897,7 +899,17 @@ export function TransactionsPanel({
                               onChange={() => toggleRow(tx.id)}
                             />
                           </td>
-                          <td className={`${CELL} text-left text-dim`}>{shortDate(tx.date)}</td>
+                          <td
+                            // The frozen column is the date, not the
+                            // checkbox: a tick box isn't what tells you which
+                            // row you're reading. The checkbox column slides
+                            // underneath it instead.
+                            className={`${CELL} ${
+                              selected.has(tx.id) ? FROZEN_CELL_TINTED : FROZEN_CELL
+                            } text-left text-dim`}
+                          >
+                            {shortDate(tx.date)}
+                          </td>
                           <td className={`${CELL} text-left text-dim`}>
                             {accountNames.get(tx.accountId) ?? "—"}
                           </td>
@@ -951,12 +963,14 @@ export function TransactionsPanel({
                     {!collapsed && group.rows.length > rowWindow.limit(group.key) && (
                       <tr>
                         <td colSpan={10} className="px-3 py-2">
-                          <MoreRows
-                            shown={rowWindow.limit(group.key)}
-                            total={group.rows.length}
-                            onMore={(count) => rowWindow.more(count, group.key)}
-                            onAll={() => rowWindow.all(group.rows.length, group.key)}
-                          />
+                          <FrozenLabel>
+                            <MoreRows
+                              shown={rowWindow.limit(group.key)}
+                              total={group.rows.length}
+                              onMore={(count) => rowWindow.more(count, group.key)}
+                              onAll={() => rowWindow.all(group.rows.length, group.key)}
+                            />
+                          </FrozenLabel>
                         </td>
                       </tr>
                     )}
@@ -965,32 +979,32 @@ export function TransactionsPanel({
               })}
             </tbody>
             <tfoot>
-              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
-                <td className={`${CELL} text-left text-foreground`} colSpan={5}>
-                  Total
+              <tr>
+                <td className={`${FOOT} text-left text-foreground`} colSpan={5}>
+                  <FrozenLabel>Total</FrozenLabel>
                 </td>
                 {(() => {
                   const netQuantity = rows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
                   return (
                     <td
-                      className={`${CELL} text-right text-foreground`}
+                      className={`${FOOT} text-right text-foreground`}
                       title="Net shares all rows moved: buys less sells. Reconciles against the position's share count."
                     >
                       {shares(netQuantity)}
                     </td>
                   );
                 })()}
-                <td className={CELL}></td>
+                <td className={FOOT}></td>
                 {(() => {
                   const netCash = rows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
                   return (
-                    <td className={`${CELL} text-right ${toneFor(netCash)}`} title="Net cash all rows moved.">
+                    <td className={`${FOOT} text-right ${toneFor(netCash)}`} title="Net cash all rows moved.">
                       {money(netCash)}
                     </td>
                   );
                 })()}
-                <td className={CELL}></td>
-                <td className={CELL}></td>
+                <td className={FOOT}></td>
+                <td className={FOOT}></td>
               </tr>
             </tfoot>
           </table>

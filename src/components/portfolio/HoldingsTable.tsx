@@ -17,6 +17,7 @@ import {
   type GroupingOption,
 } from "./grouping";
 import { UNTAGGED } from "./filters";
+import { FOOT, FROZEN_CELL, FROZEN_WIDTH, FrozenLabel, TABLE } from "./frozenColumn";
 
 export type HoldingGrouping = "none" | "account" | "assetClass" | "theme" | "side" | "instrumentType";
 
@@ -67,7 +68,7 @@ const GROUP_TOTALS: Partial<Record<Column, (row: Row) => number>> = {
   unrealized: (row) => row.unrealizedGain,
 };
 
-const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
+const CELL = "border-b border-border-soft px-3 py-2 text-[12.5px] tabular-nums";
 
 
 interface GroupTotals {
@@ -241,15 +242,16 @@ export function HoldingsTable({
   return (
     <div className="overflow-x-auto">
       <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
-      <table className="w-full border-collapse">
+      <table className={TABLE}>
         <thead>
-          <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
+          <tr>
             <SortHeader
               label="Holding"
               column="symbol"
               align="left"
               sort={sort}
               onToggle={toggle}
+              frozen
               after={
                 <GroupMenu
                   options={HOLDING_GROUPINGS}
@@ -317,36 +319,40 @@ export function HoldingsTable({
                 <tr
                   key={holding.key}
                   onClick={isCash ? undefined : () => onSelect(holding.source)}
-                  className={`border-b border-border-soft transition-colors hover:bg-panel-2 ${
+                  className={`group transition-colors hover:bg-panel-2 ${
                     isCash ? "" : "cursor-pointer"
                   }`}
                 >
-                  <td className={`${CELL} text-left`}>
-                    <span className="font-semibold text-foreground">
-                      {isCash ? "Cash" : holding.symbol}
-                    </span>
-                    {holding.sliceNote && (
-                      <span className="ml-1.5 text-[10.5px] text-dim-2">({holding.sliceNote})</span>
-                    )}
-                    {isCash && (
-                      <span
-                        title="Uninvested cash. Counted in your allocation, but it has no basis and no return."
-                        className="ml-1.5 rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2"
-                      >
-                        Uninvested
+                  <td className={`${CELL} ${FROZEN_CELL} text-left`}>
+                    {/* The symbol leads, so what the cap trims is the tail of a long
+                        fund name -- never the part that identifies the row. */}
+                    <div className={`${FROZEN_WIDTH} truncate`}>
+                      <span className="font-semibold text-foreground">
+                        {isCash ? "Cash" : holding.symbol}
                       </span>
-                    )}
-                    {holding.side === "short" && (
-                      <span
-                        title="Short position — shares owed, valued as a liability"
-                        className="ml-1.5 rounded-sm border border-negative px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-negative"
-                      >
-                        Short
-                      </span>
-                    )}
-                    {!isCash && holding.name !== holding.symbol && (
-                      <span className="ml-2 text-[11.5px] text-dim-2">{holding.name}</span>
-                    )}
+                      {holding.sliceNote && (
+                        <span className="ml-1.5 text-[10.5px] text-dim-2">({holding.sliceNote})</span>
+                      )}
+                      {isCash && (
+                        <span
+                          title="Uninvested cash. Counted in your allocation, but it has no basis and no return."
+                          className="ml-1.5 rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2"
+                        >
+                          Uninvested
+                        </span>
+                      )}
+                      {holding.side === "short" && (
+                        <span
+                          title="Short position — shares owed, valued as a liability"
+                          className="ml-1.5 rounded-sm border border-negative px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-negative"
+                        >
+                          Short
+                        </span>
+                      )}
+                      {!isCash && holding.name !== holding.symbol && (
+                        <span className="ml-2 text-[11.5px] text-dim-2">{holding.name}</span>
+                      )}
+                    </div>
                   </td>
                   {showAccount && (
                     <td className={`${CELL} text-left text-dim`}>
@@ -403,19 +409,19 @@ export function HoldingsTable({
           })}
         </tbody>
         <tfoot>
-          <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
-            <td className={`${CELL} text-left text-foreground`} colSpan={labelSpan}>
-              Total
+          <tr>
+            <td className={`${FOOT} text-left text-foreground`} colSpan={labelSpan}>
+              <FrozenLabel>Total</FrozenLabel>
             </td>
-            <td className={`${CELL} text-right text-foreground`}>{money(grandTotals.marketValue)}</td>
-            <td className={`${CELL} text-right text-dim`}>{(grandTotals.weight * 100).toFixed(1)}%</td>
-            <td className={`${CELL} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
+            <td className={`${FOOT} text-right text-foreground`}>{money(grandTotals.marketValue)}</td>
+            <td className={`${FOOT} text-right text-dim`}>{(grandTotals.weight * 100).toFixed(1)}%</td>
+            <td className={`${FOOT} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
               {money(grandTotals.unrealizedGain)}
             </td>
-            <td className={`${CELL} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
+            <td className={`${FOOT} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
               {percent(grandTotals.returnPct)}
             </td>
-            <td className={CELL}></td>
+            <td className={`${FOOT}`}></td>
           </tr>
         </tfoot>
       </table>
