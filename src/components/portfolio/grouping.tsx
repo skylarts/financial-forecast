@@ -95,10 +95,30 @@ export interface CollapseState {
  */
 export function useCollapsedGroups(
   dimension: string,
-  { defaultCollapsed = false }: { defaultCollapsed?: boolean } = {},
+  {
+    defaultCollapsed = false,
+    startExpanded = false,
+  }: {
+    defaultCollapsed?: boolean;
+    /**
+     * Open on the first render even when a later change to the dimension
+     * would collapse.
+     *
+     * These two are different questions once a table *starts* grouped.
+     * Choosing a grouping is asking for subtotals, so collapsing then is
+     * right; arriving at a tab that simply happens to be grouped by account is
+     * not, and opening it to nothing but a column of shut headers reads as an
+     * empty table rather than a tidy one.
+     */
+    startExpanded?: boolean;
+  } = {},
 ): CollapseState {
   const initial = () => ({ collapsedByDefault: defaultCollapsed, toggled: new Set<string>() as ReadonlySet<string> });
-  const [state, setState] = useState(initial);
+  const [state, setState] = useState(() =>
+    startExpanded
+      ? { collapsedByDefault: false, toggled: new Set<string>() as ReadonlySet<string> }
+      : initial(),
+  );
   const [lastDimension, setLastDimension] = useState(dimension);
 
   // Adjusted during render rather than in an effect: an effect would paint one

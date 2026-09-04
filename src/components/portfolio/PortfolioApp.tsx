@@ -163,8 +163,18 @@ export function PortfolioApp() {
   /** Which accounts are in play. Empty (the default) means all of them. */
   const [accountFacet, setAccountFacet] = useState<FacetState>(EMPTY_FACET);
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
-  const [grouping, setGrouping] = useState<HoldingGrouping>("none");
-  const holdingCollapse = useCollapsedGroups(grouping, { defaultCollapsed: true });
+  /**
+   * Grouped by account out of the box. A holding's account is the first thing
+   * that distinguishes two lines that otherwise read the same -- the same fund
+   * held in a taxable account and in a Roth is two different positions with two
+   * different tax stories -- so an ungrouped list buries the one split that
+   * always matters. Opens expanded: see `startExpanded`.
+   */
+  const [grouping, setGrouping] = useState<HoldingGrouping>("account");
+  const holdingCollapse = useCollapsedGroups(grouping, {
+    defaultCollapsed: true,
+    startExpanded: true,
+  });
 
   const symbols = useMemo(() => symbolsInPortfolio(portfolio), [portfolio]);
   // Classification covers everything ever held, not just what's open now --
@@ -883,15 +893,11 @@ export function PortfolioApp() {
               onRemove={removeBasket}
               onAssign={assignToBasket}
             />
-            {/* Open by default, unlike Baskets: this list is how a holding
-                gets a class at all, and a portfolio full of unclassified names
-                would have nothing but empty charts and a shut drawer to
-                explain why. The summary carries the count of what still needs
-                a class, so folding it away doesn't hide that there's work in
-                there. */}
+            {/* Folded away like Baskets. Classifying is setup work done once,
+                and the summary carries the count of what still has no class,
+                so a shut drawer never hides that there's work in there. */}
             <CollapsibleSection
               title="Classify holdings"
-              defaultOpen
               summary={
                 classifying
                   ? "Reading classes from the feed…"
