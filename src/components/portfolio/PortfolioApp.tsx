@@ -36,6 +36,7 @@ import { PortfolioMenu } from "./PortfolioMenu";
 import { TransactionsPanel } from "./TransactionsPanel";
 import { RealizedPanel } from "./RealizedPanel";
 import type { AllocationDimension } from "./AllocationPanel";
+import { BasketManager } from "./BasketManager";
 import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { SchwabBadge } from "./SchwabBadge";
@@ -119,6 +120,10 @@ export function PortfolioApp() {
   const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
   const undoImport = usePortfolioStore((s) => s.undoImport);
   const upsertSecurity = usePortfolioStore((s) => s.upsertSecurity);
+  const addBasket = usePortfolioStore((s) => s.addBasket);
+  const renameBasket = usePortfolioStore((s) => s.renameBasket);
+  const removeBasket = usePortfolioStore((s) => s.removeBasket);
+  const assignToBasket = usePortfolioStore((s) => s.assignToBasket);
   const addAccount = usePortfolioStore((s) => s.addAccount);
   const loadPortfolio = usePortfolioStore((s) => s.loadPortfolio);
   usePortfolioCloudSync();
@@ -336,6 +341,13 @@ export function PortfolioApp() {
 
   // Same shared scope as everywhere else, narrowed to positions -- cash is
   // already a class, so there's nothing on it to classify.
+  /** Every position held in scope, whatever the filters say -- the pool a
+   *  basket picks from. */
+  const basketableSymbols = useMemo(
+    () => [...new Set(analysis.holdings.filter((h) => h.kind === "position").map((h) => h.symbol))],
+    [analysis.holdings],
+  );
+
   const classifiableHoldingSymbols = useMemo(
     () => [...new Set(scopedHoldings.filter((h) => h.kind === "position").map((h) => h.symbol))],
     [scopedHoldings],
@@ -836,11 +848,26 @@ export function PortfolioApp() {
             accounts={portfolio.accounts}
             accountNames={accountNames}
             people={people}
+            baskets={portfolio.baskets}
             facets={facets}
             onFacetsChange={setFacets}
             onDrillDown={handleDrillDown}
             onSelectSymbol={(symbol) => openPosition(symbol)}
           >
+            {/* Deliberately above the classify list rather than inside it: a
+                basket is about which holdings belong together, which is a
+                different question from what each one *is*, and burying it in a
+                per-symbol list would mean setting one up a row at a time.
+                Scoped to every held symbol, not the filtered set -- you can't
+                add a holding to a basket that the filters have hidden. */}
+            <BasketManager
+              baskets={portfolio.baskets}
+              symbols={basketableSymbols}
+              onCreate={addBasket}
+              onRename={renameBasket}
+              onRemove={removeBasket}
+              onAssign={assignToBasket}
+            />
             <div>
               <div className="mb-2 flex items-baseline justify-between">
                 <h3 className="text-[13px] font-semibold text-foreground">Classify holdings</h3>

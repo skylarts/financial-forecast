@@ -4,6 +4,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import {
+  basketSchema,
+  normalizeBasketName,
   normalizeSymbol,
   portfolioAccountSchema,
   portfolioSchema,
@@ -36,7 +38,9 @@ const STORAGE_KEY = "portfolio";
  * generated lot id names the contract the way the rest of the app will.
  */
 function tidy(portfolio: Portfolio): Portfolio {
-  return withAssignedLotIds(withCanonicalSymbols(withMigratedAccounts(withMigratedSecurities(portfolio))));
+  return withAssignedLotIds(
+    withCanonicalSymbols(withMigratedAccounts(withMigratedSecurities(withMigratedBaskets(portfolio)))),
+  );
 }
 
 /**
@@ -75,11 +79,23 @@ function withMigratedAccounts(portfolio: Portfolio): Portfolio {
   };
 }
 
+/**
+ * Backfills the baskets list onto a save written before baskets existed --
+ * which is every save so far. The field has a schema default, but nothing on
+ * the rehydration path runs a whole-portfolio parse, so without this the
+ * allocation view reads `portfolio.baskets.length` off `undefined` and the
+ * tab throws for everyone with an existing ledger.
+ */
+function withMigratedBaskets(portfolio: Portfolio): Portfolio {
+  return { ...portfolio, baskets: (portfolio.baskets ?? []).map((b) => basketSchema.parse(b)) };
+}
+
 const emptyPortfolio: Portfolio = {
   id: "local-portfolio",
   accounts: [],
   transactions: [],
   securities: [],
+  baskets: [],
 };
 
 interface PortfolioState {
@@ -128,6 +144,26 @@ interface PortfolioState {
   undoImport: (batchId: string) => number;
 
   upsertSecurity: (security: Security) => void;
+
+  /** Creates an empty basket and returns its id. A name already in use --
+   *  ignoring case and stray spaces -- returns that basket instead of minting
+   *  a look-alike second one. */
+  addBasket: (name: string) => string;
+  renameBasket: (id: string, name: string) => void;
+  /** Drops the basket. Its members go back to standing for themselves; nothing
+   *  about the holdings themselves changes, since membership only ever lived
+   *  on the basket. */
+  removeBasket: (id: string) => void;
+  /**
+   * Puts a symbol in a basket, or takes it out of whichever one holds it when
+   * `basketId` is null.
+   *
+   * Membership is exclusive here rather than at read time: a basket stands in
+   * for its members in the by-holding breakdown, so a symbol in two baskets
+   * would have its value counted twice against a total that only contains it
+   * once.
+   */
+  assignToBasket: (symbol: string, basketId: string | null) => void;
   /**
    * `adoptOwnerId` lets the caller carry the forecast account's owner across
    * onto a portfolio account that doesn't have one yet -- an explicit owner
@@ -315,6 +351,46 @@ export const usePortfolioStore = create<PortfolioState>()(
                 : [...p.securities, { ...security, symbol }],
             };
           });
+        },
+
+        addBasket: (name) => {
+          const trimmed = normalizeBasketName(name);
+          if (!trimmed) return "";
+          const existing = get().portfolio.baskets.find(
+            (b) => b.name.toLowerCase() === trimmed.toLowerCase(),
+          );
+          if (existing) return existing.id;
+          const id = nanoid();
+          mutate((p) => ({ ...p, baskets: [...p.baskets, { id, name: trimmed, symbols: [] }] }));
+          return id;
+        },
+
+        renameBasket: (id, name) => {
+          const trimmed = normalizeBasketName(name);
+          if (!trimmed) return;
+          mutate((p) => ({
+            ...p,
+            baskets: p.baskets.map((b) => (b.id === id ? { ...b, name: trimmed } : b)),
+          }));
+        },
+
+        removeBasket: (id) =>
+          mutate((p) => ({ ...p, baskets: p.baskets.filter((b) => b.id !== id) })),
+
+        assignToBasket: (symbol, basketId) => {
+          const canonical = normalizeSymbol(symbol);
+          if (!canonical) return;
+          mutate((p) => ({
+            ...p,
+            baskets: p.baskets.map((b) => {
+              // Pulled out of every other basket first, so moving a symbol
+              // between two is one call rather than a remove and an add the
+              // caller has to remember to pair.
+              const without = b.symbols.filter((s) => s !== canonical);
+              if (b.id !== basketId) return without.length === b.symbols.length ? b : { ...b, symbols: without };
+              return { ...b, symbols: [...without, canonical] };
+            }),
+          }));
         },
 
         linkForecastAccount: (portfolioAccountId, forecastAccountId, adoptOwnerId) =>

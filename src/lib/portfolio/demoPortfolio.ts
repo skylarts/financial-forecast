@@ -216,7 +216,7 @@ export function buildDemoPortfolio(
       : []),
   ];
 
-  return { id: "demo-portfolio", accounts, securities: [...SECURITIES], transactions };
+  return { id: "demo-portfolio", accounts, securities: [...SECURITIES], transactions, baskets: [] };
 }
 
 /**

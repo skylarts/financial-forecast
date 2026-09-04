@@ -26,7 +26,7 @@ function tx(patch: Partial<Transaction>): Transaction {
 }
 
 function portfolio(patch: Partial<Portfolio>): Portfolio {
-  return { id: "p1", accounts: [], transactions: [], securities: [], ...patch };
+  return { id: "p1", accounts: [], transactions: [], securities: [], baskets: [], ...patch };
 }
 
 describe("withCanonicalSymbols", () => {

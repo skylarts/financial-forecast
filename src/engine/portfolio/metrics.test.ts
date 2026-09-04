@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Portfolio, Transaction, TransactionType } from "@/domain/portfolio";
-import { analyzePortfolio, buildAllocation, buildThemeAllocation, explodeExposures, xirr, type Holding } from "./metrics";
+import {
+  analyzePortfolio,
+  buildAllocation,
+  buildBasketAllocation,
+  buildThemeAllocation,
+  explodeExposures,
+  xirr,
+  type Holding,
+} from "./metrics";
 
 function holding(patch: Partial<Holding> & { symbol: string }): Holding {
   return {
@@ -86,6 +94,7 @@ function portfolio(transactions: Transaction[], overrides: Partial<Portfolio> = 
     ],
     transactions,
     securities: [],
+    baskets: [],
     ...overrides,
   };
 }
@@ -761,5 +770,106 @@ describe("buildThemeAllocation", () => {
     expect(byLabel.get("Core")?.value).toBe(1500);
     expect(byLabel.get("Global")?.value).toBe(1000);
     expect(byLabel.get("Global")?.weight).toBeCloseTo(1000 / 1500, 6);
+  });
+});
+
+describe("buildBasketAllocation", () => {
+  const ai = { id: "b1", name: "AI" };
+  const inAi = (symbol: string) => (["NVDA", "AVGO"].includes(symbol) ? ai : null);
+
+  it("leaves an ungrouped holding as an ordinary slice", () => {
+    const slices = buildBasketAllocation([holding({ symbol: "VTI", marketValue: 1000 })], () => null);
+    expect(slices).toEqual([{ label: "VTI", value: 1000, weight: 1 }]);
+  });
+
+  it("shows a basket as one slice carrying its members' combined value", () => {
+    const slices = buildBasketAllocation(
+      [
+        holding({ symbol: "NVDA", marketValue: 600 }),
+        holding({ symbol: "AVGO", marketValue: 400 }),
+        holding({ symbol: "VTI", marketValue: 1000 }),
+      ],
+      inAi,
+    );
+    expect(slices.map((s) => s.label)).toEqual(["AI", "VTI"]);
+    const basket = slices[0];
+    expect(basket.value).toBe(1000);
+    expect(basket.weight).toBeCloseTo(0.5, 6);
+    // The members carry their share of the same portfolio total, so opening a
+    // basket up splits its wedge rather than rescaling the ring.
+    expect(basket.members).toEqual([
+      { label: "NVDA", value: 600, weight: 0.3 },
+      { label: "AVGO", value: 400, weight: 0.2 },
+    ]);
+    expect(slices[1].members).toBeUndefined();
+  });
+
+  it("adds up to the same total the ungrouped breakdown does", () => {
+    const holdings = [
+      holding({ symbol: "NVDA", marketValue: 600 }),
+      holding({ symbol: "AVGO", marketValue: 400 }),
+      holding({ symbol: "VTI", marketValue: 1000 }),
+    ];
+    const grouped = buildBasketAllocation(holdings, inAi);
+    const ungrouped = buildBasketAllocation(holdings, () => null);
+    const sum = (slices: { value: number }[]) => slices.reduce((t, s) => t + s.value, 0);
+    expect(sum(grouped)).toBe(sum(ungrouped));
+    expect(grouped.find((s) => s.label === "VTI")?.weight).toBeCloseTo(
+      ungrouped.find((s) => s.label === "VTI")!.weight,
+      6,
+    );
+  });
+
+  it("rolls one symbol held in two accounts into a single member", () => {
+    const slices = buildBasketAllocation(
+      [
+        holding({ symbol: "NVDA", marketValue: 600 }),
+        holding({ symbol: "NVDA", marketValue: 400, accountId: "acct-2" }),
+      ],
+      inAi,
+    );
+    expect(slices[0].members).toEqual([{ label: "NVDA", value: 1000, weight: 1 }]);
+  });
+
+  it("keeps cash out of a basket named after it", () => {
+    const slices = buildBasketAllocation(
+      [
+        holding({ symbol: "$CASH", kind: "cash", marketValue: 500 }),
+        holding({ symbol: "NVDA", marketValue: 500 }),
+      ],
+      // A basket that claims every symbol still can't claim the cash row.
+      () => ai,
+    );
+    const byLabel = new Map(slices.map((s) => [s.label, s]));
+    expect(byLabel.get("Cash")?.value).toBe(500);
+    expect(byLabel.get("Cash")?.members).toBeUndefined();
+    expect(byLabel.get("AI")?.value).toBe(500);
+  });
+
+  it("does not let a basket swallow a holding of the same name", () => {
+    // The basket is called "NVDA" but doesn't contain it -- keying on the
+    // basket's id rather than its label is what keeps the two apart.
+    const slices = buildBasketAllocation(
+      [holding({ symbol: "NVDA", marketValue: 400 }), holding({ symbol: "AVGO", marketValue: 600 })],
+      (symbol) => (symbol === "AVGO" ? { id: "b2", name: "NVDA" } : null),
+    );
+    expect(slices).toHaveLength(2);
+    expect(slices.find((s) => s.members)?.value).toBe(600);
+    expect(slices.find((s) => !s.members)?.value).toBe(400);
+  });
+
+  it("drops cash from the denominator when asked, basket included", () => {
+    const slices = buildBasketAllocation(
+      [
+        holding({ symbol: "$CASH", kind: "cash", marketValue: 1000 }),
+        holding({ symbol: "NVDA", marketValue: 600 }),
+        holding({ symbol: "AVGO", marketValue: 400 }),
+      ],
+      inAi,
+      { includeCash: false },
+    );
+    expect(slices).toHaveLength(1);
+    expect(slices[0].weight).toBeCloseTo(1, 6);
+    expect(slices[0].members?.map((m) => m.weight)).toEqual([0.6, 0.4]);
   });
 });
