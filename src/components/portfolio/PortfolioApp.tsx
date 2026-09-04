@@ -45,6 +45,7 @@ import { SchwabConnection } from "./SchwabConnection";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 import { FilterStatus } from "./FilterStatus";
 import { FilterChips, FilterMenu, type FilterSection } from "./FilterMenu";
+import { SavedFilters } from "./SavedFilters";
 import { EMPTY_FACET, type FacetState } from "@/components/ui/facets";
 import {
   accountFacetOptions,
@@ -424,6 +425,22 @@ export function PortfolioApp() {
     else setFacets((f) => ({ ...f, [key]: next }));
   };
 
+  /**
+   * Restore a saved combo. Starts from cleared rather than layering onto
+   * whatever is already ticked, so applying a saved filter puts you in exactly
+   * the state it was saved in -- a combo that quietly kept yesterday's account
+   * selection would show different rows each time you clicked it.
+   */
+  const applySavedFilters = (savedSearch: string, savedFacets: Record<string, FacetState>) => {
+    setSearch(savedSearch);
+    setAccountFacet(savedFacets.account ?? EMPTY_FACET);
+    setFacets({
+      assetClass: savedFacets.assetClass ?? EMPTY_FACET,
+      theme: savedFacets.theme ?? EMPTY_FACET,
+      instrumentType: savedFacets.instrumentType ?? EMPTY_FACET,
+    });
+  };
+
   const knownThemes = useMemo(() => allThemes(portfolio.securities.map((s) => s.themes)), [portfolio.securities]);
   const hasShorts = useMemo(() => analysis.holdings.some((h) => h.side === "short"), [analysis.holdings]);
 
@@ -743,6 +760,7 @@ export function PortfolioApp() {
             className="min-w-[8rem] flex-1 rounded-md border border-border bg-panel-2 px-2 py-1 text-[12px] text-foreground outline-none placeholder:text-dim-2 focus:border-accent sm:w-56 sm:flex-none"
           />
           <FilterMenu sections={filterSections} onChange={setFacet} onClearAll={clearAllFilters} />
+          <SavedFilters sections={filterSections} search={search} onApply={applySavedFilters} />
           <FilterChips sections={filterSections} onChange={setFacet} />
         </div>
         <FilterStatus
