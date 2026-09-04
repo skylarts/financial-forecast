@@ -173,9 +173,8 @@ body {
 /* Nothing may push the page sideways: a phone that scrolls horizontally makes
    every vertical swipe feel broken. Wide content (tables, chart canvases) is
    expected to scroll inside its own container instead -- every data table
-   already does (the forecast tables additionally pin their first column; the
-   portfolio ones can't while they're `border-collapse`, which defeats a
-   sticky cell).
+   already does, and the wide ones additionally pin their label column so a
+   row of figures never scrolls away from the name it belongs to.
 
    `clip`, emphatically not `hidden`. `hidden` makes this element a scroll
    container, which silently breaks `position: sticky` for every descendant --

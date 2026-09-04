@@ -1,9 +1,19 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { FROZEN_STICKY, FROZEN_WIDTH } from "./frozenColumn";
 import { sortMarker, type SortState } from "./useSort";
 
-export const HEAD = "px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
+/**
+ * A header cell. Sticky here rather than on the `thead > tr` that used to
+ * carry it: these tables are `border-separate` so the label column can be
+ * frozen, and a `tr` can't be sticky in a separated table. Carries no
+ * `z-index` -- see `frozenColumn`.
+ */
+const HEAD_BASE =
+  "sticky top-0 border-b border-border bg-panel-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
+
+export const HEAD = `${HEAD_BASE} z-10`;
 
 /**
  * A sortable column heading.
@@ -22,6 +32,7 @@ export function SortHeader<K extends string>({
   onToggle,
   title,
   after,
+  frozen = false,
 }: {
   label: string;
   column: K;
@@ -32,14 +43,26 @@ export function SortHeader<K extends string>({
   /** Rendered beside the label, outside the sort button so clicking it doesn't
    *  also re-sort the table. */
   after?: ReactNode;
+  /** Heads the frozen label column, so it pins sideways as well as down. */
+  frozen?: boolean;
 }) {
   // Written out rather than interpolated: Tailwind only ships classes it can
   // see as complete strings in the source.
   const alignClass = align === "left" ? "text-left" : "text-right";
   const justify = align === "left" ? "justify-start" : "justify-end";
   return (
-    <th className={`${HEAD} ${alignClass}`} title={title}>
-      <span className={`flex items-center gap-1.5 ${justify}`}>
+    <th
+      className={`${frozen ? `${HEAD_BASE} ${FROZEN_STICKY}` : HEAD} ${alignClass}`}
+      title={title}
+    >
+      <span
+        // The frozen column's header wraps rather than spilling into the
+        // column beside it: capped to a phone-sized width, its label and its
+        // grouping control no longer fit on one line.
+        className={`flex items-center gap-1.5 ${justify} ${
+          frozen ? `flex-wrap ${FROZEN_WIDTH} sm:flex-nowrap` : ""
+        }`}
+      >
         <button
           type="button"
           onClick={() => onToggle(column)}

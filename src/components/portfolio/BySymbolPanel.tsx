@@ -17,12 +17,13 @@ import { FilterStatus } from "./FilterStatus";
 import { OutcomeFilter, matchesOutcome, type Outcome } from "./OutcomeFilter";
 import { useSort, type SortAccessors } from "./useSort";
 import { SortHeader } from "./SortHeader";
+import { FOOT, FOOT_FROZEN, FROZEN_CELL, FROZEN_WIDTH, TABLE } from "./frozenColumn";
 import {
   matchesHoldingFacets,
   type HoldingFacets,
 } from "./filters";
 
-const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
+const CELL = "border-b border-border-soft px-3 py-2 text-[12.5px] tabular-nums";
 
 const SCOPES = [
   { value: "both", label: "Everything" },
@@ -226,10 +227,10 @@ export function BySymbolPanel({
       ) : (
         <div className="overflow-x-auto">
           <div className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-panel">
-          <table className="w-full border-collapse">
+          <table className={TABLE}>
             <thead>
-              <tr className="sticky top-0 z-10 border-b border-border bg-panel-2">
-                <SortHeader label="Stock" column="symbol" align="left" sort={sort} onToggle={toggle} />
+              <tr>
+                <SortHeader label="Stock" column="symbol" align="left" sort={sort} onToggle={toggle} frozen />
                 <SortHeader label="Shares" column="quantity" align="right" sort={sort} onToggle={toggle} />
                 <SortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
                 <SortHeader label="Value" column="value" align="right" sort={sort} onToggle={toggle} />
@@ -271,29 +272,33 @@ export function BySymbolPanel({
                     key={row.symbol}
                     onClick={() => onSelectSymbol(row.symbol)}
                     title={`Open ${row.symbol}`}
-                    className="cursor-pointer border-b border-border-soft transition-colors hover:bg-panel-2"
+                    className="group cursor-pointer transition-colors hover:bg-panel-2"
                   >
-                    <td className={`${CELL} text-left`}>
-                      <span className="font-semibold text-foreground">{row.symbol}</span>
-                      {!row.isOpen && (
-                        <span
-                          title="Nothing held any more — everything here is realized."
-                          className="ml-1.5 rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2"
-                        >
-                          Closed
-                        </span>
-                      )}
-                      {row.accountCount > 1 && (
-                        <span
-                          title={`Held across ${row.accountCount} accounts, combined here.`}
-                          className="ml-1.5 text-[11px] text-dim-2"
-                        >
-                          ×{row.accountCount}
-                        </span>
-                      )}
-                      {row.name !== row.symbol && (
-                        <span className="ml-2 text-[11.5px] text-dim-2">{row.name}</span>
-                      )}
+                    <td className={`${CELL} ${FROZEN_CELL} text-left`}>
+                      {/* The symbol leads, so what the cap trims is the tail of a
+                          long fund name -- never the part that names the row. */}
+                      <div className={`${FROZEN_WIDTH} truncate`}>
+                        <span className="font-semibold text-foreground">{row.symbol}</span>
+                        {!row.isOpen && (
+                          <span
+                            title="Nothing held any more — everything here is realized."
+                            className="ml-1.5 rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2"
+                          >
+                            Closed
+                          </span>
+                        )}
+                        {row.accountCount > 1 && (
+                          <span
+                            title={`Held across ${row.accountCount} accounts, combined here.`}
+                            className="ml-1.5 text-[11px] text-dim-2"
+                          >
+                            ×{row.accountCount}
+                          </span>
+                        )}
+                        {row.name !== row.symbol && (
+                          <span className="ml-2 text-[11.5px] text-dim-2">{row.name}</span>
+                        )}
+                      </div>
                     </td>
                     <td className={`${CELL} text-right text-dim`}>
                       {row.isOpen ? shares(row.quantity) : "—"}
@@ -340,26 +345,26 @@ export function BySymbolPanel({
               })}
             </tbody>
             <tfoot>
-              <tr className="sticky bottom-0 z-10 border-t border-border bg-panel-2 font-semibold">
-                <td className={`${CELL} text-left text-foreground`}>Total</td>
-                <td className={CELL}></td>
-                <td className={CELL}></td>
-                <td className={`${CELL} text-right text-foreground`}>
+              <tr>
+                <td className={`${FOOT_FROZEN} text-left text-foreground`}>Total</td>
+                <td className={FOOT}></td>
+                <td className={FOOT}></td>
+                <td className={`${FOOT} text-right text-foreground`}>
                   {money(rows.reduce((s, r) => s + (r.isOpen ? r.marketValue : 0), 0))}
                 </td>
-                <td className={`${CELL} text-right text-dim`}>
+                <td className={`${FOOT} text-right text-dim`}>
                   {(rows.reduce((s, r) => s + (r.isOpen ? r.weight : 0), 0) * 100).toFixed(1)}%
                 </td>
-                <td className={`${CELL} text-right ${toneFor(rows.reduce((s, r) => s + r.unrealizedGain, 0))}`}>
+                <td className={`${FOOT} text-right ${toneFor(rows.reduce((s, r) => s + r.unrealizedGain, 0))}`}>
                   {money(rows.reduce((s, r) => s + r.unrealizedGain, 0))}
                 </td>
-                <td className={`${CELL} text-right ${toneFor(rows.reduce((s, r) => s + r.realizedGain, 0))}`}>
+                <td className={`${FOOT} text-right ${toneFor(rows.reduce((s, r) => s + r.realizedGain, 0))}`}>
                   {money(rows.reduce((s, r) => s + r.realizedGain, 0))}
                 </td>
-                <td className={`${CELL} text-right text-dim`}>{money(rows.reduce((s, r) => s + r.income, 0))}</td>
-                <td className={CELL}></td>
-                <td className={`${CELL} text-right ${toneFor(totalGain)}`}>{money(totalGain)}</td>
-                <td className={CELL}></td>
+                <td className={`${FOOT} text-right text-dim`}>{money(rows.reduce((s, r) => s + r.income, 0))}</td>
+                <td className={FOOT}></td>
+                <td className={`${FOOT} text-right ${toneFor(totalGain)}`}>{money(totalGain)}</td>
+                <td className={FOOT}></td>
               </tr>
             </tfoot>
           </table>

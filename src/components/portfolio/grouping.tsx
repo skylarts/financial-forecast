@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { FrozenLabel } from "./frozenColumn";
 
 /**
  * Shared grouping machinery for the portfolio tables.
@@ -168,35 +169,40 @@ export function GroupHeaderRow({
   cells: readonly React.ReactNode[];
 }) {
   return (
-    <tr className="border-b border-border bg-panel-2">
-      <td colSpan={labelSpan} className="px-3 py-1.5 text-left">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={!collapsed}
-          title={collapsed ? `Show ${label}` : `Hide ${label}`}
-          className="flex items-center gap-1.5 text-[11.5px] font-semibold text-dim transition-colors hover:text-foreground"
-        >
-          <span
-            aria-hidden
-            className={`inline-block text-[9px] text-dim-2 transition-transform ${
-              collapsed ? "" : "rotate-90"
-            }`}
+    // The border is on the cells, not the row: these tables are
+    // `border-separate` so their label column can be frozen, and a separated
+    // table draws no `tr` borders at all.
+    <tr className="bg-panel-2">
+      <td colSpan={labelSpan} className="border-b border-border px-3 py-1.5 text-left">
+        <FrozenLabel>
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={!collapsed}
+            title={collapsed ? `Show ${label}` : `Hide ${label}`}
+            className="flex items-center gap-1.5 text-[11.5px] font-semibold text-dim transition-colors hover:text-foreground"
           >
-            ▶
-          </span>
-          {label}
-          <span className="font-normal text-dim-2">
-            {count} {count === 1 ? noun : `${noun}s`}
-          </span>
-        </button>
+            <span
+              aria-hidden
+              className={`inline-block text-[9px] text-dim-2 transition-transform ${
+                collapsed ? "" : "rotate-90"
+              }`}
+            >
+              ▶
+            </span>
+            {label}
+            <span className="font-normal text-dim-2">
+              {count} {count === 1 ? noun : `${noun}s`}
+            </span>
+          </button>
+        </FrozenLabel>
       </td>
       {cells.map((cell, i) => (
         <td
           // Positional by nature: these are columns, not entities, and they
           // never reorder within a table.
           key={i}
-          className="px-3 py-1.5 text-right text-[11.5px] font-semibold tabular-nums"
+          className="border-b border-border px-3 py-1.5 text-right text-[11.5px] font-semibold tabular-nums"
         >
           {cell}
         </td>
@@ -311,7 +317,7 @@ export function GroupMenu<K extends string>({
     // The wrapper is what the portalled menu measures against, so the toggle
     // sitting inside it has to not move the button -- hence `items-center` on
     // an inline flex rather than the two of them wrapping independently.
-    <span ref={wrap} className="relative inline-flex items-center gap-1 normal-case">
+    <span ref={wrap} className="relative inline-flex flex-wrap items-center gap-1 normal-case">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
