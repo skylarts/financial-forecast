@@ -77,7 +77,9 @@ export function FilterMenu<K extends string>({
   };
 
   return (
-    <div ref={wrap} className="relative">
+    // `static` on a phone hands the panel below off to the filter bar, which is
+    // the positioned ancestor there -- see the note on the panel.
+    <div ref={wrap} className="relative max-sm:static">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -99,9 +101,12 @@ export function FilterMenu<K extends string>({
           // Anchored under the button on a wide screen. On a phone the button
           // sits far enough right that a 288px panel hanging off its left edge
           // runs past the screen -- and `overflow-x: clip` on the page would
-          // silently cut the half that hangs over -- so there it goes `fixed`
-          // and spans the viewport instead, keeping only its vertical spot.
-          className="absolute left-0 z-20 mt-1 w-72 overflow-hidden rounded-md border border-border bg-panel shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:w-auto"
+          // silently cut the half that hangs over -- so there it spans the
+          // filter bar instead, which is why the wrapper goes `static` and the
+          // bar is the `relative` one. It was `fixed` before, which fit the
+          // same way but left the panel hanging in place as the page scrolled
+          // out from under it.
+          className="absolute left-0 z-20 mt-1 w-72 overflow-hidden rounded-md border border-border bg-panel shadow-lg max-sm:inset-x-3 max-sm:top-full max-sm:w-auto"
         >
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
             <span className="text-[10.5px] font-semibold uppercase tracking-wide text-dim-2">

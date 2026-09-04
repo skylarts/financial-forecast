@@ -750,7 +750,10 @@ export function PortfolioApp() {
           brokerage" was not a question you could ask, and it put the answer to
           "which accounts?" in a different place from every other answer. It is
           a section in the panel now, and its chips sit with the rest. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-panel px-3 py-2 sm:px-6 sm:py-2.5">
+      {/* `relative` so the filter and saved-filter panels have something
+          page-anchored to hang from on a phone, where they are too wide to sit
+          under their own buttons. See the note on their panels. */}
+      <div className="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-panel px-3 py-2 sm:px-6 sm:py-2.5">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <input
             value={search}
