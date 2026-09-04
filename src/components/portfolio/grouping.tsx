@@ -223,7 +223,7 @@ export function GroupToggle({ collapse }: { collapse: CollapseState }) {
       type="button"
       onClick={expand ? collapse.expandAll : collapse.collapseAll}
       title={expand ? "Open every group" : "Shut every group"}
-      className="rounded border border-transparent px-1.5 py-0.5 text-[10.5px] font-medium normal-case tracking-normal text-dim-2 transition-colors hover:border-border hover:text-foreground"
+      className="whitespace-nowrap rounded border border-transparent px-1.5 py-0.5 text-[10.5px] font-medium normal-case tracking-normal text-dim-2 transition-colors hover:border-border hover:text-foreground"
     >
       {expand ? "Expand all" : "Collapse all"}
     </button>
@@ -318,7 +318,7 @@ export function GroupMenu<K extends string>({
         aria-haspopup="menu"
         aria-expanded={open}
         title={grouped ? `Grouped ${current?.label.toLowerCase()}` : "Group this table"}
-        className={`rounded border px-1.5 py-0.5 text-[10.5px] font-medium tracking-normal transition-colors ${
+        className={`whitespace-nowrap rounded border px-1.5 py-0.5 text-[10.5px] font-medium tracking-normal transition-colors ${
           grouped
             ? "border-accent text-accent"
             : "border-transparent text-dim-2 hover:border-border hover:text-foreground"

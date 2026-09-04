@@ -78,7 +78,10 @@ export function RealizedPanel({
   /** Opens the detail drawer on the name a lot belongs to. */
   onSelectSymbol: (symbol: string) => void;
 }) {
-  const [grouping, setGrouping] = useState<RealizedGrouping>("none");
+  /** Grouped by account out of the box, like Holdings and Transactions, and
+   *  opening shut: a realized-gains list read across accounts hides the split
+   *  that decides what you actually owe on it. */
+  const [grouping, setGrouping] = useState<RealizedGrouping>("account");
   const [outcome, setOutcome] = useState<Outcome>("all");
 
   const accessors = useMemo<SortAccessors<ClosedLot, Column>>(
