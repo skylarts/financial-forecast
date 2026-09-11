@@ -22,7 +22,7 @@ const OUTCOMES: Record<string, string> = {
     "Schwab signed you in but the connection could not be saved. If this app is signed in to a Supabase project, it needs SCHWAB_ENCRYPTION_KEY set and the schwab_connections table created.",
   state_mismatch:
     "That sign-in could not be matched to the one this app started, so it was refused. Starting again from this page usually clears it.",
-  sign_in_required: "Sign in to this app first — a Schwab connection has to belong to an account.",
+  sign_in_required: "Sign in to this app with Google first (in the ⋯ menu), then connect Schwab. A Schwab connection is stored under your own account, so there has to be one.",
   unconfigured:
     "There is no Schwab app to connect through yet. Register your own below — it takes a Schwab developer account and a day or two for approval.",
 };
@@ -57,7 +57,7 @@ export function SchwabConnection() {
       <Bar
         outcome={outcome}
         headline="Using the public price feed"
-        detail="Sign in to this app to use your Schwab connection. A brokerage connection belongs to an account, so there is nobody to attach it to until you do."
+        detail="Sign in to this app with Google (in the ⋯ menu) to connect Schwab. Your Schwab connection is stored under your own account, so there has to be one to store it under. Your Schwab login itself is never entered here — Schwab's own page handles that."
       />
     );
   }
