@@ -263,6 +263,7 @@ export function GroupHeaderRow({
   leadSpan = 0,
   depth = 0,
   cells,
+  summary,
 }: {
   label: string;
   count: number;
@@ -281,6 +282,15 @@ export function GroupHeaderRow({
   depth?: number;
   /** One node per trailing column, right-aligned. `null` renders an empty cell. */
   cells: readonly React.ReactNode[];
+  /**
+   * The group's headline figures, shown under its name on a phone only.
+   *
+   * On a narrow screen the frozen column is all that fits, and the figures
+   * in `cells` sit a swipe away -- so a collapsed account row read as a name
+   * and nothing else, the one thing a subtotal row must never be. Above `sm`
+   * the cells are in view and this is hidden.
+   */
+  summary?: React.ReactNode;
 }) {
   // The label sits in the frozen column itself rather than in one cell
   // spanning up to it. Spanning was what let the label scroll away: a sticky
@@ -319,6 +329,14 @@ export function GroupHeaderRow({
               <span className="hidden sm:inline"> {count === 1 ? noun : `${noun}s`}</span>
             </span>
           </button>
+          {summary && (
+            <div
+              style={depth > 0 ? { paddingLeft: depth * 14 } : undefined}
+              className="mt-0.5 flex items-center gap-2 whitespace-nowrap pl-[1.125rem] text-[11px] tabular-nums sm:hidden"
+            >
+              {summary}
+            </div>
+          )}
         </FrozenGroupLabel>
       </td>
       {trailingSpan > 0 && <td colSpan={trailingSpan} className={CELL} />}

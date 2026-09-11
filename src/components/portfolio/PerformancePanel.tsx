@@ -113,6 +113,17 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** A year, as the engine measures one when it annualizes. */
+const DAYS_PER_YEAR = 365.25;
+
+/** Calendar days between a series' first and last point; 0 for under two points. */
+function spanDays(points: readonly { date: string }[]): number {
+  if (points.length < 2) return 0;
+  const first = Date.parse(`${points[0].date}T00:00:00Z`);
+  const last = Date.parse(`${points[points.length - 1].date}T00:00:00Z`);
+  return (last - first) / 86_400_000;
+}
+
 interface ChartRow {
   date: string;
   portfolio: number;
@@ -451,7 +462,14 @@ export function PerformancePanel({
   }, [fullSeries, histories, benchmarks, earliest]);
 
   const portfolioReturn = totalReturn(series.points);
-  const portfolioAnnualized = annualizedReturn(series.points);
+  /**
+   * Blank, not repeated, for a window of a year or less. Under a year the
+   * engine leaves the return un-annualized, so the tile printed the same
+   * figure as "Your return" beside it -- and on the 1Y window the two are
+   * the same by definition. A dash says there is nothing to add.
+   */
+  const shortWindow = spanDays(series.points) <= DAYS_PER_YEAR;
+  const portfolioAnnualized = shortWindow ? null : annualizedReturn(series.points);
 
   const addBenchmark = (symbol: string) => {
     setBenchmarks((current) =>
@@ -546,11 +564,17 @@ export function PerformancePanel({
         </div>
         <div
           className="rounded-lg border border-border bg-panel px-4 py-3"
-          title="Compounded to a yearly rate. Windows under a year are shown as they stand."
+          title={
+            shortWindow
+              ? "Compounded to a yearly rate. Blank for windows of a year or less, where it would only repeat the return."
+              : "Compounded to a yearly rate."
+          }
         >
           <div className="text-[10.5px] uppercase tracking-wide text-dim-2">Annualized</div>
           <div
-            className={`mt-1 text-[19px] font-semibold tabular-nums ${toneFor(portfolioAnnualized ?? 0)}`}
+            className={`mt-1 text-[19px] font-semibold tabular-nums ${
+              portfolioAnnualized === null ? "text-dim-2" : toneFor(portfolioAnnualized)
+            }`}
           >
             {percent(portfolioAnnualized)}
           </div>

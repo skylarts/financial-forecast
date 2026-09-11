@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import { useSchwabStatus } from "@/lib/portfolio/useSchwabStatus";
 import { SchwabAppSettings } from "./SchwabAppSettings";
+import { useModalDialog } from "@/components/ui/useModalDialog";
 
 /**
  * The brokerage connection in one place, reachable at any time.
@@ -15,13 +15,7 @@ import { SchwabAppSettings } from "./SchwabAppSettings";
 export function SchwabSettingsDialog({ onClose }: { onClose: () => void }) {
   const { status, reload } = useSchwabStatus();
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const box = useModalDialog<HTMLDivElement>(onClose);
 
   const days = status?.daysRemaining ?? null;
   const stalled = status?.connected && status.reachable === false;
@@ -46,7 +40,9 @@ export function SchwabSettingsDialog({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
+        ref={box}
         role="dialog"
+        aria-modal="true"
         aria-label="Schwab connection"
         className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-panel"
         onClick={(e) => e.stopPropagation()}
@@ -56,6 +52,7 @@ export function SchwabSettingsDialog({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
             className="rounded-md px-2 py-1 text-dim hover:bg-panel-2 hover:text-foreground"
           >
             ✕

@@ -74,7 +74,9 @@ describe("parseDate", () => {
     ["2024-01-10", "2024-01-10"],
     ["10-Jan-2024", "2024-01-10"],
     ["Jan 10, 2024", "2024-01-10"],
-    ["01/10/2024 as of 01/08/2024", "2024-01-10"],
+    // Schwab: posted on the 10th, traded on the 8th. The trade date wins.
+    ["01/10/2024 as of 01/08/2024", "2024-01-08"],
+    ["08/17/2026 as of 08/15/2026", "2026-08-15"],
   ])("reads %s", (input, expected) => {
     expect(parseDate(input)).toBe(expected);
   });
@@ -112,6 +114,26 @@ describe("inferType", () => {
     ["Foreign Tax Fee", "fee"],
   ])("maps %s", (input, expected) => {
     expect(inferType(input)).toBe(expected);
+  });
+
+  it("types Schwab's two-row reinvestment the way the cash actually moves", () => {
+    // The dividend half: cash in.
+    expect(inferType("Reinvest Dividend")).toBe("dividend");
+    expect(inferType("Qual Div Reinvest")).toBe("dividend");
+    expect(inferType("Qualified Dividend Reinvest")).toBe("dividend");
+    // The purchase half: cash out, shares in.
+    expect(inferType("Reinvest Shares")).toBe("reinvest");
+    // And the plain cash payout, which never touches the reinvest patterns.
+    expect(inferType("Qualified Dividend")).toBe("dividend");
+  });
+
+  it("reads Schwab's journals and MoneyLink transfers from the sign of the amount", () => {
+    // Neither names a direction, so the wording alone must not type them;
+    // the row builder resolves them by sign and flags the guess.
+    expect(inferType("Journal")).toBeNull();
+    expect(inferType("MoneyLink Transfer")).toBeNull();
+    expect(isDirectionlessTransfer("Journal")).toBe(true);
+    expect(isDirectionlessTransfer("MoneyLink Transfer")).toBe(true);
   });
 
   it("prefers reinvestment over the dividend wording it contains", () => {

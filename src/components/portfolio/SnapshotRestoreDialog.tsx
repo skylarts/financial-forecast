@@ -9,6 +9,7 @@ import {
 } from "@/lib/portfolio/portfolioSnapshots";
 import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { Btn } from "@/components/ui/controls";
+import { useModalDialog } from "@/components/ui/useModalDialog";
 
 /**
  * The way back to a ledger that has gone missing.
@@ -36,6 +37,7 @@ export function SnapshotRestoreDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const loadPortfolio = usePortfolioStore((s) => s.loadPortfolio);
   const currentCount = usePortfolioStore((s) => s.portfolio.transactions.length);
+  const box = useModalDialog<HTMLDivElement>(onClose);
 
   useEffect(() => {
     void listSnapshots().then(setSnapshots);
@@ -59,8 +61,16 @@ export function SnapshotRestoreDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-lg border border-border bg-panel p-4">
-        <h2 className="text-[15px] font-semibold text-foreground">Restore a local snapshot</h2>
+      <div
+        ref={box}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="snapshot-restore-title"
+        className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-lg border border-border bg-panel p-4"
+      >
+        <h2 id="snapshot-restore-title" className="text-[15px] font-semibold text-foreground">
+          Restore a local snapshot
+        </h2>
         <p className="mt-1 text-[12px] text-dim">
           Saved automatically in this browser whenever a change would have lost transactions. The
           last {SNAPSHOT_LIMIT} are kept, and they are never touched by cloud sync.
