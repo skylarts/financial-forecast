@@ -26,7 +26,7 @@ function tx(patch: Partial<Transaction>): Transaction {
 }
 
 function portfolio(transactions: Transaction[]): Portfolio {
-  return { id: "p1", accounts: [], transactions, securities: [], baskets: [] };
+  return { id: "p1", accounts: [], transactions, securities: [], baskets: [], statementValuations: [] };
 }
 
 describe("symbolsEverTraded", () => {

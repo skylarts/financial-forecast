@@ -53,6 +53,7 @@ function portfolioWith(pa: PortfolioAccount): Portfolio {
     transactions: [buy({ accountId: pa.id })],
     securities: [],
     baskets: [],
+    statementValuations: [],
   };
 }
 
@@ -142,6 +143,7 @@ describe("pendingForecastPushes", () => {
       transactions: [buy({ accountId: "pre" }), buy({ accountId: "roth" })],
       securities: [],
       baskets: [],
+      statementValuations: [],
     };
     const forecastAccounts = [
       makeAccount({ id: "fa-pre", class: "tax_deferred", taxTreatment: "tax_deferred", startingBalance: 0 }),

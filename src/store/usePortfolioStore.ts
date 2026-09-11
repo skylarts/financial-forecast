@@ -10,9 +10,11 @@ import {
   portfolioAccountSchema,
   portfolioSchema,
   securitySchema,
+  statementValuationSchema,
   type Portfolio,
   type PortfolioAccount,
   type Security,
+  type StatementValuation,
   type Transaction,
 } from "@/domain/portfolio";
 import type { DraftTransaction } from "@/lib/portfolio/importer";
@@ -39,7 +41,9 @@ const STORAGE_KEY = "portfolio";
  */
 function tidy(portfolio: Portfolio): Portfolio {
   return withAssignedLotIds(
-    withCanonicalSymbols(withMigratedAccounts(withMigratedSecurities(withMigratedBaskets(portfolio)))),
+    withCanonicalSymbols(
+      withMigratedAccounts(withMigratedSecurities(withMigratedBaskets(withMigratedValuations(portfolio)))),
+    ),
   );
 }
 
@@ -90,12 +94,28 @@ function withMigratedBaskets(portfolio: Portfolio): Portfolio {
   return { ...portfolio, baskets: (portfolio.baskets ?? []).map((b) => basketSchema.parse(b)) };
 }
 
+/**
+ * Backfills statement valuations onto a save written before they existed, for
+ * the same reason baskets need it above: nothing on the rehydration path runs a
+ * whole-portfolio parse, so the schema default never fires and every reader
+ * would be looking at `undefined`.
+ */
+function withMigratedValuations(portfolio: Portfolio): Portfolio {
+  return {
+    ...portfolio,
+    statementValuations: (portfolio.statementValuations ?? []).map((v) =>
+      statementValuationSchema.parse(v),
+    ),
+  };
+}
+
 const emptyPortfolio: Portfolio = {
   id: "local-portfolio",
   accounts: [],
   transactions: [],
   securities: [],
   baskets: [],
+  statementValuations: [],
 };
 
 interface PortfolioState {
@@ -142,6 +162,20 @@ interface PortfolioState {
    */
   importTransactions: (rows: readonly { accountId: string; draft: DraftTransaction }[]) => string;
   undoImport: (batchId: string) => number;
+
+  /**
+   * Replaces this account's statement valuations with the ones given, and
+   * returns how many were written.
+   *
+   * Replace rather than append, because a statement file is a complete record
+   * of the periods it covers: re-importing a corrected export should supersede
+   * what it corrects, not leave two values arguing over one period end. Other
+   * accounts' valuations are untouched.
+   */
+  setStatementValuations: (
+    accountId: string,
+    rows: readonly Omit<StatementValuation, "id" | "accountId">[],
+  ) => number;
 
   upsertSecurity: (security: Security) => void;
 
@@ -327,6 +361,17 @@ export const usePortfolioStore = create<PortfolioState>()(
             ],
           }));
           return batchId;
+        },
+
+        setStatementValuations: (accountId, rows) => {
+          mutate((p) => ({
+            ...p,
+            statementValuations: [
+              ...(p.statementValuations ?? []).filter((v) => v.accountId !== accountId),
+              ...rows.map((r) => ({ ...r, id: nanoid(), accountId })),
+            ],
+          }), "importing statement values");
+          return rows.length;
         },
 
         undoImport: (batchId) => {
