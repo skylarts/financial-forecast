@@ -43,6 +43,13 @@ import {
 } from "./grouping";
 import { FilterStatus } from "./FilterStatus";
 import { MoreRows, useRowWindow } from "./rowWindow";
+import {
+  blankForm,
+  formFromTransaction,
+  parseBasisRetained,
+  transactionFromForm,
+  type TxFormState,
+} from "./transactionForm";
 import { facetActive, facetMatches, type FacetState } from "@/components/ui/facets";
 import { matchesDateRange } from "./filters";
 
@@ -78,68 +85,6 @@ const CELL = "px-3 py-2 text-[12.5px] tabular-nums";
 
 type TxColumn = "date" | "account" | "type" | "symbol" | "quantity" | "price" | "amount" | "lot";
 
-
-interface TxFormState {
-  accountId: string;
-  date: string;
-  type: TransactionType;
-  symbol: string;
-  quantity: string;
-  price: string;
-  amount: string;
-  fees: string;
-  lotId: string;
-  acquiredDate: string;
-  spinoffSymbol: string;
-  spinoffShareRatio: string;
-  spinoffBasisRetained: string;
-}
-
-function blankForm(accountId: string): TxFormState {
-  return {
-    accountId,
-    date: new Date().toISOString().slice(0, 10),
-    type: "buy",
-    symbol: "",
-    quantity: "",
-    price: "",
-    amount: "",
-    fees: "",
-    lotId: "",
-    acquiredDate: "",
-    spinoffSymbol: "",
-    spinoffShareRatio: "",
-    spinoffBasisRetained: "",
-  };
-}
-
-/** Converts a stored transaction back into editable form strings. */
-function formFromTransaction(tx: Transaction): TxFormState {
-  return {
-    accountId: tx.accountId,
-    date: tx.date,
-    type: tx.type,
-    symbol: tx.symbol ?? "",
-    quantity: tx.quantity > 0 ? String(tx.quantity) : "",
-    price: tx.price > 0 ? String(tx.price) : "",
-    amount: tx.amount === null ? "" : String(tx.amount),
-    fees: tx.fees > 0 ? String(tx.fees) : "",
-    lotId: tx.lotId ?? "",
-    acquiredDate: tx.acquiredDate ?? "",
-    spinoffSymbol: tx.spinoffSymbol ?? "",
-    spinoffShareRatio: tx.spinoffShareRatio === null ? "" : String(tx.spinoffShareRatio),
-    spinoffBasisRetained: tx.spinoffBasisRetained === null ? "" : String(tx.spinoffBasisRetained),
-  };
-}
-
-/** Turns the basis-retained form field into a 0-1 fraction, tolerant of "88.34" or "0.8834". */
-function parseBasisRetained(raw: string): number | null {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  const value = Number.parseFloat(trimmed);
-  if (Number.isNaN(value)) return null;
-  return value > 1 ? value / 100 : value;
-}
 
 /**
  * The add and edit forms are the same fields end to end, so they share one
@@ -393,14 +338,6 @@ function LotCell({ tx, onSearch }: { tx: Transaction; onSearch: (query: string) 
       {ids.length > 1 && <span className="text-dim-2"> +{ids.length - 1}</span>}
     </button>
   );
-}
-
-/** Blank strings mean "use the computed default" for shares/price/fees, but an
- *  explicit zero (a $0 fee, a dividend's 0 shares) must survive as zero, not
- *  vanish into the same default. */
-function num(raw: string): number {
-  const value = Number.parseFloat(raw);
-  return Number.isFinite(value) ? Math.abs(value) : 0;
 }
 
 /**
@@ -670,19 +607,7 @@ export function TransactionsPanel({
           onCancel={() => setAdding(false)}
           onSubmit={(form) =>
             addTransaction({
-              accountId: form.accountId,
-              date: form.date,
-              type: form.type,
-              symbol: form.symbol.trim() ? normalizeSymbol(form.symbol) : null,
-              quantity: num(form.quantity),
-              price: num(form.price),
-              amount: form.amount.trim() === "" ? null : num(form.amount),
-              fees: num(form.fees),
-              lotId: form.lotId.trim() || null,
-              acquiredDate: form.acquiredDate || null,
-              spinoffSymbol: form.spinoffSymbol.trim() ? normalizeSymbol(form.spinoffSymbol) : null,
-              spinoffShareRatio: form.spinoffShareRatio.trim() === "" ? null : num(form.spinoffShareRatio),
-              spinoffBasisRetained: parseBasisRetained(form.spinoffBasisRetained),
+              ...transactionFromForm(form),
               note: "",
               importBatchId: null,
               sourceHash: null,
@@ -936,21 +861,7 @@ export function TransactionsPanel({
                               submitLabel="Save"
                               onCancel={() => setEditingId(null)}
                               onSubmit={(form) => {
-                                updateTransaction(tx.id, {
-                                  accountId: form.accountId,
-                                  date: form.date,
-                                  type: form.type,
-                                  symbol: form.symbol.trim() ? normalizeSymbol(form.symbol) : null,
-                                  quantity: num(form.quantity),
-                                  price: num(form.price),
-                                  amount: form.amount.trim() === "" ? null : num(form.amount),
-                                  fees: num(form.fees),
-                                  lotId: form.lotId.trim() || null,
-                                  acquiredDate: form.acquiredDate || null,
-                                  spinoffSymbol: form.spinoffSymbol.trim() ? normalizeSymbol(form.spinoffSymbol) : null,
-                                  spinoffShareRatio: form.spinoffShareRatio.trim() === "" ? null : num(form.spinoffShareRatio),
-                                  spinoffBasisRetained: parseBasisRetained(form.spinoffBasisRetained),
-                                });
+                                updateTransaction(tx.id, transactionFromForm(form));
                                 setEditingId(null);
                               }}
                             />

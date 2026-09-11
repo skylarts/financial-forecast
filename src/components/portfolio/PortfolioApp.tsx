@@ -42,6 +42,8 @@ import { BySymbolPanel } from "./BySymbolPanel";
 import { PriceFeedNotice } from "./PriceFeedNotice";
 import { SchwabBadge } from "./SchwabBadge";
 import { SchwabConnection } from "./SchwabConnection";
+import { SchwabSettingsDialog } from "./SchwabSettingsDialog";
+import { EmptyPortfolio } from "./EmptyPortfolio";
 import { ExpiredContractsNotice } from "./ExpiredContractsNotice";
 import { FilterStatus } from "./FilterStatus";
 import { FilterChips, FilterMenu, type FilterSection } from "./FilterMenu";
@@ -149,6 +151,7 @@ export function PortfolioApp() {
   const [performanceView, setPerformanceView] = useState<PerformanceView>("overTime");
   const [selected, setSelected] = useState<PositionSelection | null>(null);
   const [importing, setImporting] = useState(false);
+  const [schwabOpen, setSchwabOpen] = useState(false);
   /**
    * The banner message, and the import it can take back.
    *
@@ -659,6 +662,28 @@ export function PortfolioApp() {
     );
   };
 
+  /**
+   * Opens the import dialog, standing up a first account when there is none:
+   * a file has to land somewhere, and asking for the account first would put
+   * a form between the person and the thing they came to do.
+   */
+  const openImport = () => {
+    if (portfolio.accounts.length === 0) {
+      addAccount({
+        name: "Brokerage",
+        institution: "",
+        type: "taxable",
+        forecastAccountId: null,
+        syncToForecast: true,
+        ownerId: null,
+        openingCashBalance: 0,
+        parentAccountId: null,
+        schwabAccountHash: null,
+      });
+    }
+    setImporting(true);
+  };
+
   const handlePush = (account: PortfolioAccount, value: number, costBasis: number) => {
     const target = scenario.accounts.find((a) => a.id === account.forecastAccountId);
     if (!target) return;
@@ -708,25 +733,7 @@ export function PortfolioApp() {
             the corner belongs to the controls that act on your data, not to a
             tab strip that only says where you are. */}
         <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-          <Btn
-            variant="primary"
-            onClick={() => {
-              if (portfolio.accounts.length === 0) {
-                addAccount({
-                  name: "Brokerage",
-                  institution: "",
-                  type: "taxable",
-                  forecastAccountId: null,
-                  syncToForecast: true,
-                  ownerId: null,
-                  openingCashBalance: 0,
-                  parentAccountId: null,
-                  schwabAccountHash: null,
-                });
-              }
-              setImporting(true);
-            }}
-          >
+          <Btn variant="primary" onClick={openImport}>
             <span className="whitespace-nowrap">
               Import<span className="hidden sm:inline"> transactions</span>
             </span>
@@ -901,7 +908,15 @@ export function PortfolioApp() {
             tiles, and Gains & losses above Realized's. A number that appears
             twice on one screen invites the reader to look for the difference
             between them. */}
-        {tab === "holdings" && (
+        {tab === "holdings" && portfolio.transactions.length === 0 && (
+          <EmptyPortfolio
+            onImport={openImport}
+            onConnectSchwab={() => setSchwabOpen(true)}
+            onLoadDemo={handleLoadDemo}
+          />
+        )}
+
+        {tab === "holdings" && portfolio.transactions.length > 0 && (
           <>
             <SummaryCards
               portfolio={portfolio}
@@ -1079,6 +1094,8 @@ export function PortfolioApp() {
           onClose={() => setSelected(null)}
         />
       )}
+
+      {schwabOpen && <SchwabSettingsDialog onClose={() => setSchwabOpen(false)} />}
 
       {importing && (
         <ImportDialog
