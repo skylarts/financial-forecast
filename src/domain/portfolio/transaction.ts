@@ -216,6 +216,19 @@ export const transactionSchema = z.object({
    * already in the ledger when a statement export overlaps a previous one.
    */
   sourceHash: z.string().nullable().default(null),
+  /**
+   * The other half of a transfer between two of this portfolio's own
+   * accounts, by its transaction id: the withdrawal this deposit came from,
+   * or the deposit this withdrawal became. Null (or absent, on any row saved
+   * before the field existed) means the cash came from or went outside.
+   *
+   * Set by the importer when a file's deposit matches a withdrawal already in
+   * another tracked account to the cent and within a few days, and mirrored
+   * onto that row. The type is untouched -- the cash really did move, and the
+   * replay needs it to -- so this only says *where* it moved, which is what
+   * separates a contribution from a rearrangement.
+   */
+  transferPeerId: z.string().nullable().optional(),
 });
 export type Transaction = z.infer<typeof transactionSchema>;
 

@@ -314,16 +314,28 @@ export const usePortfolioStore = create<PortfolioState>()(
 
         importTransactions: (rows) => {
           const batchId = nanoid();
+          const added = rows.map(({ accountId, draft }) => ({
+            ...draft,
+            id: nanoid(),
+            accountId,
+            importBatchId: batchId,
+          }));
+          // A row that arrived as one half of a transfer names the other half;
+          // the other half learns about it here, so the link reads the same
+          // from either account. Undoing the import clears it again below.
+          const peerOf = new Map<string, string>();
+          for (const tx of added) {
+            if (tx.transferPeerId) peerOf.set(tx.transferPeerId, tx.id);
+          }
           mutate((p) => ({
             ...p,
             transactions: [
-              ...p.transactions,
-              ...rows.map(({ accountId, draft }) => ({
-                ...draft,
-                id: nanoid(),
-                accountId,
-                importBatchId: batchId,
-              })),
+              ...(peerOf.size === 0
+                ? p.transactions
+                : p.transactions.map((tx) =>
+                    peerOf.has(tx.id) ? { ...tx, transferPeerId: peerOf.get(tx.id) } : tx,
+                  )),
+              ...added,
             ],
           }));
           return batchId;
@@ -331,10 +343,22 @@ export const usePortfolioStore = create<PortfolioState>()(
 
         undoImport: (batchId) => {
           const before = get().portfolio.transactions.length;
-          mutate((p) => ({
-            ...p,
-            transactions: p.transactions.filter((tx) => tx.importBatchId !== batchId),
-          }), "undoing an import");
+          mutate((p) => {
+            const removed = new Set(
+              p.transactions.filter((tx) => tx.importBatchId === batchId).map((tx) => tx.id),
+            );
+            return {
+              ...p,
+              transactions: p.transactions
+                .filter((tx) => !removed.has(tx.id))
+                // A transfer link to a row that is gone points at nothing.
+                .map((tx) =>
+                  tx.transferPeerId && removed.has(tx.transferPeerId)
+                    ? { ...tx, transferPeerId: null }
+                    : tx,
+                ),
+            };
+          }, "undoing an import");
           return before - get().portfolio.transactions.length;
         },
 

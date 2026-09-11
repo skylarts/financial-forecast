@@ -8,6 +8,8 @@ import {
 } from "@/domain/portfolio";
 import { isAutoDividendHash, isSameDividendWindow } from "@/engine/portfolio/dividends";
 import { createIdentityPool, transactionIdentity } from "./transactionIdentity";
+import { KNOWN_FUND_TICKERS, type ImportPreset } from "./importPresets";
+import { findTransferPeer, type TransferPeer } from "./importTransfers";
 
 export interface ParsedTable {
   headers: string[];
@@ -99,6 +101,47 @@ export interface ImportRow {
    * skipped -- otherwise the estimate would sit in the ledger forever.
    */
   syncMatchId: string | null;
+  /** The action cell as written -- or the description, when the file folds
+   *  the action into it -- so a review can show what was actually said. */
+  action: string;
+  /**
+   * Where the type came from. `preset`: the broker's own table. `exact`: the
+   * cell already held one of the ledger's type names. `pattern`: the generic
+   * wording patterns. `sign`: nothing said, so the direction was read off a
+   * number. Only the first two are certain.
+   */
+  typeSource: "preset" | "exact" | "pattern" | "sign" | null;
+  /**
+   * True when the type is a guess that needs confirming before import: with a
+   * preset chosen, anything the preset's table did not answer; without one,
+   * anything typed from a sign alone. The dialog holds these back until each
+   * is confirmed or skipped.
+   */
+  unrecognised: boolean;
+  /** Why the row is broker bookkeeping rather than a transaction, or null. */
+  ignored: string | null;
+  /**
+   * The withdrawal in another tracked account this deposit matches (or the
+   * deposit this withdrawal matches), when there is one. See `transferPeerId`
+   * on the transaction schema.
+   */
+  transferPeer: TransferPeer | null;
+}
+
+/** What a caller can teach `buildImportRows` beyond the column mapping. */
+export interface ImportOptions {
+  /** The broker's own vocabulary, when the file is one a preset knows. */
+  preset?: ImportPreset | null;
+  /**
+   * Fund name -> ticker, for a preset whose symbol column holds names. A name
+   * with no entry leaves its rows unimportable rather than storing the name.
+   */
+  symbolAliases?: Readonly<Record<string, string>>;
+  /**
+   * Cash rows in accounts *outside* the target family, offered as the other
+   * half of a transfer. Left empty, no pairing is attempted.
+   */
+  transferCandidates?: readonly Transaction[];
 }
 
 /** Splits one CSV line, honoring quoted fields and doubled escape quotes. */
@@ -275,7 +318,9 @@ const MONTHS: Record<string, string> = {
  */
 export function parseDate(raw: string): ISODate | null {
   const asOf = raw.match(/\bas\s+of\s+(.+)$/i);
-  const text = (asOf ? asOf[1] : raw).trim();
+  // A workplace plan's export stamps every date "8/28/2026 12:00:00 AM"; the
+  // time says nothing and would otherwise stop the date from matching.
+  const text = (asOf ? asOf[1] : raw).trim().replace(/\s+\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)?$/i, "");
   if (!text) return null;
 
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -405,7 +450,15 @@ export function buildImportRows(
   mapping: ColumnMapping,
   existing: readonly Transaction[] = [],
   target: Id | readonly Id[] | null = null,
+  options: ImportOptions = {},
 ): ImportRow[] {
+  const preset = options.preset ?? null;
+  const aliases = options.symbolAliases ?? {};
+  // Each candidate can be the other half of one transfer only, so a file that
+  // deposits $500 twice on one day matches two withdrawals, not one twice.
+  const unpaired = new Set(
+    (options.transferCandidates ?? []).filter((tx) => !tx.transferPeerId),
+  );
   // One import can land in more than one account: a split workplace account's
   // file carries a money-source column and its rows fan out across the
   // sleeves. Sync-written dividends to supersede are looked for across every
@@ -458,32 +511,93 @@ export function buildImportRows(
 
     // The action column is the primary signal, but many exports fold the
     // action into a free-text description instead, so fall back to that.
-    const action = cell(raw, mapping.type);
-    let type = inferType(action) ?? inferType(note);
+    const action = cell(raw, mapping.type).trim();
+    let type: TransactionType | null = null;
+    let typeSource: ImportRow["typeSource"] = null;
+    let ignored: string | null = null;
+    let symbolText = symbolRaw;
+
+    // The broker's own table answers first. What it cannot answer goes to
+    // the generic patterns below -- and is marked, because a row the table
+    // never heard of is exactly the row a person has to look at.
+    if (preset) {
+      const resolved = preset.resolve({
+        action,
+        description: note,
+        symbol: symbolRaw,
+        quantity,
+        price,
+        amount,
+      });
+      if (resolved.symbol !== undefined) symbolText = resolved.symbol;
+      if (resolved.ignore) ignored = resolved.ignore;
+      if (resolved.type) {
+        type = resolved.type;
+        typeSource = "preset";
+      }
+      if (resolved.hint) issues.push(resolved.hint);
+    }
+
+    if (!type && !ignored) {
+      const exact = transactionTypeSchema.safeParse(action.toLowerCase().replace(/[\s-]+/g, "_"));
+      if (exact.success) {
+        type = exact.data;
+        typeSource = "exact";
+      } else {
+        type = inferType(action) ?? inferType(note);
+        if (type) typeSource = "pattern";
+      }
+    }
     // A transfer that never says which way it went still carries its direction
     // in the numbers: shares leaving are negative, cash arriving is positive.
     // Reading it here keeps both halves of a custodian move in the ledger --
     // dropping one half is what leaves shares with no cost basis behind them.
-    if (!type && (isDirectionlessTransfer(action) || isDirectionlessTransfer(note))) {
+    if (!type && !ignored && (isDirectionlessTransfer(action) || isDirectionlessTransfer(note))) {
       if (quantity !== null && quantity !== 0) {
         type = quantity < 0 ? "transfer_out" : "transfer_in";
       } else if (amount !== null && amount !== 0) {
         type = amount < 0 ? "cash_withdrawal" : "cash_deposit";
       }
       if (type) {
+        typeSource = "sign";
         issues.push(`Transfer direction not stated; read as a ${TRANSACTION_TYPE_LABELS[type].toLowerCase()} from the sign.`);
       }
     }
-    if (!type && quantity !== null && amount !== null) {
+    if (!type && !ignored && quantity !== null && amount !== null) {
       type = amount < 0 ? "buy" : "sell";
+      typeSource = "sign";
       issues.push(`Type not stated; read as a ${type} from the amount's sign.`);
     }
 
+    // A name is not a symbol. A preset that reads fund names hands each one
+    // through the alias table; a name nobody has mapped yet cannot be stored
+    // as if it were a ticker, so its rows wait rather than import.
+    let symbolUnmapped = false;
+    if (preset?.symbolIsName && symbolText) {
+      const alias = aliases[symbolText] ?? aliases[symbolText.trim()] ?? KNOWN_FUND_TICKERS[symbolText.trim()];
+      if (alias && alias.trim()) symbolText = alias.trim();
+      else symbolUnmapped = true;
+    }
+
+    // With a preset, only its table is trusted; without one, only wording is.
+    // A type read off a sign is a guess either way.
+    const unrecognised =
+      !ignored &&
+      (preset ? typeSource !== "preset" && typeSource !== "exact" : typeSource === "sign");
+    if (preset && unrecognised && type) {
+      issues.unshift(
+        `"${action || note}" isn't in the ${preset.label} table; read as ${TRANSACTION_TYPE_LABELS[type].toLowerCase()} from the wording. Confirm or change it.`,
+      );
+    }
+
+    if (ignored) issues.push(ignored);
     if (!date) issues.push("No date could be read from this row.");
-    if (!type) issues.push("Could not tell what kind of transaction this is.");
+    if (!type && !ignored) issues.push("Could not tell what kind of transaction this is.");
 
     const needsSymbol = type !== null && type !== "cash_deposit" && type !== "cash_withdrawal" && type !== "interest" && type !== "fee";
-    if (needsSymbol && !symbolRaw) issues.push("No symbol on a row that needs one.");
+    if (needsSymbol && !symbolText) issues.push("No symbol on a row that needs one.");
+    if (needsSymbol && symbolUnmapped) issues.push(`No ticker for "${symbolText}" yet. Map it above to import these rows.`);
+    const symbolOk = !needsSymbol || (Boolean(symbolText) && !symbolUnmapped);
 
     // A spinoff drives the lot engine's pro-rata basis split, so a row
     // missing any of these three would silently do nothing on import rather
@@ -500,7 +614,7 @@ export function buildImportRows(
     const draft: DraftTransaction = {
       date: date ?? "",
       type: type ?? "buy",
-      symbol: symbolRaw ? normalizeSymbol(symbolRaw) : null,
+      symbol: symbolOk && symbolText ? normalizeSymbol(symbolText) : null,
       quantity: quantity === null ? 0 : Math.abs(quantity),
       price: price === null ? 0 : Math.abs(price),
       amount: amount === null ? null : Math.abs(amount),
@@ -520,8 +634,8 @@ export function buildImportRows(
         spinoffBasisRetained === null || spinoffBasisRetained < 0 || spinoffBasisRetained > 1);
 
     let syncMatchId: string | null = null;
-    if (date !== null && (type === "dividend" || type === "reinvest") && symbolRaw !== "") {
-      const candidates = (autoDivEntries.get(normalizeSymbol(symbolRaw)) ?? []).filter((entry) =>
+    if (date !== null && (type === "dividend" || type === "reinvest") && draft.symbol !== null) {
+      const candidates = (autoDivEntries.get(draft.symbol) ?? []).filter((entry) =>
         isSameDividendWindow(entry.date, date),
       );
       // Closest ex-date first: with more than one candidate in window, the
@@ -535,7 +649,23 @@ export function buildImportRows(
       issues.push("Replaces a dividend the price-feed sync added earlier under its ex-date.");
     }
 
-    const skip = !date || !type || (needsSymbol && !symbolRaw) || spinoffIncomplete;
+    const skip = !date || !type || !symbolOk || spinoffIncomplete || ignored !== null;
+
+    // The other half of a move between two of this portfolio's accounts. Only
+    // for a row that will import, and each candidate answers once.
+    let transferPeer: TransferPeer | null = null;
+    if (!skip && (type === "cash_deposit" || type === "cash_withdrawal") && unpaired.size > 0) {
+      transferPeer = findTransferPeer(draft, unpaired);
+      if (transferPeer) {
+        unpaired.delete(transferPeer.transaction);
+        draft.transferPeerId = transferPeer.transaction.id;
+        issues.push(
+          type === "cash_deposit"
+            ? "Matches a withdrawal from another of your accounts. Recorded as a transfer between them, not new money."
+            : "Matches a deposit into another of your accounts. Recorded as a transfer between them, not money leaving.",
+        );
+      }
+    }
 
     // Two routes, tried in that order. The fingerprint is exact and survives
     // the user editing the transaction afterwards, so it stays the first
@@ -563,6 +693,11 @@ export function buildImportRows(
       duplicate: duplicateVia !== null,
       duplicateVia,
       syncMatchId,
+      action: action || note,
+      typeSource,
+      unrecognised,
+      ignored,
+      transferPeer,
     };
   });
 }

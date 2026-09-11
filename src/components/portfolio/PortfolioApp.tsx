@@ -467,12 +467,12 @@ export function PortfolioApp() {
     // A statement dividend that lands on a payment the sync already wrote
     // under its ex-date supersedes that estimate rather than duplicating it.
     const replacedIds = assignments
-      .map(({ row }) => row.syncMatchId)
+      .map(({ syncMatchId }) => syncMatchId)
       .filter((id): id is string => id !== null);
     const replaced = replacedIds.length > 0 ? removeTransactions(replacedIds) : 0;
 
     const batchId = importTransactions(
-      assignments.map(({ accountId, row }) => ({ accountId, draft: row.draft })),
+      assignments.map(({ accountId, draft }) => ({ accountId, draft })),
     );
     setImporting(false);
     setFlashState({
