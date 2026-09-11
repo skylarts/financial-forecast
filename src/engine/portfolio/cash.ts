@@ -50,6 +50,16 @@ export interface CashFunding {
    * Zero once the declared balance covers the ledger, which is the ordinary case.
    */
   floor: number;
+  /**
+   * The deepest the balance went below zero at a day's close *after* the ledger
+   * had recorded money arriving, and the day it happened on.
+   *
+   * Not seeded away, because by then it is a fact about the account rather than
+   * a gap in the record: a margin balance, or a fee charged the day before the
+   * sale that covered it. Reported so a caller can say so.
+   */
+  overdraft: number;
+  overdraftOn: ISODate | null;
 }
 
 /**
@@ -62,10 +72,20 @@ export interface CashFunding {
  * overdraft that never happened.
  *
  * `floor` is a deduction rather than a guess: an account that bought $1,000 of
- * stock before its first recorded deposit demonstrably held $1,000 the ledger
- * does not mention. It exists for partial ledgers -- an export that begins
- * mid-history -- and a complete one produces zero, leaving the declared opening
- * balance to stand on its own.
+ * stock **before its first recorded deposit** demonstrably held $1,000 the
+ * ledger does not mention. It exists for partial ledgers -- an export that
+ * begins mid-history -- and a complete one produces zero, leaving the declared
+ * opening balance to stand on its own.
+ *
+ * Once the ledger has watched money arrive, a later deficit is no longer
+ * evidence about the opening balance, and seeding it is actively wrong: the
+ * seed applies to every day in the account's history, so one afternoon's
+ * overdraft in year five silently lifts the first year too. A real ledger hit
+ * this -- $200 of transfer fees charged the day before the sale that covered
+ * them put a Roth IRA $186.33 down for a single day, and all five years of it
+ * then read $186.33 richer than the custodian's own statements. Those deficits
+ * are reported through `overdraft` and left in the balance, where they belong:
+ * a margin account is *supposed* to be able to go negative.
  */
 export function replayableCash(
   ordered: readonly Transaction[],
@@ -73,32 +93,52 @@ export function replayableCash(
 ): CashFunding {
   let cash = opening;
   let arrived = 0;
-  let worstDeficit = 0;
+  /** Whether the ledger has recorded any money arriving yet. */
+  let funded = false;
+  /** Worst deficit while it had not -- the only kind that implies an opening balance. */
+  let unfunded = 0;
+  let overdraft = 0;
+  let overdraftOn: ISODate | null = null;
 
   for (let i = 0; i < ordered.length; i += 1) {
     const tx = ordered[i];
     cash = roundToCents(cash + signedCashFlow(tx));
-    if (tx.type === "cash_deposit") arrived += Math.abs(signedCashFlow(tx));
-    if (tx.type === "transfer_in") arrived += Math.abs(tx.quantity * tx.price);
+    if (tx.type === "cash_deposit") {
+      arrived += Math.abs(signedCashFlow(tx));
+      funded = true;
+    }
+    if (tx.type === "transfer_in") {
+      arrived += Math.abs(tx.quantity * tx.price);
+      funded = true;
+    }
 
     const endOfDay = i + 1 === ordered.length || ordered[i + 1].date !== tx.date;
-    if (endOfDay && cash < -worstDeficit) worstDeficit = -cash;
+    if (!endOfDay || cash >= 0) continue;
+    if (funded) {
+      if (-cash > overdraft) {
+        overdraft = -cash;
+        overdraftOn = tx.date;
+      }
+    } else if (-cash > unfunded) {
+      unfunded = -cash;
+    }
   }
 
-  if (worstDeficit === 0) return { solvent: true, floor: 0 };
+  if (unfunded === 0) return { solvent: true, floor: 0, overdraft, overdraftOn };
 
-  // A deficit on its own is not disqualifying, and is usually just dating:
-  // settlement routinely stamps a purchase a day ahead of the transfer that
-  // cleared for it, and a same-day rebalance lists its buys before its sells.
-  // Seeding the balance absorbs all of that.
-  //
-  // What the seed cannot absorb is a ledger with no funding in it at all -- a
-  // file of trade confirmations and no cash activity, where the implied opening
-  // balance is not a settlement artifact but the entire cost of the portfolio.
-  // The line is drawn where the deduction stops being modest: an account cannot
-  // plausibly have opened holding more than every dollar the ledger can vouch
-  // for having arrived, and one that records nothing arriving vouches for none.
-  return { solvent: worstDeficit <= arrived + opening, floor: worstDeficit };
+  // What is left is a ledger that spent before it recorded anything arriving --
+  // a file of trade confirmations and no cash activity, where the implied
+  // opening balance is not a settlement artifact but the entire cost of the
+  // portfolio. The line is drawn where the deduction stops being modest: an
+  // account cannot plausibly have opened holding more than every dollar the
+  // ledger can vouch for having arrived, and one that records nothing arriving
+  // vouches for none.
+  return {
+    solvent: unfunded <= arrived + opening,
+    floor: unfunded,
+    overdraft,
+    overdraftOn,
+  };
 }
 
 /** The ledger's own ordering for a cash replay: by date, input order within a day. */
@@ -107,7 +147,7 @@ function byDate(transactions: readonly Transaction[]): Transaction[] {
 }
 
 export interface AccountCash {
-  /** Cash on hand as of the date asked for. */
+  /** Cash on hand as of the date asked for. Negative is allowed and is real. */
   balance: number;
   /** What the account declared it opened with. */
   opening: number;
@@ -115,6 +155,9 @@ export interface AccountCash {
   implied: number;
   /** False when the ledger has no cash side at all and the balance is a guess. */
   solvent: boolean;
+  /** Deepest the balance went below zero after funding, and when. */
+  overdraft: number;
+  overdraftOn: ISODate | null;
 }
 
 /**
@@ -146,17 +189,19 @@ export function accountCashBalances(
     // The floor is read off the whole ledger, not the slice up to `asOf`: it is a
     // property of the account's history, and re-deriving it per as-of date would
     // let the seed shift under a window that merely ended earlier.
-    const { solvent, floor } = replayableCash(ordered, opening);
+    const { solvent, floor, overdraft, overdraftOn } = replayableCash(ordered, opening);
 
     const moved = ordered
       .filter((tx) => asOf === undefined || tx.date <= asOf)
       .reduce((sum, tx) => sum + signedCashFlow(tx), 0);
 
     balances.set(account.id, {
-      balance: opening + floor + moved,
+      balance: roundToCents(opening + floor + moved),
       opening,
       implied: floor,
       solvent,
+      overdraft,
+      overdraftOn,
     });
   }
 

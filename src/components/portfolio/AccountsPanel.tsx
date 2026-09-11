@@ -38,7 +38,14 @@ function accountValue(portfolio: Portfolio, prices: PriceMap, accountIds: string
   return { value: summary.totalValue, costBasis: summary.costBasis };
 }
 
-const EMPTY_CASH: AccountCash = { balance: 0, opening: 0, implied: 0, solvent: true };
+const EMPTY_CASH: AccountCash = {
+  balance: 0,
+  opening: 0,
+  implied: 0,
+  solvent: true,
+  overdraft: 0,
+  overdraftOn: null,
+};
 
 /** Cash across a whole family, so a parent row reports what its sleeves hold. */
 function familyCash(portfolio: Portfolio, accountIds: string[]): AccountCash {
@@ -50,6 +57,11 @@ function familyCash(portfolio: Portfolio, accountIds: string[]): AccountCash {
       opening: sum.opening + cash.opening,
       implied: sum.implied + cash.implied,
       solvent: sum.solvent && cash.solvent,
+      // The family's worst day, not the sum of each sleeve's worst: they are
+      // different days, and adding them would report an overdraft that never
+      // happened at any single point in time.
+      overdraft: Math.max(sum.overdraft, cash.overdraft),
+      overdraftOn: cash.overdraft > sum.overdraft ? cash.overdraftOn : sum.overdraftOn,
     };
   }, EMPTY_CASH);
 }
@@ -67,6 +79,14 @@ function cashTitle(cash: AccountCash): string {
     return `Replayed from the ledger, seeded with ${money(
       cash.opening + cash.implied,
     )} — ${money(cash.implied)} of that is implied by spending recorded before the first deposit. Set the opening cash to what the first statement shows and this goes away.`;
+  }
+  if (cash.balance < 0) {
+    return "Replayed from every cash movement in the ledger. Negative is shown rather than smoothed away — it is a margin balance, or a charge the ledger has not yet recorded the funding for.";
+  }
+  if (cash.overdraft > 0 && cash.overdraftOn !== null) {
+    return `Replayed from every cash movement in the ledger. It went ${money(
+      cash.overdraft,
+    )} below zero on ${cash.overdraftOn}; that day stands on its own and no longer shifts the rest of the history.`;
   }
   return "Replayed from every cash movement in the ledger.";
 }
