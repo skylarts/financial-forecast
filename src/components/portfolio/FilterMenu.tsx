@@ -9,6 +9,36 @@ export interface FilterSection<K extends string> {
   label: string;
   options: readonly FacetOption[];
   state: FacetState;
+  /**
+   * How the section is asked. A facet is a list of tickable options; a date
+   * range is two date boxes, carried in the same `FacetState` as
+   * "from:<date>" and "to:<date>" so it saves and clears like everything
+   * else (see `dateRangeOf` in `filters.ts`).
+   */
+  kind?: "facet" | "dateRange";
+}
+
+/** Text for a range chip: "from 1/1/2026", "to 6/30/2026". */
+function rangeLabel(value: string): string {
+  const [key, date] = value.split(":");
+  const [y, m, d] = (date ?? "").split("-");
+  const pretty = y && m && d ? `${m}/${d}/${y}` : date;
+  return key === "from" ? `from ${pretty}` : `to ${pretty}`;
+}
+
+/** One bound of a range section, read out of its state. */
+function rangeBound(state: FacetState, key: "from" | "to"): string {
+  for (const value of state.selected) {
+    if (value.startsWith(`${key}:`)) return value.slice(key.length + 1);
+  }
+  return "";
+}
+
+/** The range's state with one bound replaced, or removed when blank. */
+function withRangeBound(state: FacetState, key: "from" | "to", date: string): FacetState {
+  const next = new Set([...state.selected].filter((v) => !v.startsWith(`${key}:`)));
+  if (date) next.add(`${key}:${date}`);
+  return { mode: "include", selected: next };
 }
 
 /**
@@ -52,7 +82,7 @@ export function FilterMenu<K extends string>({
   }, [open]);
 
   const chosen = sections.reduce((n, s) => n + s.state.selected.size, 0);
-  const anyOptions = sections.some((s) => s.options.length > 1);
+  const anyOptions = sections.some((s) => s.kind === "dateRange" || s.options.length > 1);
 
   const toggle = (section: FilterSection<K>, value: string) => {
     const next = new Set(section.state.selected);
@@ -118,7 +148,31 @@ export function FilterMenu<K extends string>({
           </div>
 
           <div className="max-h-80 overflow-y-auto">
-            {sections.map((section) => (
+            {sections.map((section) =>
+              section.kind === "dateRange" ? (
+                <section key={section.key} className="border-b border-border-soft last:border-b-0">
+                  <div className="px-3 pb-1 pt-2 text-[11px] font-semibold text-foreground">
+                    {section.label}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-2">
+                    {(["from", "to"] as const).map((bound) => (
+                      <label key={bound} className="flex items-center gap-1 text-[11.5px] text-dim-2">
+                        <span className="w-8 capitalize">{bound}</span>
+                        <input
+                          type="date"
+                          value={rangeBound(section.state, bound)}
+                          min={bound === "to" ? rangeBound(section.state, "from") || undefined : undefined}
+                          max={bound === "from" ? rangeBound(section.state, "to") || undefined : undefined}
+                          onChange={(e) =>
+                            onChange(section.key, withRangeBound(section.state, bound, e.target.value))
+                          }
+                          className="rounded-md border border-border bg-panel-2 px-1.5 py-1 text-[11.5px] text-foreground outline-none focus:border-accent"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </section>
+              ) : (
               <section key={section.key} className="border-b border-border-soft last:border-b-0">
                 <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-2">
                   <span className="flex-1 truncate text-[11px] font-semibold text-foreground">
@@ -203,7 +257,8 @@ export function FilterMenu<K extends string>({
                   </div>
                 )}
               </section>
-            ))}
+              ),
+            )}
           </div>
         </div>
       )}
@@ -235,7 +290,10 @@ export function FilterChips<K extends string>({
         !facetActive(section.state)
           ? []
           : [...section.state.selected].map((value) => {
-              const label = section.options.find((o) => o.value === value)?.label ?? value;
+              const label =
+                section.kind === "dateRange"
+                  ? rangeLabel(value)
+                  : section.options.find((o) => o.value === value)?.label ?? value;
               return (
                 <span
                   key={`${section.key}:${value}`}

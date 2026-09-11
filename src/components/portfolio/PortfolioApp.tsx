@@ -51,6 +51,7 @@ import {
   accountFacetOptions,
   accountIdsForFacet,
   assetClassFacetOptions,
+  transactionTypeFacetOptions,
   emptyHoldingFacets,
   holdingFacetsActive,
   instrumentTypeFacetOptions,
@@ -61,8 +62,12 @@ import {
 import { useMarketIndexStore } from "@/store/useMarketIndexes";
 import { accountGroups as accountGroupsOf } from "@/lib/portfolio/accountTree";
 
-/** Every section in the filter panel: the three holding facets, plus accounts. */
-type FilterKey = "account" | (keyof HoldingFacets & string);
+/**
+ * Every section the filter panel can show: accounts, the three holding
+ * facets, and -- on the Transactions tab -- the transaction type and a date
+ * range, which used to be that tab's own toolbar.
+ */
+type FilterKey = "account" | "txType" | "dates" | (keyof HoldingFacets & string);
 
 /**
  * Both panels pull in Recharts, and only one tab is ever showing at a time --
@@ -164,6 +169,10 @@ export function PortfolioApp() {
   const [facets, setFacets] = useState<HoldingFacets>(emptyHoldingFacets());
   /** Which accounts are in play. Empty (the default) means all of them. */
   const [accountFacet, setAccountFacet] = useState<FacetState>(EMPTY_FACET);
+  /** The Transactions tab's own two: which types, and a date range. Kept
+   *  here so they save and clear with the rest, and survive a tab change. */
+  const [txTypeFacet, setTxTypeFacet] = useState<FacetState>(EMPTY_FACET);
+  const [dateFacet, setDateFacet] = useState<FacetState>(EMPTY_FACET);
   const [sideFilter, setSideFilter] = useState<SideFilter>("all");
   /**
    * Grouped by account out of the box. A holding's account is the first thing
@@ -413,23 +422,55 @@ export function PortfolioApp() {
     setSearch("");
     setFacets(emptyHoldingFacets());
     setAccountFacet(EMPTY_FACET);
+    setTxTypeFacet(EMPTY_FACET);
+    setDateFacet(EMPTY_FACET);
   };
 
-  // One shape for all four, so the panel and the chips can walk them without
-  // knowing which facet is which. The order is widest-first: Accounts decides
-  // which accounts are valued at all, then Type sorts the instruments, then
-  // Class and Theme cut across what is left.
+  const txTypeOptions = useMemo(
+    () => transactionTypeFacetOptions(scopedTransactions),
+    [scopedTransactions],
+  );
+
+  // One shape for every section, so the panel and the chips can walk them
+  // without knowing which facet is which. The order is widest-first: Accounts
+  // decides which accounts are valued at all, then Type sorts the
+  // instruments, then Class and Theme cut across what is left.
+  //
+  // The Transactions tab shows its own two sections in place of the holding
+  // facets, which describe positions and have nothing to say about a ledger
+  // row. The states behind all of them live on regardless of tab, so a
+  // saved combination restores every section whichever tab it is applied on.
   const filterSections = useMemo<FilterSection<FilterKey>[]>(
-    () => [
-      { key: "account", label: "Accounts", options: accountOptions, state: accountFacet },
-      { key: "instrumentType", label: "Type", options: instrumentTypeOptions, state: facets.instrumentType },
-      { key: "assetClass", label: "Class", options: assetClassOptions, state: facets.assetClass },
-      { key: "theme", label: "Theme", options: themeOptions, state: facets.theme },
+    () =>
+      tab === "transactions"
+        ? [
+            { key: "account", label: "Accounts", options: accountOptions, state: accountFacet },
+            { key: "txType", label: "Transaction type", options: txTypeOptions, state: txTypeFacet },
+            { key: "dates", label: "Dates", options: [], state: dateFacet, kind: "dateRange" },
+          ]
+        : [
+            { key: "account", label: "Accounts", options: accountOptions, state: accountFacet },
+            { key: "instrumentType", label: "Type", options: instrumentTypeOptions, state: facets.instrumentType },
+            { key: "assetClass", label: "Class", options: assetClassOptions, state: facets.assetClass },
+            { key: "theme", label: "Theme", options: themeOptions, state: facets.theme },
+          ],
+    [
+      tab,
+      accountOptions,
+      accountFacet,
+      assetClassOptions,
+      themeOptions,
+      instrumentTypeOptions,
+      facets,
+      txTypeOptions,
+      txTypeFacet,
+      dateFacet,
     ],
-    [accountOptions, accountFacet, assetClassOptions, themeOptions, instrumentTypeOptions, facets],
   );
   const setFacet = (key: FilterKey, next: FacetState) => {
     if (key === "account") setAccountFacet(next);
+    else if (key === "txType") setTxTypeFacet(next);
+    else if (key === "dates") setDateFacet(next);
     else setFacets((f) => ({ ...f, [key]: next }));
   };
 
@@ -442,6 +483,8 @@ export function PortfolioApp() {
   const applySavedFilters = (savedSearch: string, savedFacets: Record<string, FacetState>) => {
     setSearch(savedSearch);
     setAccountFacet(savedFacets.account ?? EMPTY_FACET);
+    setTxTypeFacet(savedFacets.txType ?? EMPTY_FACET);
+    setDateFacet(savedFacets.dates ?? EMPTY_FACET);
     setFacets({
       assetClass: savedFacets.assetClass ?? EMPTY_FACET,
       theme: savedFacets.theme ?? EMPTY_FACET,
@@ -771,13 +814,15 @@ export function PortfolioApp() {
           <SavedFilters sections={filterSections} search={search} onApply={applySavedFilters} />
           <FilterChips sections={filterSections} onChange={setFacet} />
         </div>
-        <FilterStatus
-          shown={scopedHoldings.length}
-          total={analysis.holdings.length}
-          noun="holdings"
-          active={sharedFiltersActive}
-          onClear={clearAllFilters}
-        />
+        {tab !== "transactions" && (
+          <FilterStatus
+            shown={scopedHoldings.length}
+            total={analysis.holdings.length}
+            noun="holdings"
+            active={sharedFiltersActive}
+            onClear={clearAllFilters}
+          />
+        )}
       </div>
 
       {/* Banners, in the content gutter as inset cards rather than as
@@ -987,6 +1032,7 @@ export function PortfolioApp() {
           <RealizedPanel
             closedLots={analysis.closedLots}
             summary={summary}
+            transactions={scopedTransactions}
             accountNames={accountNames}
             accountGroups={accountGroups}
             search={search}
@@ -1000,6 +1046,12 @@ export function PortfolioApp() {
             scopeAccountIds={scopeAccountIds}
             search={search}
             onSearchChange={setSearch}
+            typeFacet={txTypeFacet}
+            dateFacet={dateFacet}
+            onClearFilters={() => {
+              setTxTypeFacet(EMPTY_FACET);
+              setDateFacet(EMPTY_FACET);
+            }}
           />
         )}
 

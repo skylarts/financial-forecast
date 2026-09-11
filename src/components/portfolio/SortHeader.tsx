@@ -58,6 +58,9 @@ export function SortHeader<K extends string>({
     <th
       className={`${frozen ? `${HEAD_BASE} ${FROZEN_STICKY}` : HEAD} ${alignClass}`}
       title={title}
+      // The sort is already visible as an arrow; this is the same fact for a
+      // screen reader, which otherwise hears nine identical "button"s.
+      aria-sort={sort.key === column ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}
     >
       <span
         // The frozen column's header stays on one line, and the column widens

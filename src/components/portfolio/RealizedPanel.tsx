@@ -1,8 +1,10 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import type { Transaction } from "@/domain/portfolio";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { PortfolioSummary } from "@/engine/portfolio/metrics";
+import { flagWashSales, WASH_SALE_WINDOW_DAYS } from "@/engine/portfolio/washSales";
 import { lotTermLabel, money, percent, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import {
   buildGroups,
@@ -70,6 +72,7 @@ function Stat({ label, value, tone, hint }: { label: string; value: string; tone
 export function RealizedPanel({
   closedLots,
   summary,
+  transactions,
   accountNames,
   accountGroups,
   search,
@@ -77,6 +80,9 @@ export function RealizedPanel({
 }: {
   closedLots: ClosedLot[];
   summary: PortfolioSummary;
+  /** Every transaction in scope, so a loss can be checked for a repurchase
+   *  in any account -- the wash-sale rule reaches across all of them. */
+  transactions: readonly Transaction[];
   accountNames: Map<string, string>;
   /** Which parent each account groups under, so a pre-tax/Roth sleeve nests
    *  inside its 401(k) instead of standing beside it. */
@@ -128,6 +134,9 @@ export function RealizedPanel({
   }, [closedLots, search, outcome]);
 
   const sorted = useMemo(() => apply(filtered), [apply, filtered]);
+
+  const washSales = useMemo(() => flagWashSales(closedLots, transactions), [closedLots, transactions]);
+  const washCount = sorted.filter((lot) => washSales.has(lot)).length;
 
   // Realized lots grow without bound -- every sale a ledger has ever recorded
   // stays here forever -- so this list is capped the same way the transaction
@@ -200,6 +209,14 @@ export function RealizedPanel({
               active={outcome !== "all"}
               onClear={() => setOutcome("all")}
             />
+            {washCount > 0 && (
+              <span
+                className="text-[11.5px] text-dim-2"
+                title="A loss with the same symbol bought within 30 days either side. Flagged, not adjusted — the broker's 1099-B decides."
+              >
+                {washCount} possible wash sale{washCount === 1 ? "" : "s"}
+              </span>
+            )}
           </div>
 
           {sorted.length === 0 ? (
@@ -310,7 +327,17 @@ export function RealizedPanel({
                               <td className={`${CELL} text-right text-dim`}>{shares(lot.quantity)}</td>
                               <td className={`${CELL} text-right text-dim`}>{money(lot.costBasis)}</td>
                               <td className={`${CELL} text-right text-dim`}>{money(lot.proceeds)}</td>
-                              <td className={`${CELL} text-right ${toneFor(lot.gain)}`}>{money(lot.gain)}</td>
+                              <td className={`${CELL} text-right ${toneFor(lot.gain)}`}>
+                                {washSales.has(lot) && (
+                                  <span
+                                    className="mr-1.5 rounded-sm border border-accent px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-accent"
+                                    title={`Wash sale? The same symbol was bought within ${WASH_SALE_WINDOW_DAYS} days of this sale, so the loss may be disallowed and added to the replacement shares' basis. Check the broker's 1099-B.`}
+                                  >
+                                    Wash?
+                                  </span>
+                                )}
+                                {money(lot.gain)}
+                              </td>
                               <td className={`${CELL} text-right text-dim`}>{lotTermLabel(lot)}</td>
                             </tr>
                           ))}

@@ -9,10 +9,11 @@ import {
   symbolsForWindow,
   windowReturn,
 } from "@/engine/portfolio/performance";
-import { money, percent, signedMoney, toneFor } from "@/lib/portfolio/format";
+import { money, percent, shortDate, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { useMarketIndexes } from "@/store/useMarketIndexes";
 import { scopedTo } from "@/lib/portfolio/scope";
+import { isStaleQuote } from "@/lib/portfolio/quoteAge";
 import { Segmented } from "@/components/ui/controls";
 
 /** How many day movers the strip names before it runs out of room. */
@@ -256,21 +257,48 @@ export function SummaryCards({
 
     const rankKey = (row: (typeof rows)[number]) => (moverMetric === "percent" ? row.changePct : row.change);
 
-    return rows
-      .filter((row) => {
-        const k = rankKey(row);
-        return k !== null && (moverSort === "best" ? k > 0 : k < 0);
-      })
-      .sort((a, b) => {
-        // Ranked by magnitude either way: "best" wants the largest gain
-        // first (descending), "worst" wants the largest loss first, which
-        // since every row here is negative means the most negative first
-        // (ascending).
-        const diff = (rankKey(b) ?? 0) - (rankKey(a) ?? 0);
-        return moverSort === "best" ? diff : -diff;
-      })
-      .slice(0, MAX_MOVERS);
+    // Ranked by magnitude either way: "best" wants the largest gain first
+    // (descending), "worst" wants the largest loss first, which since every
+    // row on that side is negative means the most negative first (ascending).
+    const side = (best: boolean) =>
+      rows
+        .filter((row) => {
+          const k = rankKey(row);
+          return k !== null && (best ? k > 0 : k < 0);
+        })
+        .sort((a, b) => {
+          const diff = (rankKey(b) ?? 0) - (rankKey(a) ?? 0);
+          return best ? diff : -diff;
+        });
+
+    const wanted = side(moverSort === "best");
+    // A quiet day has one or two names on the chosen side and a card sized
+    // for four, so the other side fills what is left rather than leaving a
+    // hole -- marked as such, so the list still reads as what was asked for.
+    const filler = wanted.length < MAX_MOVERS ? side(moverSort !== "best").slice(0, MAX_MOVERS - wanted.length) : [];
+    return {
+      leaders: wanted.slice(0, MAX_MOVERS),
+      filler,
+    };
   }, [holdings, moverSort, moverMetric]);
+
+  /**
+   * The day every priced position is quoted as of, and how many of them are
+   * older than the last close. The total on the card is a sum of prices from
+   * these days; saying which day is what stops a stale feed from reading as
+   * a current valuation.
+   */
+  const pricedAsOf = useMemo(() => {
+    const today = todayIso();
+    let latest = "";
+    let stale = 0;
+    for (const holding of holdings) {
+      if (holding.kind !== "position" || !holding.priceDate) continue;
+      if (holding.priceDate > latest) latest = holding.priceDate;
+      if (isStaleQuote(holding.priceDate, today)) stale += 1;
+    }
+    return { latest, stale };
+  }, [holdings]);
 
   // A window that couldn't be measured and one still being fetched must not
   // read the same -- a dash says "there is no answer", which is a lie while the
@@ -304,6 +332,23 @@ export function SummaryCards({
             muted
             hint="Uninvested cash, replayed from the ledger's own money movements."
           />
+          {pricedAsOf.latest && (
+            <Row
+              label="Priced as of"
+              value={
+                pricedAsOf.stale > 0
+                  ? `${shortDate(pricedAsOf.latest)} · ${pricedAsOf.stale} older`
+                  : shortDate(pricedAsOf.latest)
+              }
+              muted
+              tone={pricedAsOf.stale > 0 ? "text-accent" : undefined}
+              hint={
+                pricedAsOf.stale > 0
+                  ? `${pricedAsOf.stale} position${pricedAsOf.stale === 1 ? "" : "s"} carr${pricedAsOf.stale === 1 ? "ies" : "y"} a price older than the last close. Those rows show the day their price is from.`
+                  : "Every priced position is quoted from this trading day."
+              }
+            />
+          )}
         </div>
         <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-border pt-2.5">
           {indexes.map((index) => (
@@ -341,31 +386,30 @@ export function SummaryCards({
             ariaLabel="Rank by dollar or percent"
           />
         </div>
-        {movers.length === 0 ? (
+        {movers.leaders.length === 0 && movers.filler.length === 0 ? (
           <p className="text-[12.5px] text-dim">
-            {loadingQuotes
-              ? "Waiting on quotes…"
-              : moverSort === "best"
-                ? "Nothing gained today."
-                : "Nothing lost today."}
+            {loadingQuotes ? "Waiting on quotes…" : "Nothing moved today."}
           </p>
         ) : (
           <div className="space-y-1">
-            {movers.map((mover) => {
-              const primary = moverMetric === "percent" ? percent(mover.changePct, 2) : signedMoney(mover.change);
-              const secondary = moverMetric === "percent" ? signedMoney(mover.change) : percent(mover.changePct, 2);
-              return (
-                <div key={mover.symbol} className="flex items-baseline justify-between gap-3">
-                  <span className="truncate text-[12.5px] text-dim" title={mover.name}>
-                    {formatOptionSymbol(mover.symbol)}
-                  </span>
-                  <span className={`shrink-0 text-[12.5px] tabular-nums ${toneFor(mover.change)}`}>
-                    {primary}
-                    <span className="ml-2 text-dim-2">{secondary}</span>
-                  </span>
+            {movers.leaders.length === 0 && (
+              <p className="text-[12px] text-dim">
+                {moverSort === "best" ? "Nothing gained today." : "Nothing lost today."}
+              </p>
+            )}
+            {movers.leaders.map((mover) => (
+              <MoverRow key={mover.symbol} mover={mover} metric={moverMetric} />
+            ))}
+            {movers.filler.length > 0 && (
+              <>
+                <div className="pt-1 text-[10px] uppercase tracking-wide text-dim-2">
+                  {moverSort === "best" ? "Worst" : "Best"}
                 </div>
-              );
-            })}
+                {movers.filler.map((mover) => (
+                  <MoverRow key={mover.symbol} mover={mover} metric={moverMetric} />
+                ))}
+              </>
+            )}
           </div>
         )}
       </Card>
@@ -437,6 +481,28 @@ export function SummaryCards({
           />
         </div>
       </Card>
+    </div>
+  );
+}
+
+function MoverRow({
+  mover,
+  metric,
+}: {
+  mover: { symbol: string; name: string; change: number; changePct: number | null };
+  metric: MoverMetric;
+}) {
+  const primary = metric === "percent" ? percent(mover.changePct, 2) : signedMoney(mover.change);
+  const secondary = metric === "percent" ? signedMoney(mover.change) : percent(mover.changePct, 2);
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="truncate text-[12.5px] text-dim" title={mover.name}>
+        {formatOptionSymbol(mover.symbol)}
+      </span>
+      <span className={`shrink-0 text-[12.5px] tabular-nums ${toneFor(mover.change)}`}>
+        {primary}
+        <span className="ml-2 text-dim-2">{secondary}</span>
+      </span>
     </div>
   );
 }

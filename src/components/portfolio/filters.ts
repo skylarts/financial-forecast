@@ -1,4 +1,15 @@
-import { ASSET_CLASS_LABELS, INSTRUMENT_TYPE_LABELS, type AssetClass, type Exposure, type InstrumentType, type PortfolioAccount } from "@/domain/portfolio";
+import {
+  ASSET_CLASS_LABELS,
+  INSTRUMENT_TYPE_LABELS,
+  TRANSACTION_TYPE_GROUPS,
+  TRANSACTION_TYPE_LABELS,
+  type AssetClass,
+  type Exposure,
+  type InstrumentType,
+  type PortfolioAccount,
+  type Transaction,
+  type TransactionType,
+} from "@/domain/portfolio";
 import type { Person } from "@/domain/household";
 import { EMPTY_FACET, facetActive, facetMatches, type FacetOption, type FacetState } from "@/components/ui/facets";
 import { accountFamilyIds, accountTreeRows } from "@/lib/portfolio/accountTree";
@@ -174,4 +185,71 @@ export function accountIdsForFacet(
 
   if (facet.mode === "include") return [...named];
   return accounts.filter((a) => !named.has(a.id)).map((a) => a.id);
+}
+
+/* ---------------------------------------------------------------------------
+   Transactions.
+
+   The Transactions tab used to carry a type dropdown and two date boxes in a
+   toolbar of its own, directly under the shared Filters button -- two filter
+   idioms on one screen, and the only filters on the page a saved combination
+   could not remember. Both are sections of the shared panel now: the type as
+   an ordinary facet, the dates as a range section (see `FilterSection.kind`).
+   --------------------------------------------------------------------------- */
+
+/**
+ * One option per transaction type the ledger actually holds, with counts,
+ * grouped the way the type picker groups them.
+ */
+export function transactionTypeFacetOptions(transactions: readonly Transaction[]): FacetOption[] {
+  const counts = new Map<TransactionType, number>();
+  for (const tx of transactions) counts.set(tx.type, (counts.get(tx.type) ?? 0) + 1);
+  const options: FacetOption[] = [];
+  for (const group of TRANSACTION_TYPE_GROUPS) {
+    for (const type of group.types) {
+      const count = counts.get(type);
+      if (count) options.push({ value: type, label: TRANSACTION_TYPE_LABELS[type], count, group: group.label });
+    }
+  }
+  return options;
+}
+
+/**
+ * A date range carried in a facet, so it saves, restores and clears with
+ * every other section. `selected` holds at most two values, "from:<date>" and
+ * "to:<date>"; either may be absent.
+ */
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
+export function dateRangeOf(facet: FacetState): DateRange {
+  let from = "";
+  let to = "";
+  for (const value of facet.selected) {
+    if (value.startsWith("from:")) from = value.slice(5);
+    else if (value.startsWith("to:")) to = value.slice(3);
+  }
+  return { from, to };
+}
+
+export function dateRangeFacet(range: DateRange): FacetState {
+  const selected = new Set<string>();
+  if (range.from) selected.add(`from:${range.from}`);
+  if (range.to) selected.add(`to:${range.to}`);
+  return { mode: "include", selected };
+}
+
+export function matchesDateRange(date: string, facet: FacetState): boolean {
+  const { from, to } = dateRangeOf(facet);
+  return (!from || date >= from) && (!to || date <= to);
+}
+
+/** The chip and description text for one bound of a range. */
+export function dateRangeValueLabel(value: string): string {
+  const [key, date] = value.split(":");
+  const [y, m, d] = date.split("-");
+  const pretty = y && m && d ? `${m}/${d}/${y}` : date;
+  return key === "from" ? `from ${pretty}` : `to ${pretty}`;
 }

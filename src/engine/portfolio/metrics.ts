@@ -114,6 +114,14 @@ export interface Holding {
   weight: number;
   realizedGain: number;
   income: number;
+  /**
+   * Dividends and interest this position paid over the trailing twelve
+   * months, so a yield can be read against what it is worth today rather
+   * than against every payout since it was opened.
+   */
+  incomeTtm: number;
+  /** `incomeTtm` over today's market value; null with nothing to divide by. */
+  dividendYield: number | null;
   totalGain: number;
   /** Annualized money-weighted return, null when it can't be solved. */
   irr: number | null;
@@ -503,6 +511,11 @@ function todayIso(): ISODate {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** The ISO date `days` before `date`. */
+function isoDaysBefore(date: ISODate, days: number): ISODate {
+  return new Date(Date.parse(`${date}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+}
+
 export interface PortfolioAnalysis {
   holdings: Holding[];
   summary: PortfolioSummary;
@@ -558,6 +571,8 @@ export function analyzePortfolio(
    */
   const txsByPosition = new Map<string, Transaction[]>();
   const incomeByPosition = new Map<string, number>();
+  const incomeTtmByPosition = new Map<string, number>();
+  const ttmStart = isoDaysBefore(asOf, 365);
   let income = 0;
   let incomeYtd = 0;
   for (const tx of transactions) {
@@ -575,7 +590,13 @@ export function analyzePortfolio(
     const bucket = txsByPosition.get(key);
     if (bucket) bucket.push(tx);
     else txsByPosition.set(key, [tx]);
-    if (isIncome) incomeByPosition.set(key, (incomeByPosition.get(key) ?? 0) + signedCashFlow(tx));
+    if (isIncome) {
+      const flow = signedCashFlow(tx);
+      incomeByPosition.set(key, (incomeByPosition.get(key) ?? 0) + flow);
+      if (tx.date > ttmStart && tx.date <= asOf) {
+        incomeTtmByPosition.set(key, (incomeTtmByPosition.get(key) ?? 0) + flow);
+      }
+    }
   }
 
   /** Taxable realized gain per account/symbol/side, indexed the same way. */
@@ -641,6 +662,7 @@ export function analyzePortfolio(
     // Dividends follow the shares, so they land on the long side. A short pays
     // them out instead, which shows up as its own transaction.
     const positionIncome = side === "long" ? incomeByPosition.get(positionKeyBase) ?? 0 : 0;
+    const incomeTtm = side === "long" ? incomeTtmByPosition.get(positionKeyBase) ?? 0 : 0;
 
     holdings.push({
       key,
@@ -665,6 +687,11 @@ export function analyzePortfolio(
       weight: 0,
       realizedGain,
       income: positionIncome,
+      incomeTtm,
+      // Against market value, not basis: yield is what the money would earn
+      // if it were put there today. Null rather than zero when the position
+      // has no value or no quote, so a blank reads as unknown, not as 0%.
+      dividendYield: incomeTtm > 0 && marketValue > 0 ? incomeTtm / marketValue : null,
       totalGain: unrealizedGain + realizedGain + positionIncome,
       irr: annualizedReturn(side, positionTxs, marketValue, asOf),
       lots: [...lots].sort((a, b) => (a.acquiredDate < b.acquiredDate ? -1 : 1)),
@@ -720,6 +747,8 @@ export function analyzePortfolio(
       weight: 0,
       realizedGain: 0,
       income: 0,
+      incomeTtm: 0,
+      dividendYield: null,
       totalGain: 0,
       irr: null,
       lots: [],
