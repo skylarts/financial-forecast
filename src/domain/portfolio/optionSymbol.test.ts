@@ -115,6 +115,17 @@ describe("canonicalizeSymbol", () => {
     expect(canonicalizeSymbol(" vti ")).toBe("VTI");
     expect(canonicalizeSymbol("brk-b")).toBe("BRK-B");
   });
+
+  it("spells a share class the way the feed does", () => {
+    // A statement writes BRK.B and Schwab writes BRK/B; the feed only answers
+    // to BRK-B, and a ledger left in the dotted form was never priced.
+    expect(canonicalizeSymbol("BRK.B")).toBe("BRK-B");
+    expect(canonicalizeSymbol("brk/b")).toBe("BRK-B");
+    expect(canonicalizeSymbol("BF.B")).toBe("BF-B");
+    // A dot that is not a class suffix is left alone.
+    expect(canonicalizeSymbol("VOD.L")).toBe("VOD-L");
+    expect(canonicalizeSymbol("BRK.B.X")).toBe("BRK.B.X");
+  });
 });
 
 describe("underlyingSymbol", () => {

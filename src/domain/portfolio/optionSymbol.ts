@@ -198,7 +198,15 @@ export function toOccSymbol(contract: OptionContract): string {
 export function canonicalizeSymbol(raw: string): string {
   const text = raw.trim().toUpperCase().replace(/\s+/g, " ");
   const contract = parseOptionSymbol(text);
-  return contract ? toOccSymbol(contract) : text;
+  if (contract) return toOccSymbol(contract);
+  // Share classes are spelled three ways across the sources this app reads:
+  // Berkshire's B shares are BRK.B on an Apex or M1 statement, BRK/B at
+  // Schwab, BRK-B on the public feed. The feed's spelling is the canonical one
+  // because the feed is what a symbol has to reach -- a ledger that kept the
+  // dotted form was never priced, and carried the last figure paid for three
+  // years. Only a single trailing class letter is rewritten; a dot or slash
+  // anywhere else is part of the ticker.
+  return text.replace(/^([A-Z]{1,5})[./]([A-Z])$/, "$1-$2");
 }
 
 /** The ticker a contract is written on, or the symbol itself when it isn't one. */
