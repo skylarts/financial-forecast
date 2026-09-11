@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  Bar,
   CartesianGrid,
+  ComposedChart,
   Line,
-  LineChart,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -21,7 +23,16 @@ import {
   type PricePoint,
 } from "@/engine/portfolio/performance";
 import { classifySymbol } from "@/engine/portfolio/metrics";
-import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
+import {
+  bucketFlows,
+  flowGrainFor,
+  maxDrawdown,
+  netFlows,
+  volatility,
+  MIN_VOLATILITY_POINTS,
+  type FlowGrain,
+} from "@/engine/portfolio/riskStats";
+import { money, percent, shortDate, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
 import {
@@ -127,25 +138,32 @@ function spanDays(points: readonly { date: string }[]): number {
 interface ChartRow {
   date: string;
   portfolio: number;
-  [benchmark: string]: number | string;
+  /** Net money in or out landing on this row's bucket, when flows are drawn. */
+  flow?: number;
+  [benchmark: string]: number | string | undefined;
 }
+
+const FLOW_NOUN: Record<FlowGrain, string> = { day: "today", week: "this week", month: "this month" };
 
 function GrowthTooltip({
   active,
   payload,
   label,
   base,
+  grain,
 }: {
   active?: boolean;
   payload?: { dataKey: string; value: number; color: string }[];
   label?: string;
   base: number;
+  grain: FlowGrain;
 }) {
   if (!active || !payload?.length) return null;
+  const flow = payload.find((entry) => entry.dataKey === "flow");
   return (
     <div className="rounded-md border border-border bg-panel px-3 py-2 text-[12px] shadow-lg">
       <div className="mb-1 font-semibold text-foreground">{shortDate(String(label))}</div>
-      {payload.map((entry) => (
+      {payload.filter((entry) => entry.dataKey !== "flow").map((entry) => (
         <div key={entry.dataKey} className="flex items-baseline justify-between gap-4">
           <span className="flex items-center gap-1.5">
             <span
@@ -165,6 +183,12 @@ function GrowthTooltip({
           </span>
         </div>
       ))}
+      {flow && typeof flow.value === "number" && flow.value !== 0 && (
+        <div className="mt-1 flex items-baseline justify-between gap-4 border-t border-border-soft pt-1">
+          <span className="text-dim">Contributions {FLOW_NOUN[grain]}</span>
+          <span className={`tabular-nums ${toneFor(flow.value)}`}>{signedMoney(flow.value)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -196,6 +220,10 @@ export function PerformancePanel({
   viewToggle?: ReactNode;
 }) {
   const [period, setPeriod] = useState<Period>("1y");
+  /** The two overlays, both off until asked for: bars for money in and out,
+   *  and shading over the deepest fall. */
+  const [showFlows, setShowFlows] = useState(false);
+  const [showDrawdown, setShowDrawdown] = useState(false);
   // What the chart is drawn from, and separately what the boxes are showing.
   // A date input fires a change for every segment typed, so the year is
   // reported as 0002 on the way to 2026 -- committing each of those redraws a
@@ -359,11 +387,23 @@ export function PerformancePanel({
 
   const BASE = 10_000;
 
+  /** The series from the first day there was something to measure. */
+  const windowPoints = useMemo(
+    () => series.points.filter((p) => p.date >= displayFrom),
+    [series.points, displayFrom],
+  );
+  const flowGrain = flowGrainFor(spanDays(windowPoints));
+
   const rows = useMemo<ChartRow[]>(() => {
     const byDate = new Map<string, ChartRow>();
-    for (const point of series.points) {
-      if (point.date < displayFrom) continue;
+    for (const point of windowPoints) {
       byDate.set(point.date, { date: point.date, portfolio: point.index * BASE });
+    }
+    // Flows land on the first trading day of their bucket, which is always a
+    // date the series carries, so every bar has a row to sit on.
+    for (const bucket of bucketFlows(windowPoints, flowGrain)) {
+      const row = byDate.get(bucket.date);
+      if (row) row.flow = bucket.flow;
     }
     for (const benchmark of benchmarkSeries) {
       for (const point of benchmark.points) {
@@ -375,7 +415,38 @@ export function PerformancePanel({
       }
     }
     return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [series.points, benchmarkSeries, displayFrom]);
+  }, [windowPoints, benchmarkSeries, flowGrain]);
+
+  /**
+   * The risk and context figures for the window on screen. Drawdown and
+   * volatility run over the same indexed points the chart draws, and over
+   * each benchmark's own, so the two read against each other.
+   */
+  const context = useMemo(() => {
+    const flows = netFlows(windowPoints);
+    // Securities carried in or out that the feed could not price count as
+    // zero flow in the series, so the contributions figure understates by
+    // whatever they were worth. Say so rather than let the number look exact.
+    const unpricedTransfers = scopedTransactions.filter(
+      (tx) =>
+        tx.date >= displayFrom &&
+        tx.date <= to &&
+        (tx.type === "transfer_in" || tx.type === "transfer_out") &&
+        tx.symbol !== null &&
+        !histories.has(normalizeSymbol(tx.symbol)),
+    ).length;
+    return {
+      drawdown: maxDrawdown(windowPoints),
+      volatility: volatility(windowPoints),
+      flows,
+      unpricedTransfers,
+      benchmarks: benchmarkSeries.map((b) => ({
+        symbol: b.symbol,
+        drawdown: maxDrawdown(b.points),
+        volatility: volatility(b.points),
+      })),
+    };
+  }, [windowPoints, benchmarkSeries, scopedTransactions, histories, displayFrom, to]);
 
   /**
    * One series spanning every window the table can possibly need -- from the
@@ -596,6 +667,51 @@ export function PerformancePanel({
         })}
       </div>
 
+      {/* The second row answers what the first cannot: how bad it got on the
+          way, how rough the ride was, and how much of the money-weighted
+          figure on the summary card is timing rather than performance. */}
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <ContextTile
+          label="Max drawdown"
+          value={context.drawdown ? percent(context.drawdown.depth) : "—"}
+          tone={context.drawdown ? "text-negative" : "text-dim-2"}
+          hint={
+            context.drawdown
+              ? `Peak ${shortDate(context.drawdown.peak)} to trough ${shortDate(context.drawdown.trough)}, ${
+                  context.drawdown.recovered ? `recovered ${shortDate(context.drawdown.recovered)}` : "not yet recovered"
+                }. The deepest fall from any high within this window.`
+              : "The index never fell from a high in this window."
+          }
+          sub={context.benchmarks.map((b) => `${b.symbol} ${b.drawdown ? percent(b.drawdown.depth) : "—"}`)}
+        />
+        <ContextTile
+          label="Volatility"
+          value={context.volatility === null ? "—" : percent(context.volatility).replace("+", "")}
+          tone={context.volatility === null ? "text-dim-2" : "text-foreground"}
+          hint={
+            context.volatility === null
+              ? `Needs at least ${MIN_VOLATILITY_POINTS} trading days; a shorter window annualized is noise.`
+              : "Annualized standard deviation of daily returns over this window. Higher is a rougher ride."
+          }
+          sub={context.benchmarks.map(
+            (b) => `${b.symbol} ${b.volatility === null ? "—" : percent(b.volatility).replace("+", "")}`,
+          )}
+        />
+        <ContextTile
+          label="Net contributions"
+          value={signedMoney(context.flows.net)}
+          tone={toneFor(context.flows.net)}
+          hint={
+            `${money(context.flows.in)} put in, ${money(context.flows.out)} taken out, in this window. ` +
+            "Time-weighted returns ignore this; the money-weighted figure on the summary card does not, which is the gap between them." +
+            (context.unpricedTransfers > 0
+              ? ` ${context.unpricedTransfers} securit${context.unpricedTransfers === 1 ? "y" : "ies"} transferred in or out could not be priced by the feed and ${context.unpricedTransfers === 1 ? "is" : "are"} not counted.`
+              : "")
+          }
+          sub={[`${money(context.flows.in)} in · ${money(context.flows.out)} out`]}
+        />
+      </div>
+
       {failed ? (
         <p className="py-8 text-center text-[13px] text-dim">
           Couldn&apos;t load price history. The feed may be rate-limiting — try again shortly.
@@ -612,8 +728,21 @@ export function PerformancePanel({
         <>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+              <ComposedChart data={rows} margin={{ top: 8, right: showFlows ? 4 : 12, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke="var(--color-border-soft)" vertical={false} />
+                {/* Shaded from the peak to the recovery, or to the window's
+                    end while the fall is still open, so the tile's dates are
+                    on the picture. Drawn first, so the lines sit over it. */}
+                {showDrawdown && context.drawdown && (
+                  <ReferenceArea
+                    yAxisId="growth"
+                    x1={context.drawdown.peak}
+                    x2={context.drawdown.recovered ?? rows[rows.length - 1]?.date}
+                    fill="var(--color-negative)"
+                    fillOpacity={0.08}
+                    stroke="none"
+                  />
+                )}
                 <XAxis
                   dataKey="date"
                   tick={{ fontSize: 11, fill: "var(--color-dim-2)" }}
@@ -622,6 +751,7 @@ export function PerformancePanel({
                   stroke="var(--color-border)"
                 />
                 <YAxis
+                  yAxisId="growth"
                   tick={{ fontSize: 11, fill: "var(--color-dim-2)" }}
                   // One decimal: growth of $10k over a year spans a few
                   // thousand dollars, and rounding to whole thousands printed
@@ -631,8 +761,35 @@ export function PerformancePanel({
                   domain={["auto", "auto"]}
                   stroke="var(--color-border)"
                 />
-                <Tooltip content={<GrowthTooltip base={BASE} />} />
+                {/* A second, plainly secondary axis for the bars: on the
+                    right, three ticks at most, no gridlines of its own. */}
+                {showFlows && (
+                  <YAxis
+                    yAxisId="flows"
+                    orientation="right"
+                    tick={{ fontSize: 10, fill: "var(--color-dim-2)" }}
+                    tickFormatter={(value: number) =>
+                      Math.abs(value) >= 1000 ? `${value < 0 ? "-" : ""}$${(Math.abs(value) / 1000).toFixed(0)}k` : `$${value.toFixed(0)}`
+                    }
+                    tickCount={3}
+                    width={44}
+                    stroke="var(--color-border)"
+                  />
+                )}
+                <Tooltip content={<GrowthTooltip base={BASE} grain={flowGrain} />} />
+                {showFlows && (
+                  <Bar
+                    yAxisId="flows"
+                    dataKey="flow"
+                    name="Contributions"
+                    fill="var(--color-accent)"
+                    fillOpacity={0.35}
+                    maxBarSize={10}
+                    isAnimationActive={false}
+                  />
+                )}
                 <Line
+                  yAxisId="growth"
                   type="monotone"
                   dataKey="portfolio"
                   name="Your portfolio"
@@ -644,6 +801,7 @@ export function PerformancePanel({
                 {benchmarkSeries.map((benchmark) => (
                   <Line
                     key={benchmark.symbol}
+                    yAxisId="growth"
                     type="monotone"
                     dataKey={benchmark.symbol}
                     stroke={benchmark.color}
@@ -655,7 +813,7 @@ export function PerformancePanel({
                     isAnimationActive={false}
                   />
                 ))}
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         </>
@@ -674,6 +832,28 @@ export function PerformancePanel({
           />
           Your portfolio
         </span>
+        {/* The overlays live in the legend because they are things drawn on
+            the chart, the same as every other entry here. Off by default:
+            the line is the answer, these are the context. */}
+        <label className="flex cursor-pointer items-center gap-1.5">
+          <input type="checkbox" checked={showFlows} onChange={(e) => setShowFlows(e.target.checked)} />
+          Contributions
+          <span className="text-dim-2">
+            ({flowGrain === "day" ? "daily" : flowGrain === "week" ? "weekly" : "monthly"})
+          </span>
+        </label>
+        <label
+          className={`flex items-center gap-1.5 ${context.drawdown ? "cursor-pointer" : "opacity-50"}`}
+          title={context.drawdown ? undefined : "No drawdown in this window"}
+        >
+          <input
+            type="checkbox"
+            checked={showDrawdown && context.drawdown !== null}
+            disabled={!context.drawdown}
+            onChange={(e) => setShowDrawdown(e.target.checked)}
+          />
+          Drawdown
+        </label>
         {benchmarkSeries.map((benchmark) => (
           <span key={benchmark.symbol} className="flex items-center gap-1.5">
             <span
@@ -806,6 +986,35 @@ export function PerformancePanel({
             </p>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One of the three context tiles: a headline figure, a hover that says what
+ * it means, and a dim line under it for the benchmarks' own figures so the
+ * portfolio's number reads against something.
+ */
+function ContextTile({
+  label,
+  value,
+  tone,
+  hint,
+  sub,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+  hint: string;
+  sub: readonly string[];
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-panel px-4 py-3" title={hint}>
+      <div className="text-[10.5px] uppercase tracking-wide text-dim-2">{label}</div>
+      <div className={`mt-1 text-[19px] font-semibold tabular-nums ${tone}`}>{value}</div>
+      {sub.length > 0 && (
+        <div className="mt-0.5 truncate text-[11px] tabular-nums text-dim-2">{sub.join(" · ")}</div>
       )}
     </div>
   );
