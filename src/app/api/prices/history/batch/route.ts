@@ -98,7 +98,13 @@ export async function GET(request: Request) {
     // Splits are deliberately *not* trimmed to the window. A split after the
     // window still sets the units every close inside it is quoted in, so
     // dropping it would restate the whole window by the wrong factor.
-    if (result.splits.length > 0) splits[symbol] = result.splits;
+    //
+    // An empty list is sent when the feed answered, not dropped: "no splits"
+    // tells the series the closes are already in the ledger's units, which is
+    // a different thing from the silence of a feed that never says. Omitting
+    // it left every split-free symbol to have its units guessed from its
+    // trades, and a fill far from the close read as a change of units.
+    if (result.points.length > 0 && result.splitsKnown) splits[symbol] = result.splits;
   }
 
   return Response.json(

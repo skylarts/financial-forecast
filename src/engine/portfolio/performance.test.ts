@@ -1099,6 +1099,134 @@ describe("the days between a split and the next trade", () => {
     expect(points[0].value).toBeCloseTo(500, 6);
     expect(points[points.length - 1].value).toBeCloseTo(470, 6);
   });
+
+  it("still uses the calendar when it lists a split from before the ledger's first trade", () => {
+    // NVDA's real shape: the feed reports a four-for-one from 2021 alongside
+    // the ten-for-one of 2024, and a ledger that opened in 2022 cannot have a
+    // row for the first. Rejecting the whole calendar over it sent the
+    // position through the inference path, where the seven months between
+    // the split and the next trade were priced on the wrong side of it.
+    const { points } = buildPerformanceSeries(
+      [bought, split, boughtAgain],
+      histories,
+      {
+        ...window,
+        splits: new Map([
+          ["GOOG", [{ date: "2014-04-03", ratio: 2 }, { date: "2022-07-18", ratio: 20 }]],
+        ]),
+      },
+    );
+
+    const onSplitDay = points.find((p) => p.date === "2022-07-18");
+    expect(onSplitDay?.value).toBeCloseTo(0.092 * 111.0, 4);
+    const values = points.map((p) => p.value);
+    expect(Math.max(...values) / Math.min(...values)).toBeLessThan(11);
+  });
+
+  it("takes a split after the position was closed from the feed, with no ledger row", () => {
+    // Sold out before the split, so the broker never posted one -- but every
+    // close from before it is still quoted in post-split shares, and the
+    // holding has to be priced back into the shares it was.
+    const soldOut = tx({
+      type: "sell",
+      date: "2022-07-15",
+      symbol: "GOOG",
+      quantity: 0.0046,
+      price: 2260,
+    });
+    const { points } = buildPerformanceSeries(
+      [bought, soldOut],
+      histories,
+      { ...window, splits: new Map([["GOOG", [{ date: "2022-07-18", ratio: 20 }]]]) },
+    );
+
+    // Bought at $2,169.57 for 0.0046 shares; the feed's $108.48 is that in
+    // twentieths.
+    expect(points[0].value).toBeCloseTo(0.0046 * 108.48 * 20, 4);
+  });
+
+  it("trusts an empty calendar over a fill that landed far from the close", () => {
+    // The feed says YETI never split, so its closes are in the ledger's own
+    // units and nothing needs restating. The inference cannot know that: it
+    // reads a purchase 30% under the close as a change of units and prices
+    // the position 30% low until the next trade. With the calendar known,
+    // the inference is discarded.
+    const yeti = history([
+      ["2022-11-14", 44.15],
+      ["2022-11-15", 45.0],
+      ["2022-11-30", 46.0],
+    ]);
+    const bought = tx({ type: "buy", date: "2022-11-14", symbol: "YETI", quantity: 1, price: 31.14 });
+
+    const withCalendar = buildPerformanceSeries([bought], new Map([["YETI", yeti]]), {
+      from: "2022-11-14",
+      to: "2022-11-30",
+      splits: new Map([["YETI", []]]),
+    });
+    expect(withCalendar.points[withCalendar.points.length - 1].value).toBeCloseTo(46.0, 4);
+
+    // Without a calendar the inference is all there is, and it still stands.
+    const without = buildPerformanceSeries([bought], new Map([["YETI", yeti]]), {
+      from: "2022-11-14",
+      to: "2022-11-30",
+    });
+    expect(without.points[without.points.length - 1].value).toBeCloseTo(46.0 / (44.15 / 31.14), 4);
+  });
+
+  it("keeps the inference when a trade proves the calendar missed a split", () => {
+    // Invesco's RYT: the feed quotes every close post-split, at a tenth of
+    // what the ledger paid, and its calendar says no split ever happened. A
+    // fill cannot be ten times off the close, so the calendar is the thing
+    // that is wrong, and the inference -- which reads the tenfold off the
+    // trades -- stands.
+    const ryt = history([
+      ["2023-01-20", 27.0],
+      ["2023-03-31", 27.598],
+    ]);
+    const bought = tx({ type: "buy", date: "2023-01-20", symbol: "RYT", quantity: 0.1, price: 270 });
+
+    const { points } = buildPerformanceSeries([bought], new Map([["RYT", ryt]]), {
+      from: "2023-01-20",
+      to: "2023-03-31",
+      splits: new Map([["RYT", []]]),
+    });
+    expect(points[points.length - 1].value).toBeCloseTo(0.1 * 275.98, 4);
+  });
+
+  it("lets a recorded spinoff answer for the feed's fractional split", () => {
+    // The feed reports a spinoff as a split of, say, 1.128:1 -- its earlier
+    // closes are scaled down by the value carved out -- while the parent's
+    // share count in the ledger never moves. The spinoff row is the ledger's
+    // record that it happened, and the feed's own event restates the price.
+    const spun = history([
+      ["2023-09-28", 100], // $112.80 before the carve-out
+      ["2023-09-29", 100],
+      ["2023-10-02", 100],
+    ]);
+    const { points } = buildPerformanceSeries(
+      [
+        tx({ type: "buy", date: "2023-09-28", symbol: "DHR", quantity: 1, price: 112.8 }),
+        tx({
+          type: "spinoff",
+          date: "2023-09-30",
+          symbol: "DHR",
+          spinoffSymbol: "VLTO",
+          spinoffShareRatio: 1 / 3,
+          spinoffBasisRetained: 0.8834,
+        }),
+      ],
+      new Map([["DHR", spun]]),
+      {
+        from: "2023-09-28",
+        to: "2023-10-02",
+        splits: new Map([["DHR", [{ date: "2023-10-02", ratio: 1.128 }]]]),
+        symbols: new Set(["DHR"]),
+      },
+    );
+
+    expect(points[0].value).toBeCloseTo(112.8, 4);
+    expect(points[points.length - 1].value).toBeCloseTo(100, 4);
+  });
 });
 
 describe("windowReturn", () => {

@@ -369,19 +369,53 @@ function daysBetween(a: ISODate, b: ISODate): number {
   return Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000;
 }
 
-/** The split rows the ledger itself records, per symbol. */
-function ledgerSplits(ordered: readonly Transaction[]): Map<string, SplitEvent[]> {
-  const bySymbol = new Map<string, SplitEvent[]>();
+/** What the ledger itself recorded that could answer for a split the feed reports. */
+interface PostedActions {
+  /** Split rows per symbol. */
+  splits: Map<string, SplitEvent[]>;
+  /** Dates of spinoff rows per parent symbol. */
+  spinoffs: Map<string, ISODate[]>;
+}
+
+function ledgerActions(ordered: readonly Transaction[]): PostedActions {
+  const splits = new Map<string, SplitEvent[]>();
+  const spinoffs = new Map<string, ISODate[]>();
   for (const tx of ordered) {
-    if (tx.type !== "split" || tx.symbol === null || tx.quantity <= 0) continue;
+    if (tx.symbol === null) continue;
     const symbol = normalizeSymbol(tx.symbol);
-    // `quantity` is the ratio on a split row, not a share count.
-    const event = { date: tx.date, ratio: tx.quantity };
-    const series = bySymbol.get(symbol);
-    if (series) series.push(event);
-    else bySymbol.set(symbol, [event]);
+    if (tx.type === "split" && tx.quantity > 0) {
+      // `quantity` is the ratio on a split row, not a share count.
+      const event = { date: tx.date, ratio: tx.quantity };
+      const series = splits.get(symbol);
+      if (series) series.push(event);
+      else splits.set(symbol, [event]);
+    } else if (tx.type === "spinoff") {
+      const dates = spinoffs.get(symbol);
+      if (dates) dates.push(tx.date);
+      else spinoffs.set(symbol, [tx.date]);
+    }
   }
-  return bySymbol;
+  return { splits, spinoffs };
+}
+
+/**
+ * Shares of `symbol` on the books at the close of the day before `date`.
+ *
+ * Replayed from the symbol's own rows plus any spinoff that credited it, which
+ * is everything that can move its count. Used to decide whether a split the
+ * feed reports needed a ledger row at all -- see {@link matchedSplits}.
+ */
+function sharesHeldBefore(ordered: readonly Transaction[], symbol: string, date: ISODate): number {
+  const held = new Map<string, number>();
+  for (const tx of ordered) {
+    if (tx.date >= date) break;
+    if (tx.symbol === null) continue;
+    const own = normalizeSymbol(tx.symbol) === symbol;
+    const credits =
+      tx.type === "spinoff" && tx.spinoffSymbol !== null && normalizeSymbol(tx.spinoffSymbol) === symbol;
+    if (own || credits) applyToShares(held, tx);
+  }
+  return held.get(symbol) ?? 0;
 }
 
 /**
@@ -425,32 +459,47 @@ function splitScales(events: readonly SplitEvent[]): PricePoint[] {
 }
 
 /**
- * The ledger's own rows for the splits the feed reports, or null if it did not
- * record all of them.
+ * The events the feed's calendar resolves to for one symbol, or null when the
+ * ledger cannot be trusted to have moved its shares in step with it.
  *
- * The factor restates prices into the units of the day, which is only the right
- * thing to meet the share count with if the ledger moved its shares on the same
- * days. A ledger that records the split does; one that silently kept a
- * pre-split share count does not, and scaling its prices would compound the
- * mismatch rather than resolve it. That ledger is better served by the
- * inference, which measures whatever units it is in fact keeping. So every
- * split the feed reports has to be matched, and the check runs per symbol --
- * one holding whose broker never posted a split says nothing about the rest.
+ * The factor restates prices into the units of the day, which only meets the
+ * share count if the ledger multiplied its shares on the same day. So a split
+ * that landed while shares were on the books needs the ledger's own row for it
+ * -- and what comes back is that row rather than the feed's event. The feed
+ * dates a split to the day the new shares began trading; a broker posts it
+ * when it settles, a day or two later. Taking the price's breakpoint from the
+ * feed and the share count's from the ledger would leave the days between them
+ * priced in one set of shares and counted in the other -- a one-day trough of
+ * the whole split ratio. Reading both from the ledger row puts the two changes
+ * on the same morning, whichever morning the broker chose.
  *
- * What comes back is the *ledger's* rows rather than the feed's, and that is
- * the point of returning them at all. The feed dates a split to the day the new
- * shares began trading; a broker posts it when it settles, a day or two later.
- * Taking the price's breakpoint from the feed and the share count's from the
- * ledger would leave the days between them priced in one set of shares and
- * counted in the other -- a one-day trough of the whole split ratio, which is
- * the same bug in miniature. Reading both from the ledger row puts the two
- * changes on the same morning, whichever morning the broker chose. The feed's
- * role is to say the split happened and what it was worth, not when the ledger
- * acted on it.
+ * A split no shares were held through needs no row at all, and the feed's own
+ * event stands: the ledger had nothing to post, and the event still sets the
+ * units every earlier close is quoted in. That is most of any real calendar --
+ * every split from before the first trade, every one after the position was
+ * closed. Demanding a row for those threw the whole calendar out for NVDA on a
+ * ledger that opened in 2022, over a four-for-one from 2021 it could never
+ * have recorded, and the position then spent the seven months between its
+ * ten-for-one and the next trade valued at ten times what it was worth.
+ *
+ * A spinoff the ledger recorded answers for a feed event too. The feed folds
+ * the value carved out into its earlier closes as a fractional "split", while
+ * the parent's share count does not move -- so the feed's event is the right
+ * restatement of the price, and the ledger's spinoff row is the proof it
+ * happened.
+ *
+ * What is left is a split held through that the ledger never posted, and that
+ * returns null: scaling prices for a count that never multiplied would
+ * compound the mismatch rather than resolve it. That ledger is better served
+ * by the inference, which measures whatever units it is in fact keeping. The
+ * check runs per symbol -- one holding whose broker never posted a split says
+ * nothing about the rest.
  */
 function matchedSplits(
   feed: readonly SplitEvent[],
   ledger: readonly SplitEvent[],
+  spinoffs: readonly ISODate[],
+  heldBefore: (date: ISODate) => number,
 ): SplitEvent[] | null {
   const matched: SplitEvent[] = [];
   for (const event of feed) {
@@ -459,10 +508,53 @@ function matchedSplits(
         daysBetween(candidate.date, event.date) <= SPLIT_MATCH_DAYS &&
         Math.abs(candidate.ratio / event.ratio - 1) <= RATIO_TOLERANCE,
     );
-    if (row === undefined) return null;
-    matched.push(row);
+    if (row !== undefined) {
+      matched.push(row);
+      continue;
+    }
+    const unheld = Math.abs(heldBefore(event.date)) < 1e-9;
+    const spunOff = spinoffs.some((date) => daysBetween(date, event.date) <= SPLIT_MATCH_DAYS);
+    if (!unheld && !spunOff) return null;
+    matched.push(event);
   }
   return matched;
+}
+
+/**
+ * How far a fill may sit from the close the calendar's factor predicts before
+ * it stops being a fill and starts being proof the calendar is wrong.
+ *
+ * A fill lands within a percent or two of the close on an ordinary day, and on
+ * a bad one -- a rate decision, an earnings gap, a statement that dated the
+ * trade a week late -- as much as forty-five percent away. Nothing legitimate
+ * puts it at double or half, while every split does at least that. So a trade
+ * that disagrees with the calendar twofold is the calendar missing a split:
+ * Invesco's equal-weight sector funds all split in June 2023 and the feed's
+ * calendar lists none of them, though every close is quoted post-split.
+ * Those symbols are left to the inference, which reads the factor off the
+ * trades and had them right all along.
+ */
+const UNIT_CONTRADICTION = 2;
+
+/**
+ * Whether the ledger's own fills for `symbol` contradict a scale series by a
+ * factor no fill could -- see {@link UNIT_CONTRADICTION}.
+ */
+function contradicted(
+  ordered: readonly Transaction[],
+  symbol: string,
+  points: readonly PricePoint[],
+  series: readonly PricePoint[],
+): boolean {
+  for (const tx of ordered) {
+    if (tx.symbol === null || tx.price <= 0 || normalizeSymbol(tx.symbol) !== symbol) continue;
+    const close = lastOnOrBefore(points, tx.date);
+    if (close === null || close <= 0) continue;
+    const scale = lastOnOrBefore(series, tx.date) ?? series[0].close;
+    const ratio = close / scale / tx.price;
+    if (ratio >= UNIT_CONTRADICTION || ratio <= 1 / UNIT_CONTRADICTION) return true;
+  }
+  return false;
 }
 
 /**
@@ -640,14 +732,35 @@ export function buildPerformanceSeries(
   // else. Per symbol rather than all-or-nothing: a holding whose broker never
   // posted its split still gets the treatment that suits it, without costing
   // every other holding the exact answer.
+  //
+  // A calendar the feed answered with nothing in it is an answer too: the
+  // closes are already in the ledger's units, and whatever the inference read
+  // off the trades was noise. It was a lot of noise. The inference cannot tell
+  // a split from a fill that landed far from the close, and on a volatile day
+  // a fill does -- one November afternoon's purchases of Cloudflare, Unity and
+  // Yeti sat 30-45% under that day's close, and each position was then priced
+  // a third low until it was next traded. Only a symbol the feed could not
+  // answer for at all is left to the inference.
   const scales = priceScales(ordered, histories);
   if (splits) {
-    const posted = ledgerSplits(ordered);
+    const posted = ledgerActions(ordered);
     for (const [symbol, events] of splits) {
-      if (events.length === 0) continue;
-      const rows = matchedSplits(events, posted.get(symbol) ?? []);
+      const points = histories.get(symbol);
+      if (!points || points.length === 0) continue;
+      const rows =
+        events.length === 0
+          ? []
+          : matchedSplits(
+              events,
+              posted.splits.get(symbol) ?? [],
+              posted.spinoffs.get(symbol) ?? [],
+              (date) => sharesHeldBefore(ordered, symbol, date),
+            );
       if (rows === null) continue;
-      scales.set(symbol, splitScales(rows));
+      const fromCalendar = splitScales(rows);
+      if (contradicted(ordered, symbol, points, fromCalendar)) continue;
+      if (rows.length === 0) scales.delete(symbol);
+      else scales.set(symbol, fromCalendar);
     }
   }
 

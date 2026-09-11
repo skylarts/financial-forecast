@@ -286,20 +286,30 @@ export function PerformancePanel({
    * cap -- and because the list used to be sorted alphabetically, which meant a
    * ledger with enough option contracts silently pushed SPY and VTI past the
    * server's limit and rendered them as though the feed had no data for them.
-   * Holdings follow, narrowed to the ones this window actually needs.
+   *
+   * Holdings follow, for the *whole ledger* rather than the period on screen.
+   * The chart's window is one slice of the series, but the returns table and
+   * the statement reconciliation below it replay every day since the first
+   * transaction, and they were being built on whatever prices the chart
+   * happened to need. With a one-year period selected, every position closed
+   * before that year had no prices at all and was carried at the last figure
+   * paid -- and the reconciliation then reported a Roth IRA two thousand
+   * dollars off for months that were within a few dollars on a full fetch.
+   * The cost is one fetch for the ledger's full history, paid once per
+   * twelve hours; switching periods after that touches nothing.
    */
   const neededSymbols = useMemo(() => {
     const ordered = [
       ...benchmarks,
-      ...symbolsForWindow(scopedTransactions, from, to, scopeAccountIds ?? undefined, includedSymbols),
+      ...symbolsForWindow(scopedTransactions, earliest, todayIso(), scopeAccountIds ?? undefined, includedSymbols),
     ];
     return [...new Set(ordered)];
-  }, [scopedTransactions, benchmarks, from, to, scopeAccountIds, includedSymbols]);
+  }, [scopedTransactions, benchmarks, earliest, scopeAccountIds, includedSymbols]);
 
   const { histories, splits, skipped, loading, failed } = usePriceHistories(
     neededSymbols,
     HISTORY_RANGE,
-    from,
+    earliest,
   );
 
   const series = useMemo(
@@ -788,8 +798,7 @@ export function PerformancePanel({
               </tbody>
             </table>
             <p className="mt-2 text-[11.5px] text-dim-2">
-              A dash means the loaded history doesn&apos;t reach back that far. Pick a longer
-              period above to fetch more.
+              A dash means the feed has no prices that far back for anything held then.
             </p>
           </div>
 
