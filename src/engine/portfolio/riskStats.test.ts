@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bucketFlows, flowGrainFor, maxDrawdown, netFlows, volatility, MIN_VOLATILITY_POINTS } from "./riskStats";
+import { maxDrawdown, netFlows, volatility, MIN_VOLATILITY_POINTS } from "./riskStats";
 
 const day = (date: string, index: number) => ({ date, index });
 
@@ -61,49 +61,5 @@ describe("volatility", () => {
 describe("netFlows", () => {
   it("separates money in from money out", () => {
     expect(netFlows([{ flow: 500 }, { flow: 0 }, { flow: -200 }, { flow: 100 }])).toEqual({ in: 600, out: 200, net: 400 });
-  });
-});
-
-describe("flowGrainFor", () => {
-  it("coarsens with the window", () => {
-    expect(flowGrainFor(30)).toBe("day");
-    expect(flowGrainFor(93)).toBe("day");
-    expect(flowGrainFor(180)).toBe("week");
-    expect(flowGrainFor(366)).toBe("week");
-    expect(flowGrainFor(900)).toBe("month");
-  });
-});
-
-describe("bucketFlows", () => {
-  const points = [
-    { date: "2026-03-02", flow: 100 }, // Monday
-    { date: "2026-03-04", flow: 50 },
-    { date: "2026-03-09", flow: -30 }, // next Monday
-    { date: "2026-04-01", flow: 0 },
-    { date: "2026-04-15", flow: 200 },
-  ];
-
-  it("keeps days as they are, dropping the empty ones", () => {
-    expect(bucketFlows(points, "day")).toEqual([
-      { date: "2026-03-02", flow: 100 },
-      { date: "2026-03-04", flow: 50 },
-      { date: "2026-03-09", flow: -30 },
-      { date: "2026-04-15", flow: 200 },
-    ]);
-  });
-
-  it("sums a week onto its first trading day", () => {
-    expect(bucketFlows(points, "week")).toEqual([
-      { date: "2026-03-02", flow: 150 },
-      { date: "2026-03-09", flow: -30 },
-      { date: "2026-04-15", flow: 200 },
-    ]);
-  });
-
-  it("sums a month onto its first trading day", () => {
-    expect(bucketFlows(points, "month")).toEqual([
-      { date: "2026-03-02", flow: 120 },
-      { date: "2026-04-01", flow: 200 },
-    ]);
   });
 });

@@ -2,11 +2,9 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  Bar,
   CartesianGrid,
-  ComposedChart,
   Line,
-  ReferenceArea,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -23,15 +21,7 @@ import {
   type PricePoint,
 } from "@/engine/portfolio/performance";
 import { classifySymbol } from "@/engine/portfolio/metrics";
-import {
-  bucketFlows,
-  flowGrainFor,
-  maxDrawdown,
-  netFlows,
-  volatility,
-  MIN_VOLATILITY_POINTS,
-  type FlowGrain,
-} from "@/engine/portfolio/riskStats";
+import { maxDrawdown, netFlows, volatility, MIN_VOLATILITY_POINTS } from "@/engine/portfolio/riskStats";
 import { money, percent, shortDate, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
@@ -138,32 +128,25 @@ function spanDays(points: readonly { date: string }[]): number {
 interface ChartRow {
   date: string;
   portfolio: number;
-  /** Net money in or out landing on this row's bucket, when flows are drawn. */
-  flow?: number;
-  [benchmark: string]: number | string | undefined;
+  [benchmark: string]: number | string;
 }
-
-const FLOW_NOUN: Record<FlowGrain, string> = { day: "today", week: "this week", month: "this month" };
 
 function GrowthTooltip({
   active,
   payload,
   label,
   base,
-  grain,
 }: {
   active?: boolean;
   payload?: { dataKey: string; value: number; color: string }[];
   label?: string;
   base: number;
-  grain: FlowGrain;
 }) {
   if (!active || !payload?.length) return null;
-  const flow = payload.find((entry) => entry.dataKey === "flow");
   return (
     <div className="rounded-md border border-border bg-panel px-3 py-2 text-[12px] shadow-lg">
       <div className="mb-1 font-semibold text-foreground">{shortDate(String(label))}</div>
-      {payload.filter((entry) => entry.dataKey !== "flow").map((entry) => (
+      {payload.map((entry) => (
         <div key={entry.dataKey} className="flex items-baseline justify-between gap-4">
           <span className="flex items-center gap-1.5">
             <span
@@ -183,12 +166,6 @@ function GrowthTooltip({
           </span>
         </div>
       ))}
-      {flow && typeof flow.value === "number" && flow.value !== 0 && (
-        <div className="mt-1 flex items-baseline justify-between gap-4 border-t border-border-soft pt-1">
-          <span className="text-dim">Contributions {FLOW_NOUN[grain]}</span>
-          <span className={`tabular-nums ${toneFor(flow.value)}`}>{signedMoney(flow.value)}</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -220,10 +197,6 @@ export function PerformancePanel({
   viewToggle?: ReactNode;
 }) {
   const [period, setPeriod] = useState<Period>("1y");
-  /** The two overlays, both off until asked for: bars for money in and out,
-   *  and shading over the deepest fall. */
-  const [showFlows, setShowFlows] = useState(false);
-  const [showDrawdown, setShowDrawdown] = useState(false);
   // What the chart is drawn from, and separately what the boxes are showing.
   // A date input fires a change for every segment typed, so the year is
   // reported as 0002 on the way to 2026 -- committing each of those redraws a
@@ -392,18 +365,10 @@ export function PerformancePanel({
     () => series.points.filter((p) => p.date >= displayFrom),
     [series.points, displayFrom],
   );
-  const flowGrain = flowGrainFor(spanDays(windowPoints));
-
   const rows = useMemo<ChartRow[]>(() => {
     const byDate = new Map<string, ChartRow>();
     for (const point of windowPoints) {
       byDate.set(point.date, { date: point.date, portfolio: point.index * BASE });
-    }
-    // Flows land on the first trading day of their bucket, which is always a
-    // date the series carries, so every bar has a row to sit on.
-    for (const bucket of bucketFlows(windowPoints, flowGrain)) {
-      const row = byDate.get(bucket.date);
-      if (row) row.flow = bucket.flow;
     }
     for (const benchmark of benchmarkSeries) {
       for (const point of benchmark.points) {
@@ -415,7 +380,7 @@ export function PerformancePanel({
       }
     }
     return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [windowPoints, benchmarkSeries, flowGrain]);
+  }, [windowPoints, benchmarkSeries]);
 
   /**
    * The risk and context figures for the window on screen. Drawdown and
@@ -440,11 +405,18 @@ export function PerformancePanel({
       volatility: volatility(windowPoints),
       flows,
       unpricedTransfers,
-      benchmarks: benchmarkSeries.map((b) => ({
-        symbol: b.symbol,
-        drawdown: maxDrawdown(b.points),
-        volatility: volatility(b.points),
-      })),
+      benchmarks: benchmarkSeries.map((b) => {
+        const total = indexedReturn(b.points);
+        const years = spanDays(b.points) / DAYS_PER_YEAR;
+        return {
+          symbol: b.symbol,
+          total,
+          // The same rule as the portfolio's tile: nothing to annualize under a year.
+          annualized: total === null || years <= 1 ? null : Math.pow(1 + total, 1 / years) - 1,
+          drawdown: maxDrawdown(b.points),
+          volatility: volatility(b.points),
+        };
+      }),
     };
   }, [windowPoints, benchmarkSeries, scopedTransactions, histories, displayFrom, to]);
 
@@ -626,51 +598,32 @@ export function PerformancePanel({
         )}
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-lg border border-border bg-panel px-4 py-3">
-          <div className="text-[10.5px] uppercase tracking-wide text-dim-2">Your return</div>
-          <div className={`mt-1 text-[19px] font-semibold tabular-nums ${toneFor(portfolioReturn ?? 0)}`}>
-            {percent(portfolioReturn)}
-          </div>
-        </div>
-        <div
-          className="rounded-lg border border-border bg-panel px-4 py-3"
-          title={
+      {/* Five tiles, one row on a wide screen. The benchmarks' own figures
+          sit under each in small grey, so the comparison is read inside the
+          tile rather than off a separate one -- "vs SPY -4.9 pts" was a
+          tile that said less than a line under the figure it compared. */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <ContextTile
+          label="Your return"
+          value={percent(portfolioReturn)}
+          tone={toneFor(portfolioReturn ?? 0)}
+          hint="Time-weighted return over this window: what a dollar invested at the start grew to, with deposits and withdrawals taken out."
+          sub={context.benchmarks.map((b) => {
+            const gap = portfolioReturn !== null && b.total !== null ? portfolioReturn - b.total : null;
+            return `${b.symbol} ${percent(b.total)}${gap === null ? "" : ` · ${gap > 0 ? "+" : ""}${(gap * 100).toFixed(1)} pts`}`;
+          })}
+        />
+        <ContextTile
+          label="Annualized"
+          value={percent(portfolioAnnualized)}
+          tone={portfolioAnnualized === null ? "text-dim-2" : toneFor(portfolioAnnualized)}
+          hint={
             shortWindow
               ? "Compounded to a yearly rate. Blank for windows of a year or less, where it would only repeat the return."
               : "Compounded to a yearly rate."
           }
-        >
-          <div className="text-[10.5px] uppercase tracking-wide text-dim-2">Annualized</div>
-          <div
-            className={`mt-1 text-[19px] font-semibold tabular-nums ${
-              portfolioAnnualized === null ? "text-dim-2" : toneFor(portfolioAnnualized)
-            }`}
-          >
-            {percent(portfolioAnnualized)}
-          </div>
-        </div>
-        {benchmarkSeries.slice(0, 2).map((benchmark) => {
-          const benchmarkReturn = indexedReturn(benchmark.points);
-          const gap =
-            portfolioReturn !== null && benchmarkReturn !== null ? portfolioReturn - benchmarkReturn : null;
-          return (
-            <div key={benchmark.symbol} className="rounded-lg border border-border bg-panel px-4 py-3">
-              <div className="text-[10.5px] uppercase tracking-wide text-dim-2">
-                vs {benchmark.symbol}
-              </div>
-              <div className={`mt-1 text-[19px] font-semibold tabular-nums ${toneFor(gap ?? 0)}`}>
-                {gap === null ? "—" : `${gap > 0 ? "+" : ""}${(gap * 100).toFixed(1)} pts`}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* The second row answers what the first cannot: how bad it got on the
-          way, how rough the ride was, and how much of the money-weighted
-          figure on the summary card is timing rather than performance. */}
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          sub={context.benchmarks.map((b) => `${b.symbol} ${percent(b.annualized)}`)}
+        />
         <ContextTile
           label="Max drawdown"
           value={context.drawdown ? percent(context.drawdown.depth) : "—"}
@@ -728,21 +681,8 @@ export function PerformancePanel({
         <>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={rows} margin={{ top: 8, right: showFlows ? 4 : 12, bottom: 0, left: 0 }}>
+              <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke="var(--color-border-soft)" vertical={false} />
-                {/* Shaded from the peak to the recovery, or to the window's
-                    end while the fall is still open, so the tile's dates are
-                    on the picture. Drawn first, so the lines sit over it. */}
-                {showDrawdown && context.drawdown && (
-                  <ReferenceArea
-                    yAxisId="growth"
-                    x1={context.drawdown.peak}
-                    x2={context.drawdown.recovered ?? rows[rows.length - 1]?.date}
-                    fill="var(--color-negative)"
-                    fillOpacity={0.08}
-                    stroke="none"
-                  />
-                )}
                 <XAxis
                   dataKey="date"
                   tick={{ fontSize: 11, fill: "var(--color-dim-2)" }}
@@ -751,7 +691,6 @@ export function PerformancePanel({
                   stroke="var(--color-border)"
                 />
                 <YAxis
-                  yAxisId="growth"
                   tick={{ fontSize: 11, fill: "var(--color-dim-2)" }}
                   // One decimal: growth of $10k over a year spans a few
                   // thousand dollars, and rounding to whole thousands printed
@@ -761,35 +700,8 @@ export function PerformancePanel({
                   domain={["auto", "auto"]}
                   stroke="var(--color-border)"
                 />
-                {/* A second, plainly secondary axis for the bars: on the
-                    right, three ticks at most, no gridlines of its own. */}
-                {showFlows && (
-                  <YAxis
-                    yAxisId="flows"
-                    orientation="right"
-                    tick={{ fontSize: 10, fill: "var(--color-dim-2)" }}
-                    tickFormatter={(value: number) =>
-                      Math.abs(value) >= 1000 ? `${value < 0 ? "-" : ""}$${(Math.abs(value) / 1000).toFixed(0)}k` : `$${value.toFixed(0)}`
-                    }
-                    tickCount={3}
-                    width={44}
-                    stroke="var(--color-border)"
-                  />
-                )}
-                <Tooltip content={<GrowthTooltip base={BASE} grain={flowGrain} />} />
-                {showFlows && (
-                  <Bar
-                    yAxisId="flows"
-                    dataKey="flow"
-                    name="Contributions"
-                    fill="var(--color-accent)"
-                    fillOpacity={0.35}
-                    maxBarSize={10}
-                    isAnimationActive={false}
-                  />
-                )}
+                <Tooltip content={<GrowthTooltip base={BASE} />} />
                 <Line
-                  yAxisId="growth"
                   type="monotone"
                   dataKey="portfolio"
                   name="Your portfolio"
@@ -801,7 +713,6 @@ export function PerformancePanel({
                 {benchmarkSeries.map((benchmark) => (
                   <Line
                     key={benchmark.symbol}
-                    yAxisId="growth"
                     type="monotone"
                     dataKey={benchmark.symbol}
                     stroke={benchmark.color}
@@ -813,7 +724,7 @@ export function PerformancePanel({
                     isAnimationActive={false}
                   />
                 ))}
-              </ComposedChart>
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </>
@@ -832,28 +743,6 @@ export function PerformancePanel({
           />
           Your portfolio
         </span>
-        {/* The overlays live in the legend because they are things drawn on
-            the chart, the same as every other entry here. Off by default:
-            the line is the answer, these are the context. */}
-        <label className="flex cursor-pointer items-center gap-1.5">
-          <input type="checkbox" checked={showFlows} onChange={(e) => setShowFlows(e.target.checked)} />
-          Contributions
-          <span className="text-dim-2">
-            ({flowGrain === "day" ? "daily" : flowGrain === "week" ? "weekly" : "monthly"})
-          </span>
-        </label>
-        <label
-          className={`flex items-center gap-1.5 ${context.drawdown ? "cursor-pointer" : "opacity-50"}`}
-          title={context.drawdown ? undefined : "No drawdown in this window"}
-        >
-          <input
-            type="checkbox"
-            checked={showDrawdown && context.drawdown !== null}
-            disabled={!context.drawdown}
-            onChange={(e) => setShowDrawdown(e.target.checked)}
-          />
-          Drawdown
-        </label>
         {benchmarkSeries.map((benchmark) => (
           <span key={benchmark.symbol} className="flex items-center gap-1.5">
             <span
