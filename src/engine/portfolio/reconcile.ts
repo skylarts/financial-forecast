@@ -3,20 +3,37 @@ import type { StatementValuation } from "../../domain/portfolio/portfolio";
 import type { PerformancePoint } from "./performance";
 
 /**
- * One statement period end, next to what the replayed series made of that day.
+ * One period end, with the statements totalled the same way the series is.
  *
- * `drift` is the replay minus the statement, so a positive number means the
+ * `drift` is the replay minus the statements, so a positive number means the
  * tracker thinks the account was worth more than the custodian said.
  */
 export interface ReconciliationRow {
   date: ISODate;
+  /** Sum of every in-scope account's statement value for this period end. */
   statementValue: number;
+  /** How many accounts that sum covers, so a total can be read as a total. */
+  accounts: number;
   /** Null when the series has no point at or before this date to compare. */
   replayedValue: number | null;
   /** The series date actually compared, which may be earlier on a weekend. */
   replayedOn: ISODate | null;
   drift: number | null;
   driftPct: number | null;
+}
+
+export interface Reconciliation {
+  rows: ReconciliationRow[];
+  /** Accounts on screen that have no statements at all. */
+  uncoveredAccounts: string[];
+  /** Accounts on screen that do. */
+  coveredAccounts: string[];
+  /**
+   * Period ends dropped because only some of the covered accounts had a value
+   * for them -- a partial sum is not the account total and comparing it would
+   * report a drift the size of whatever was missing.
+   */
+  datesSkipped: ISODate[];
 }
 
 /**
@@ -40,44 +57,80 @@ function valueOn(
 }
 
 /**
- * Pairs each statement valuation with the replayed account value on its date.
+ * Compares the statements against the replayed series, like against like.
  *
- * Sorted by date, and deliberately reports rather than corrects -- see
- * {@link StatementValuation}. A row whose series has no matching point is kept
- * with a null replay so the gap is visible instead of silently dropped.
+ * The series is one number for everything on screen, so the statements have to
+ * be totalled to match it. Comparing a single account's statement against a
+ * total spanning several reports a drift the size of the other accounts --
+ * which is what this did before, and it made the whole panel useless the moment
+ * more than one account was in view.
+ *
+ * A period end only counts when *every* account that has statements has one for
+ * it. Accounts open at different times, so the brokerage has nothing for the
+ * Roth's first year, and adding what exists would compare a partial sum against
+ * a full total.
+ *
+ * Deliberately reports rather than corrects -- see {@link StatementValuation}.
  */
 export function reconcileValuations(
   statements: readonly StatementValuation[],
   points: readonly PerformancePoint[],
-): ReconciliationRow[] {
-  const ordered = [...points].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  accountIdsInScope: readonly string[],
+): Reconciliation {
+  const inScope = new Set(accountIdsInScope);
+  const relevant = statements.filter((s) => inScope.has(s.accountId));
 
-  return [...statements]
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-    .map((s) => {
-      const hit = valueOn(ordered, s.date);
-      if (hit === null) {
-        return {
-          date: s.date,
-          statementValue: s.value,
-          replayedValue: null,
-          replayedOn: null,
-          drift: null,
-          driftPct: null,
-        };
-      }
-      const drift = hit.value - s.value;
-      return {
-        date: s.date,
-        statementValue: s.value,
-        replayedValue: hit.value,
-        replayedOn: hit.on,
-        drift,
-        // A statement value of zero is a real state -- an account that closed
-        // out -- and a percentage against it has no meaning.
-        driftPct: s.value === 0 ? null : drift / s.value,
-      };
+  const coveredAccounts = [...new Set(relevant.map((s) => s.accountId))];
+  const uncoveredAccounts = accountIdsInScope.filter((id) => !coveredAccounts.includes(id));
+
+  // Last value wins per account-and-date, so a stray duplicate cannot double a
+  // total. The importer already dedupes within one file; this covers the rest.
+  const byDate = new Map<ISODate, Map<string, number>>();
+  for (const s of relevant) {
+    const forDate = byDate.get(s.date) ?? new Map<string, number>();
+    forDate.set(s.accountId, s.value);
+    byDate.set(s.date, forDate);
+  }
+
+  const ordered = [...points].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const rows: ReconciliationRow[] = [];
+  const datesSkipped: ISODate[] = [];
+
+  for (const date of [...byDate.keys()].sort()) {
+    const forDate = byDate.get(date) as Map<string, number>;
+    if (forDate.size !== coveredAccounts.length) {
+      datesSkipped.push(date);
+      continue;
+    }
+    const statementValue = [...forDate.values()].reduce((a, b) => a + b, 0);
+    const hit = valueOn(ordered, date);
+    if (hit === null) {
+      rows.push({
+        date,
+        statementValue,
+        accounts: forDate.size,
+        replayedValue: null,
+        replayedOn: null,
+        drift: null,
+        driftPct: null,
+      });
+      continue;
+    }
+    const drift = hit.value - statementValue;
+    rows.push({
+      date,
+      statementValue,
+      accounts: forDate.size,
+      replayedValue: hit.value,
+      replayedOn: hit.on,
+      drift,
+      // A statement total of zero is a real state -- an account that closed out
+      // -- and a percentage against it has no meaning.
+      driftPct: statementValue === 0 ? null : drift / statementValue,
     });
+  }
+
+  return { rows, coveredAccounts, uncoveredAccounts, datesSkipped };
 }
 
 /** How far the replay strays from the statements, for a one-line summary. */

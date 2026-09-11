@@ -385,16 +385,23 @@ export function PerformancePanel({
   );
 
   /**
-   * Statement valuations for whatever this panel is scoped to. Compared against
-   * `fullSeries` rather than the windowed one, so the reconciliation covers
-   * every period on file regardless of which range the chart is showing.
+   * The accounts `fullSeries` is actually built from, which is what the
+   * statements have to be totalled across to be comparable.
+   *
+   * Derived from the rows rather than from `scopeAccountIds` so it names only
+   * accounts that contribute a value: a split 401(k)'s parent is in scope but
+   * holds no transactions of its own, and counting it would report a missing
+   * statement for an account that could never have one.
    */
-  const scopedStatements = useMemo(() => {
-    const all = portfolio.statementValuations ?? [];
-    if (scopeAccountIds === null) return all;
-    const ids = new Set(scopeAccountIds);
-    return all.filter((v) => ids.has(v.accountId));
-  }, [portfolio.statementValuations, scopeAccountIds]);
+  const accountIdsInScope = useMemo(
+    () => [...new Set(scopedTransactions.map((tx) => tx.accountId))],
+    [scopedTransactions],
+  );
+
+  const accountNames = useMemo(
+    () => Object.fromEntries(portfolio.accounts.map((a) => [a.id, a.name])),
+    [portfolio.accounts],
+  );
 
   /**
    * Returns across every window the loaded history can actually cover.
@@ -787,9 +794,10 @@ export function PerformancePanel({
           </div>
 
           <StatementReconciliation
-            statements={scopedStatements}
+            statements={portfolio.statementValuations ?? []}
             points={fullSeries.points}
-            accountIdsInScope={scopeAccountIds ?? portfolio.accounts.map((a) => a.id)}
+            accountIdsInScope={accountIdsInScope}
+            accountNames={accountNames}
           />
         </>
       )}
