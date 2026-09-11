@@ -189,7 +189,7 @@ describe("accountCashBalances", () => {
     expect(result.implied).toBeCloseTo(2000, 6);
   });
 
-  it("never reports a balance the ledger says went negative", () => {
+  it("reports a balance that really did go negative, once the account was funded", () => {
     const result = balanceOf(
       portfolio([
         cash("cash_deposit", "2025-01-02", 100),
@@ -197,7 +197,47 @@ describe("accountCashBalances", () => {
       ]),
     );
 
-    expect(result.balance).toBeGreaterThanOrEqual(0);
+    // The ledger watched $100 arrive and then $1,000 go out, so the account was
+    // $900 down -- a margin balance, or a trade the cash side has yet to catch
+    // up with. Seeding it away would say the account opened with $900 nobody
+    // recorded, and would apply that to every day of its history.
+    expect(result.balance).toBeCloseTo(-900, 6);
+    expect(result.implied).toBe(0);
+    expect(result.solvent).toBe(true);
+    expect(result.overdraft).toBeCloseTo(900, 6);
+    expect(result.overdraftOn).toBe("2025-01-05");
+  });
+
+  it("still seeds a deficit that lands before the ledger records any funding", () => {
+    // The distinction that matters: this one is an export beginning mid-history,
+    // so the money really is missing from the record rather than from the account.
+    const result = balanceOf(
+      portfolio([
+        tx({ type: "buy", date: "2025-01-05", quantity: 10, price: 100 }),
+        cash("cash_deposit", "2025-01-06", 3000),
+      ]),
+    );
+
+    expect(result.implied).toBeCloseTo(1000, 6);
+    expect(result.balance).toBeCloseTo(3000, 6);
+    expect(result.overdraft).toBe(0);
+  });
+
+  it("keeps a brief overdraft out of every other day in the account's history", () => {
+    // The real case this was written for: $200 of transfer fees charged the day
+    // before the sale that covered them. Seeding the gap used to lift the whole
+    // history, so a balance five years earlier read $200 richer than the
+    // statement for that month said it was.
+    const p = portfolio([
+      cash("cash_deposit", "2021-03-30", 5000),
+      tx({ type: "buy", date: "2021-04-01", quantity: 10, price: 490 }),
+      cash("cash_withdrawal", "2025-12-08", 200),
+      tx({ type: "sell", date: "2025-12-09", quantity: 10, price: 800 }),
+    ]);
+
+    expect(balanceOf(p, "2021-03-31").balance).toBeCloseTo(5000, 6);
+    expect(balanceOf(p, "2025-12-08").balance).toBeCloseTo(-100, 6);
+    expect(balanceOf(p).overdraft).toBeCloseTo(100, 6);
   });
 });
 
@@ -212,6 +252,11 @@ describe("replayableCash", () => {
     const deposits = Array.from({ length: 3000 }, () => cash("cash_deposit", "2015-01-01", 0.1));
     const rows = [...deposits, cash("cash_withdrawal", "2015-01-02", 300)];
 
-    expect(replayableCash(rows, 0)).toEqual({ solvent: true, floor: 0 });
+    expect(replayableCash(rows, 0)).toEqual({
+      solvent: true,
+      floor: 0,
+      overdraft: 0,
+      overdraftOn: null,
+    });
   });
 });
