@@ -21,7 +21,6 @@ import {
   type PricePoint,
 } from "@/engine/portfolio/performance";
 import { classifySymbol } from "@/engine/portfolio/metrics";
-import { StatementReconciliation } from "@/components/portfolio/StatementReconciliation";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
@@ -392,25 +391,6 @@ export function PerformancePanel({
         symbols: includedSymbols,
       }),
     [scopedTransactions, histories, splits, earliest, scopeAccountIds, openingCash, includedSymbols],
-  );
-
-  /**
-   * The accounts `fullSeries` is actually built from, which is what the
-   * statements have to be totalled across to be comparable.
-   *
-   * Derived from the rows rather than from `scopeAccountIds` so it names only
-   * accounts that contribute a value: a split 401(k)'s parent is in scope but
-   * holds no transactions of its own, and counting it would report a missing
-   * statement for an account that could never have one.
-   */
-  const accountIdsInScope = useMemo(
-    () => [...new Set(scopedTransactions.map((tx) => tx.accountId))],
-    [scopedTransactions],
-  );
-
-  const accountNames = useMemo(
-    () => Object.fromEntries(portfolio.accounts.map((a) => [a.id, a.name])),
-    [portfolio.accounts],
   );
 
   /**
@@ -801,13 +781,6 @@ export function PerformancePanel({
               A dash means the feed has no prices that far back for anything held then.
             </p>
           </div>
-
-          <StatementReconciliation
-            statements={portfolio.statementValuations ?? []}
-            points={fullSeries.points}
-            accountIdsInScope={accountIdsInScope}
-            accountNames={accountNames}
-          />
         </>
       )}
     </div>

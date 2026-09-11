@@ -95,7 +95,6 @@ function portfolio(transactions: Transaction[], overrides: Partial<Portfolio> = 
     transactions,
     securities: [],
     baskets: [],
-    statementValuations: [],
     ...overrides,
   };
 }
