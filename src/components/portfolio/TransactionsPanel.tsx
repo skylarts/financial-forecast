@@ -468,6 +468,12 @@ export function TransactionsPanel({
     [portfolio.accounts],
   );
 
+  // Where a transfer's other half lives, for the marker beside its type.
+  const peerAccountName = (peerId: string) => {
+    const peer = portfolio.transactions.find((tx) => tx.id === peerId);
+    return peer ? accountNames.get(peer.accountId) ?? "another account" : "another account";
+  };
+
   const accessors = useMemo<SortAccessors<Transaction, TxColumn>>(
     () => ({
       date: (tx) => tx.date,
@@ -962,6 +968,14 @@ export function TransactionsPanel({
                           </td>
                           <td className={`${CELL} text-left text-foreground`}>
                             {TRANSACTION_TYPE_LABELS[tx.type]}
+                            {tx.transferPeerId && (
+                              <span
+                                className="ml-1.5 text-[10.5px] text-dim-2"
+                                title="The other half of this transfer is in another of your accounts. The cash moved between them, not in or out."
+                              >
+                                ↔ {peerAccountName(tx.transferPeerId)}
+                              </span>
+                            )}
                           </td>
                           <td
                             className={`${CELL} text-left font-semibold text-foreground`}

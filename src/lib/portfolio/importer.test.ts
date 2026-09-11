@@ -77,6 +77,8 @@ describe("parseDate", () => {
     // Schwab: posted on the 10th, traded on the 8th. The trade date wins.
     ["01/10/2024 as of 01/08/2024", "2024-01-08"],
     ["08/17/2026 as of 08/15/2026", "2026-08-15"],
+    // A workplace plan's export stamps a meaningless time on every date.
+    ["8/28/2026 12:00:00 AM", "2026-08-28"],
   ])("reads %s", (input, expected) => {
     expect(parseDate(input)).toBe(expected);
   });
