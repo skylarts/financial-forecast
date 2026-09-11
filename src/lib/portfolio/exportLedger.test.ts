@@ -46,6 +46,7 @@ function portfolio(transactions: Transaction[]): Portfolio {
     transactions,
     securities: [],
     baskets: [],
+    statementValuations: [],
   };
 }
 

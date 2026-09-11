@@ -21,6 +21,7 @@ import {
   type PricePoint,
 } from "@/engine/portfolio/performance";
 import { classifySymbol } from "@/engine/portfolio/metrics";
+import { StatementReconciliation } from "@/components/portfolio/StatementReconciliation";
 import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
@@ -382,6 +383,18 @@ export function PerformancePanel({
       }),
     [scopedTransactions, histories, splits, earliest, scopeAccountIds, openingCash, includedSymbols],
   );
+
+  /**
+   * Statement valuations for whatever this panel is scoped to. Compared against
+   * `fullSeries` rather than the windowed one, so the reconciliation covers
+   * every period on file regardless of which range the chart is showing.
+   */
+  const scopedStatements = useMemo(() => {
+    const all = portfolio.statementValuations ?? [];
+    if (scopeAccountIds === null) return all;
+    const ids = new Set(scopeAccountIds);
+    return all.filter((v) => ids.has(v.accountId));
+  }, [portfolio.statementValuations, scopeAccountIds]);
 
   /**
    * Returns across every window the loaded history can actually cover.
@@ -772,6 +785,12 @@ export function PerformancePanel({
               period above to fetch more.
             </p>
           </div>
+
+          <StatementReconciliation
+            statements={scopedStatements}
+            points={fullSeries.points}
+            accountIdsInScope={scopeAccountIds ?? portfolio.accounts.map((a) => a.id)}
+          />
         </>
       )}
     </div>

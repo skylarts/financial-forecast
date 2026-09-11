@@ -13,6 +13,7 @@ import { usePortfolioStore } from "@/store/usePortfolioStore";
 import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
 import { SchwabSettingsDialog } from "./SchwabSettingsDialog";
 import { SnapshotRestoreDialog } from "./SnapshotRestoreDialog";
+import { StatementValuationsDialog } from "./StatementValuationsDialog";
 
 /**
  * Everything the header used to spell out in buttons of its own.
@@ -52,10 +53,19 @@ export function PortfolioMenu({
   const [open, setOpen] = useState(false);
   const [schwabOpen, setSchwabOpen] = useState(false);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [valuationsOpen, setValuationsOpen] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const importJson = usePortfolioStore((s) => s.importJson);
+  const setStatementValuations = usePortfolioStore((s) => s.setStatementValuations);
+
+  const valuations = portfolio.statementValuations ?? [];
+  const valuationCount = valuations.length;
+  const valuationsByAccount = valuations.reduce<Record<string, number>>((acc, v) => {
+    acc[v.accountId] = (acc[v.accountId] ?? 0) + 1;
+    return acc;
+  }, {});
 
   // Close on an outside click or on Escape, so the menu never strands itself
   // open over the page.
@@ -125,6 +135,22 @@ export function PortfolioMenu({
             >
               Export transactions (CSV)
               <span className={HINT}>{count.toLocaleString()} rows, ready to import back</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={`${ITEM} ${portfolio.accounts.length ? "" : "pointer-events-none opacity-40"}`}
+              onClick={() => {
+                setOpen(false);
+                setValuationsOpen(true);
+              }}
+            >
+              Import statement values…
+              <span className={HINT}>
+                {valuationCount > 0
+                  ? `${valuationCount} period${valuationCount === 1 ? "" : "s"} on file`
+                  : "Check this tracker against your custodian"}
+              </span>
             </button>
             <button
               type="button"
@@ -227,6 +253,17 @@ export function PortfolioMenu({
 
       {snapshotsOpen && <SnapshotRestoreDialog onClose={() => setSnapshotsOpen(false)} />}
       {schwabOpen && <SchwabSettingsDialog onClose={() => setSchwabOpen(false)} />}
+      {valuationsOpen && (
+        <StatementValuationsDialog
+          accounts={portfolio.accounts}
+          existingCounts={valuationsByAccount}
+          onImport={(accountId, rows) => {
+            setStatementValuations(accountId, rows);
+            setValuationsOpen(false);
+          }}
+          onClose={() => setValuationsOpen(false)}
+        />
+      )}
     </div>
   );
 }

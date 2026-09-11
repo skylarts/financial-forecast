@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { idSchema } from "../common";
+import { idSchema, isoDateSchema } from "../common";
 import { basketSchema } from "./basket";
 import { securitySchema } from "./security";
 import { transactionSchema } from "./transaction";
@@ -111,6 +111,39 @@ export const portfolioAccountSchema = z.object({
 export type PortfolioAccount = z.infer<typeof portfolioAccountSchema>;
 
 /**
+ * What a custodian's statement said an account was worth at a period end.
+ *
+ * The one figure in this app that is recorded rather than replayed, and the
+ * reason it exists: everything else here is computed from the ledger and a
+ * price feed, which is an inference. A statement is a primary record. Holding
+ * both lets the tracker show where its own arithmetic has drifted from the
+ * broker's, instead of asking you to trust it.
+ *
+ * Deliberately not used to *correct* anything. A drift is a question to go
+ * answer -- a missing trade, an unmodelled corporate action, a symbol the feed
+ * priced wrongly -- and silently snapping the series onto the statement would
+ * hide the very thing worth finding.
+ */
+export const statementValuationSchema = z.object({
+  id: idSchema,
+  accountId: idSchema,
+  /** The statement's own period-end date, not the month it was issued in. */
+  date: isoDateSchema,
+  /** Total account value the statement reports: securities plus cash. */
+  value: z.number(),
+  /**
+   * Money the statement says entered or left over the period, deposits positive.
+   * Optional because not every statement breaks it out, and nothing depends on
+   * it -- it is carried so a drift can be read against what actually moved.
+   */
+  contributions: z.number().nullable().default(null),
+  /** Income the statement reports over the period. Optional, as above. */
+  income: z.number().nullable().default(null),
+  note: z.string().default(""),
+});
+export type StatementValuation = z.infer<typeof statementValuationSchema>;
+
+/**
  * The whole tracker's persisted state. Transactions are the single source of
  * truth -- holdings, tax lots, and every performance figure are replayed from
  * them rather than stored, so an edited or reimported row can never leave a
@@ -127,5 +160,11 @@ export const portfolioSchema = z.object({
    * shape of every save written before baskets existed.
    */
   baskets: z.array(basketSchema).default([]),
+  /**
+   * Period-end account values taken from custodian statements, for reconciling
+   * the replayed series against. Empty for every portfolio that has never
+   * imported one.
+   */
+  statementValuations: z.array(statementValuationSchema).default([]),
 });
 export type Portfolio = z.infer<typeof portfolioSchema>;
