@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import {
+  averageCostSymbols,
   basketSchema,
   normalizeBasketName,
   normalizeSymbol,
@@ -615,7 +616,9 @@ export const usePortfolioStore = create<PortfolioState>()(
  * though it has no price.
  */
 export function symbolsInPortfolio(portfolio: Portfolio): string[] {
-  const { openLots } = buildLotLedger(portfolio.transactions);
+  const { openLots } = buildLotLedger(portfolio.transactions, {
+    averageCost: averageCostSymbols(portfolio.securities),
+  });
   return [...new Set(openLots.map((lot) => lot.symbol))];
 }
 

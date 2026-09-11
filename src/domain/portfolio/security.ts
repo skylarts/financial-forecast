@@ -110,6 +110,14 @@ export const securitySchema = z.object({
   lastKnownPrice: z.number().nonnegative().nullable().default(null),
   lastKnownPriceDate: isoDateSchema.nullable().default(null),
   /**
+   * How a sale's basis is booked: from the specific lots sold (FIFO where
+   * none are named), or the average basis of every share held in the
+   * account. Null -- every security saved so far -- means decide from the
+   * instrument type: mutual funds average, because that is how every
+   * custodian reports them; everything else is by lot. See {@link costMethodFor}.
+   */
+  costMethod: z.enum(["lots", "average"]).nullable().optional(),
+  /**
    * The day the feed was last asked to classify this symbol, whatever it
    * answered. Set even when the answer was "never heard of it", which is the
    * whole point: a delisted ticker is a permanent miss, and without a record
@@ -169,4 +177,34 @@ export function resolveExposures(security: Pick<Security, "assetClass" | "exposu
   const total = security.exposures.reduce((sum, e) => sum + e.weight, 0);
   if (total <= 0) return [{ assetClass: security.assetClass, weight: 1 }];
   return security.exposures.map((e) => ({ assetClass: e.assetClass, weight: e.weight / total }));
+}
+
+export type CostMethod = "lots" | "average";
+
+export const COST_METHOD_LABELS: Record<CostMethod, string> = {
+  lots: "By lot (FIFO, or the lots a sale names)",
+  average: "Average cost",
+};
+
+/**
+ * The basis method a security's sales are booked under: what was chosen for
+ * it, else average cost for a mutual fund and by-lot for everything else.
+ *
+ * The default follows the custodians. Every one this app has read a
+ * statement from reports mutual fund sales at the average basis of the
+ * shares held, and stocks, ETFs and options lot by lot -- so a ledger whose
+ * securities the feed has classified reconciles without anyone choosing.
+ */
+export function costMethodFor(security: Pick<Security, "costMethod" | "instrumentType"> | undefined): CostMethod {
+  if (security?.costMethod) return security.costMethod;
+  return security?.instrumentType === "mutual_fund" ? "average" : "lots";
+}
+
+/** The canonical symbols whose sales book at average cost, for the lot engine. */
+export function averageCostSymbols(securities: readonly Security[]): Set<string> {
+  const out = new Set<string>();
+  for (const security of securities) {
+    if (costMethodFor(security) === "average") out.add(normalizeSymbol(security.symbol));
+  }
+  return out;
 }

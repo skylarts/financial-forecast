@@ -7,6 +7,9 @@ import {
   formatOptionSymbol,
   INSTRUMENT_TYPE_LABELS,
   instrumentTypeSchema,
+  costMethodFor,
+  COST_METHOD_LABELS,
+  type CostMethod,
   normalizeThemeTag,
   normalizeThemes,
   type AssetClass,
@@ -240,6 +243,27 @@ export function SecurityEditorRow({
                 ↺
               </button>
             )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-16 shrink-0 text-dim-2">Cost basis</span>
+            {/* How a sale's basis is booked. Left on "auto" it follows the
+                type: mutual funds average, as every custodian reports them;
+                everything else by lot. Set by hand for a fund whose broker
+                elected a lot method, or the reverse. */}
+            <select
+              value={current.costMethod ?? "auto"}
+              onChange={(e) =>
+                save({ costMethod: e.target.value === "auto" ? null : (e.target.value as CostMethod) })
+              }
+              title="Average cost books every sale at the average basis of all shares held in the account, which is how custodians report mutual funds. By lot uses the specific lots sold, oldest first unless the sale names them."
+              className="rounded border border-border bg-panel px-1.5 py-0.5 text-[11.5px] text-foreground"
+            >
+              <option value="auto">
+                Auto — {costMethodFor({ ...current, costMethod: null }) === "average" ? "average cost" : "by lot"}
+              </option>
+              <option value="lots">{COST_METHOD_LABELS.lots}</option>
+              <option value="average">{COST_METHOD_LABELS.average}</option>
+            </select>
           </div>
 
           <div className="space-y-1">

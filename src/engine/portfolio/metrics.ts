@@ -16,6 +16,7 @@ import {
   type Security,
   type Transaction,
   type TransactionType,
+  averageCostSymbols,
 } from "@/domain/portfolio";
 import { accountCashBalances } from "./cash";
 import { buildLotLedger, type ClosedLot, type LedgerWarning, type OpenLot } from "./lots";
@@ -555,7 +556,9 @@ export function analyzePortfolio(
   const transactions = scope
     ? portfolio.transactions.filter((tx) => inScope(tx.accountId))
     : portfolio.transactions;
-  const { openLots, closedLots, warnings } = buildLotLedger(transactions);
+  const { openLots, closedLots, warnings } = buildLotLedger(transactions, {
+    averageCost: averageCostSymbols(portfolio.securities),
+  });
 
   const currentYearPrefix = asOf.slice(0, 4);
 

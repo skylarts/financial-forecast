@@ -81,6 +81,14 @@ export interface ClosedLot {
   unmatched: boolean;
   openTxId: Id;
   closeTxId: Id;
+  /**
+   * How the basis was booked. Absent means from the lot itself, which is
+   * every disposal not on a mutual fund. "average" means the basis is the
+   * average of every share the account held, as custodians report funds,
+   * and `averagePerShare` is that figure.
+   */
+  basisMethod?: "average";
+  averagePerShare?: number;
 }
 
 export interface LedgerWarning {
@@ -94,6 +102,15 @@ export interface LotLedger {
   openLots: OpenLot[];
   closedLots: ClosedLot[];
   warnings: LedgerWarning[];
+}
+
+export interface LedgerOptions {
+  /**
+   * Canonical symbols whose sales book at average cost rather than by lot.
+   * See `costMethodFor` in the domain; the engine only applies what it is
+   * told, so a caller without securities to hand gets the by-lot ledger.
+   */
+  averageCost?: ReadonlySet<string>;
 }
 
 /**
@@ -433,17 +450,36 @@ function applySpinoff(
  * the same ledger. `WeakMap` keeps entries only as long as the array is
  * reachable, so there is nothing to evict.
  */
-const ledgerCache = new WeakMap<readonly Transaction[], LotLedger>();
+const ledgerCache = new WeakMap<readonly Transaction[], Map<string, LotLedger>>();
 
-export function buildLotLedger(transactions: readonly Transaction[]): LotLedger {
-  const cached = ledgerCache.get(transactions);
+/**
+ * The part of the options that changes the answer, as a string, so two
+ * calls with the same array and the same average-cost set share one replay
+ * and two calls that differ do not. Built in one place on purpose: a
+ * forgotten input here would hand one method's ledger to the other.
+ */
+export function ledgerOptionsKey(options: LedgerOptions): string {
+  return options.averageCost && options.averageCost.size > 0
+    ? [...options.averageCost].sort().join(",")
+    : "";
+}
+
+export function buildLotLedger(transactions: readonly Transaction[], options: LedgerOptions = {}): LotLedger {
+  const key = ledgerOptionsKey(options);
+  let byKey = ledgerCache.get(transactions);
+  if (!byKey) {
+    byKey = new Map();
+    ledgerCache.set(transactions, byKey);
+  }
+  const cached = byKey.get(key);
   if (cached) return cached;
-  const built = buildLotLedgerUncached(transactions);
-  ledgerCache.set(transactions, built);
+  const built = buildLotLedgerUncached(transactions, options);
+  byKey.set(key, built);
   return built;
 }
 
-function buildLotLedgerUncached(transactions: readonly Transaction[]): LotLedger {
+function buildLotLedgerUncached(transactions: readonly Transaction[], options: LedgerOptions): LotLedger {
+  const averageCost = options.averageCost ?? new Set<string>();
   const open = new Map<string, OpenLot[]>();
   const closedLots: ClosedLot[] = [];
   const warnings: LedgerWarning[] = [];
@@ -640,13 +676,35 @@ function buildLotLedgerUncached(transactions: readonly Transaction[]): LotLedger
       });
     }
 
+    /**
+     * Average cost, for a mutual fund: every share in the account carries the
+     * same basis -- the average of all of them -- so a sale books at that
+     * figure whichever lots it draws, and what remains is re-levelled to it
+     * afterwards. The lots are still drawn oldest-first (or as named), which
+     * is what decides the holding period; only the dollars change. Longs
+     * only: nothing averages a short, and no custodian tries.
+     */
+    const averaged = closeSide === "long" && averageCost.has(symbol);
+    let averagePerShare: number | null = null;
+    if (averaged) {
+      let heldShares = 0;
+      let heldBasis = 0;
+      for (const lot of lots) {
+        if (lot.quantity <= EPSILON) continue;
+        heldShares += lot.quantity;
+        heldBasis += lot.costBasis;
+      }
+      averagePerShare = heldShares > EPSILON ? heldBasis / heldShares : null;
+    }
+
     const queue = candidates ?? lots;
     for (let i = candidates ? 0 : cursor; i < queue.length; i += 1) {
       const lot = queue[i];
       if (remaining <= EPSILON) break;
       if (lot.quantity <= EPSILON) continue;
       const taken = Math.min(lot.quantity, remaining);
-      const openValue = (lot.costBasis / lot.quantity) * taken;
+      const openValue =
+        averagePerShare !== null ? averagePerShare * taken : (lot.costBasis / lot.quantity) * taken;
       const close = perShareClose * taken;
 
       closedLots.push({
@@ -668,11 +726,23 @@ function buildLotLedgerUncached(transactions: readonly Transaction[]): LotLedger
         unmatched: false,
         openTxId: lot.openTxId,
         closeTxId: tx.id,
+        ...(averagePerShare !== null ? { basisMethod: "average" as const, averagePerShare } : {}),
       });
 
       lot.quantity -= taken;
       lot.costBasis -= openValue;
       remaining -= taken;
+    }
+
+    // What is left carries the average too. The position's total basis is
+    // unchanged by this; only its split between lots moves, so every sum of
+    // open basis -- the cost column, the summary card, the forecast push --
+    // reads the same as before.
+    if (averagePerShare !== null) {
+      for (const lot of lots) {
+        if (lot.quantity <= EPSILON) continue;
+        lot.costBasis = lot.quantity * averagePerShare;
+      }
     }
 
     if (remaining > EPSILON) {

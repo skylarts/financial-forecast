@@ -5,7 +5,7 @@ import type { Transaction } from "@/domain/portfolio";
 import type { ClosedLot } from "@/engine/portfolio/lots";
 import type { PortfolioSummary } from "@/engine/portfolio/metrics";
 import { flagWashSales, WASH_SALE_WINDOW_DAYS } from "@/engine/portfolio/washSales";
-import { lotTermLabel, money, percent, shares, shortDate, toneFor } from "@/lib/portfolio/format";
+import { lotTermLabel, money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import {
   buildGroups,
   buildNestedGroups,
@@ -25,6 +25,9 @@ import { FOOT, FOOT_FROZEN, FROZEN_CELL, FrozenLabel, TABLE } from "./frozenColu
 import { MoreRows, useRowWindow } from "./rowWindow";
 
 const CELL = "border-b border-border-soft px-3 py-2 text-[12.5px] tabular-nums";
+
+/** Remembers that the one-time note about average cost has been read. */
+const AVERAGE_NOTE_KEY = "portfolio-average-cost-note-seen";
 
 type RealizedGrouping = "none" | "symbol" | "account" | "term" | "year";
 
@@ -137,6 +140,22 @@ export function RealizedPanel({
 
   const washSales = useMemo(() => flagWashSales(closedLots, transactions), [closedLots, transactions]);
   const washCount = sorted.filter((lot) => washSales.has(lot)).length;
+  const averagedCount = sorted.filter((lot) => lot.basisMethod === "average").length;
+  const [averageNoteSeen, setAverageNoteSeen] = useState(() => {
+    try {
+      return localStorage.getItem(AVERAGE_NOTE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const dismissAverageNote = () => {
+    setAverageNoteSeen(true);
+    try {
+      localStorage.setItem(AVERAGE_NOTE_KEY, "1");
+    } catch {
+      // A browser that blocks storage just shows the note again next time.
+    }
+  };
 
   // Realized lots grow without bound -- every sale a ledger has ever recorded
   // stays here forever -- so this list is capped the same way the transaction
@@ -200,6 +219,21 @@ export function RealizedPanel({
         </p>
       ) : (
         <>
+          {/* Said once, the first time a ledger's history is booked this way:
+              realized figures for mutual funds moved to match the statements,
+              and that is a change to history worth a sentence. */}
+          {averagedCount > 0 && !averageNoteSeen && (
+            <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/10 p-3 text-[12.5px] text-foreground">
+              <span>
+                Mutual funds are now on average cost, matching how custodians report them. Lots booked
+                that way are marked <span className="rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2">Avg</span>.
+                Change the method per fund under Classify holdings on the Allocation tab.
+              </span>
+              <button type="button" onClick={dismissAverageNote} className="shrink-0 text-dim hover:text-foreground">
+                Got it
+              </button>
+            </div>
+          )}
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <OutcomeFilter value={outcome} onChange={setOutcome} />
             <FilterStatus
@@ -325,7 +359,21 @@ export function RealizedPanel({
                               <td className={`${CELL} text-left text-dim`}>{shortDate(lot.acquiredDate)}</td>
                               <td className={`${CELL} text-left text-dim`}>{shortDate(lot.disposedDate)}</td>
                               <td className={`${CELL} text-right text-dim`}>{shares(lot.quantity)}</td>
-                              <td className={`${CELL} text-right text-dim`}>{money(lot.costBasis)}</td>
+                              <td
+                                className={`${CELL} text-right text-dim`}
+                                title={
+                                  lot.basisMethod === "average" && lot.averagePerShare !== undefined
+                                    ? `Average cost: every share in the account was held at ${price(lot.averagePerShare)}, the way custodians report mutual funds. Change the method per fund in Classify holdings.`
+                                    : undefined
+                                }
+                              >
+                                {lot.basisMethod === "average" && (
+                                  <span className="mr-1.5 rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2">
+                                    Avg
+                                  </span>
+                                )}
+                                {money(lot.costBasis)}
+                              </td>
                               <td className={`${CELL} text-right text-dim`}>{money(lot.proceeds)}</td>
                               <td className={`${CELL} text-right ${toneFor(lot.gain)}`}>
                                 {washSales.has(lot) && (
