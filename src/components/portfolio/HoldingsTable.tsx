@@ -1,9 +1,10 @@
 "use client";
 
 import { Fragment, useMemo } from "react";
-import { ASSET_CLASS_LABELS, INSTRUMENT_TYPE_LABELS } from "@/domain/portfolio";
+import { ASSET_CLASS_LABELS, INSTRUMENT_TYPE_LABELS, isOptionSymbol } from "@/domain/portfolio";
+import { isStaleQuote, quoteAgeDays } from "@/lib/portfolio/quoteAge";
 import { explodeExposures, type Holding } from "@/engine/portfolio/metrics";
-import { money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
+import { money, percent, price, shares, shortDate, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { useSort, type SortAccessors, type SortState } from "./useSort";
 import { SortHeader } from "./SortHeader";
 import {
@@ -55,9 +56,11 @@ type Column =
   | "avgCost"
   | "price"
   | "value"
+  | "day"
   | "weight"
   | "unrealized"
   | "return"
+  | "yield"
   | "irr";
 
 /**
@@ -67,6 +70,7 @@ type Column =
  */
 const GROUP_TOTALS: Partial<Record<Column, (row: Row) => number>> = {
   value: (row) => row.marketValue,
+  day: (row) => row.dayChange ?? 0,
   weight: (row) => row.weight,
   unrealized: (row) => row.unrealizedGain,
 };
@@ -81,6 +85,10 @@ interface GroupTotals {
   unrealizedGain: number;
   /** Null when the group has no basis to measure against, same as a single row. */
   returnPct: number | null;
+  /** Today's move summed over the rows that could measure one; null if none could. */
+  dayChange: number | null;
+  /** Trailing income over the group's value, or null with nothing to divide by. */
+  dividendYield: number | null;
 }
 
 /**
@@ -94,12 +102,16 @@ function totalsFor(rows: readonly Holding[]): GroupTotals {
   const marketValue = rows.reduce((sum, h) => sum + h.marketValue, 0);
   const costBasis = rows.reduce((sum, h) => sum + h.costBasis, 0);
   const unrealizedGain = rows.reduce((sum, h) => sum + h.unrealizedGain, 0);
+  const movers = rows.filter((h) => h.dayChange !== null);
+  const incomeTtm = rows.reduce((sum, h) => sum + h.incomeTtm, 0);
   return {
     marketValue,
     costBasis,
     weight: rows.reduce((sum, h) => sum + h.weight, 0),
     unrealizedGain,
     returnPct: costBasis > 0 ? unrealizedGain / costBasis : null,
+    dayChange: movers.length > 0 ? movers.reduce((sum, h) => sum + (h.dayChange ?? 0), 0) : null,
+    dividendYield: incomeTtm > 0 && marketValue > 0 ? incomeTtm / marketValue : null,
   };
 }
 
@@ -216,9 +228,11 @@ export function HoldingsTable({
       avgCost: (h) => h.avgCostPerShare,
       price: (h) => h.price ?? Number.NaN,
       value: (h) => h.marketValue,
+      day: (h) => h.dayChange ?? Number.NaN,
       weight: (h) => h.weight,
       unrealized: (h) => h.unrealizedGain,
       return: (h) => h.unrealizedGainPct ?? Number.NaN,
+      yield: (h) => h.dividendYield ?? Number.NaN,
       irr: (h) => h.irr ?? Number.NaN,
     }),
     [accountNames],
@@ -287,9 +301,25 @@ export function HoldingsTable({
             <SortHeader label="Avg cost" column="avgCost" align="right" sort={sort} onToggle={toggle} />
             <SortHeader label="Price" column="price" align="right" sort={sort} onToggle={toggle} />
             <SortHeader label="Value" column="value" align="right" sort={sort} onToggle={toggle} />
+            <SortHeader
+              label="Day"
+              column="day"
+              align="right"
+              sort={sort}
+              onToggle={toggle}
+              title="Change in this position since the previous close"
+            />
             <SortHeader label="Weight" column="weight" align="right" sort={sort} onToggle={toggle} />
             <SortHeader label="Unrealized" column="unrealized" align="right" sort={sort} onToggle={toggle} />
             <SortHeader label="Return" column="return" align="right" sort={sort} onToggle={toggle} />
+            <SortHeader
+              label="Yield"
+              column="yield"
+              align="right"
+              sort={sort}
+              onToggle={toggle}
+              title="Dividends and interest over the last twelve months, as a share of today's value"
+            />
             <SortHeader label="Annualized" column="irr" align="right" sort={sort} onToggle={toggle} />
           </tr>
         </thead>
@@ -323,6 +353,11 @@ export function HoldingsTable({
                     <span key="value" className="text-foreground">
                       {money(totals.marketValue)}
                     </span>,
+                    totals.dayChange === null ? null : (
+                      <span key="day" className={toneFor(totals.dayChange)}>
+                        {signedMoney(totals.dayChange)}
+                      </span>
+                    ),
                     <span key="weight" className="text-dim">
                       {(totals.weight * 100).toFixed(1)}%
                     </span>,
@@ -332,6 +367,11 @@ export function HoldingsTable({
                     <span key="return" className={toneFor(totals.unrealizedGain)}>
                       {percent(totals.returnPct)}
                     </span>,
+                    totals.dividendYield === null ? null : (
+                      <span key="yield" className="text-dim">
+                        {percent(totals.dividendYield).replace("+", "")}
+                      </span>
+                    ),
                     null,
                   ]}
                 />
@@ -402,20 +442,29 @@ export function HoldingsTable({
                     {isCash ? (
                       <span className="text-dim">—</span>
                     ) : holding.price === null ? (
-                      <span className="text-dim-2" title="No quote available — valued at cost basis.">
-                        no quote
+                      <span
+                        className="rounded-sm border border-border px-1 py-px text-[9.5px] font-semibold uppercase tracking-wide text-dim-2"
+                        title={
+                          isOptionSymbol(holding.symbol)
+                            ? "No quote for this contract, so it is carried at what it cost. Its day move is left out of the totals."
+                            : "No quote available, so this position is carried at what it cost. Its day move is left out of the totals."
+                        }
+                      >
+                        At cost
                       </span>
                     ) : (
-                      <span
-                        className="text-foreground"
-                        title={holding.priceDate ? `As of ${shortDate(holding.priceDate)}` : undefined}
-                      >
-                        {price(holding.price)}
-                      </span>
+                      <PriceCell price={holding.price} date={holding.priceDate} />
                     )}
                   </td>
                   <td className={`${CELL} text-right font-semibold text-foreground`}>
                     {money(holding.marketValue)}
+                  </td>
+                  <td className={`${CELL} text-right ${holding.dayChange === null ? "text-dim" : toneFor(holding.dayChange)}`}>
+                    {isCash || holding.dayChange === null ? (
+                      "—"
+                    ) : (
+                      <span title={percent(holding.dayChangePct, 2)}>{signedMoney(holding.dayChange)}</span>
+                    )}
                   </td>
                   <td className={`${CELL} text-right text-dim`}>{(holding.weight * 100).toFixed(1)}%</td>
                   <td className={`${CELL} text-right ${toneFor(holding.unrealizedGain)}`}>
@@ -423,6 +472,18 @@ export function HoldingsTable({
                   </td>
                   <td className={`${CELL} text-right ${toneFor(holding.unrealizedGain)}`}>
                     {isCash ? <span className="text-dim">—</span> : percent(holding.unrealizedGainPct)}
+                  </td>
+                  <td
+                    className={`${CELL} text-right text-dim`}
+                    title={
+                      holding.dividendYield === null
+                        ? undefined
+                        : `${money(holding.incomeTtm)} of dividends and interest in the last twelve months`
+                    }
+                  >
+                    {isCash || holding.dividendYield === null
+                      ? "—"
+                      : percent(holding.dividendYield).replace("+", "")}
                   </td>
                   <td className={`${CELL} text-right ${toneFor(holding.irr ?? 0)}`}>
                     {isCash ? <span className="text-dim">—</span> : percent(holding.irr)}
@@ -439,6 +500,9 @@ export function HoldingsTable({
             <td className={`${FOOT_FROZEN} text-left text-foreground`}>Total</td>
             <td className={FOOT} colSpan={labelSpan - 1}></td>
             <td className={`${FOOT} text-right text-foreground`}>{money(grandTotals.marketValue)}</td>
+            <td className={`${FOOT} text-right ${grandTotals.dayChange === null ? "text-dim" : toneFor(grandTotals.dayChange)}`}>
+              {grandTotals.dayChange === null ? "—" : signedMoney(grandTotals.dayChange)}
+            </td>
             <td className={`${FOOT} text-right text-dim`}>{(grandTotals.weight * 100).toFixed(1)}%</td>
             <td className={`${FOOT} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
               {money(grandTotals.unrealizedGain)}
@@ -446,11 +510,45 @@ export function HoldingsTable({
             <td className={`${FOOT} text-right ${toneFor(grandTotals.unrealizedGain)}`}>
               {percent(grandTotals.returnPct)}
             </td>
+            <td className={`${FOOT} text-right text-dim`}>
+              {grandTotals.dividendYield === null ? "" : percent(grandTotals.dividendYield).replace("+", "")}
+            </td>
             <td className={`${FOOT}`}></td>
           </tr>
         </tfoot>
       </table>
       </div>
     </div>
+  );
+}
+
+/**
+ * A price, and how old it is when that matters.
+ *
+ * A quote from the last trading day is just a number. One older than that --
+ * a feed that answered from a stale session, or a cached price served after a
+ * failed refresh -- carries the day it is from beside it, because a price
+ * that looks current and isn't is the one that misvalues a position without
+ * anyone noticing. Weekends don't count: Friday's close is current on Sunday.
+ */
+function PriceCell({ price: value, date }: { price: number; date: string | null }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const stale = isStaleQuote(date, today);
+  return (
+    <span
+      className={stale ? "text-dim" : "text-foreground"}
+      title={
+        date
+          ? stale
+            ? `As of ${shortDate(date)} — ${quoteAgeDays(date, today)} days old, not the latest close.`
+            : `As of ${shortDate(date)}`
+          : undefined
+      }
+    >
+      {price(value)}
+      {stale && date && (
+        <span className="ml-1 text-[10px] uppercase tracking-wide text-dim-2">{shortDate(date).slice(0, 5)}</span>
+      )}
+    </span>
   );
 }

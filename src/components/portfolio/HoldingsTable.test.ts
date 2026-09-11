@@ -33,6 +33,8 @@ function holding(
     weight: 0,
     realizedGain: 0,
     income: 0,
+    incomeTtm: 0,
+    dividendYield: null,
     totalGain: 0,
     irr: null,
     lots: [],

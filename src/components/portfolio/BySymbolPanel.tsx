@@ -75,9 +75,12 @@ function Leaders({
 }) {
   if (rows.length === 0) return null;
   return (
-    <div className="rounded-lg border border-border bg-panel px-4 py-3">
+    // A column that spreads its rows over the card's height: these cards sit
+    // in a grid beside the stat tiles and take their height from the tallest
+    // neighbour, so a one-row list left most of the card empty under it.
+    <div className="flex flex-col rounded-lg border border-border bg-panel px-4 py-3">
       <div className="mb-2 text-[10.5px] uppercase tracking-wide text-dim-2">{title}</div>
-      <div className="space-y-1">
+      <div className="flex flex-1 flex-col justify-around gap-1">
         {rows.map((row) => (
           <div key={row.symbol} className="flex items-baseline justify-between gap-3 text-[12.5px]">
             <span className="font-semibold text-foreground">{row.symbol}</span>

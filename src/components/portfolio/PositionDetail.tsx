@@ -121,6 +121,22 @@ function rangeCovering(firstTradeDate: string | null): Range {
   return "max";
 }
 
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * The first day a sale counts as long-term: the day after the first
+ * anniversary of the purchase. A lot bought on the 15th sold on the 15th a
+ * year later is still short-term; the 16th is long.
+ */
+function longTermDate(acquired: string): string {
+  const date = new Date(`${acquired}T00:00:00Z`);
+  date.setUTCFullYear(date.getUTCFullYear() + 1);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 /** Days held, rounded, or an em dash when there are no closed lots to average. */
 function holdPeriod(days: number | null): string {
   if (days === null) return "—";
@@ -469,18 +485,21 @@ export function PositionDetail({
                       <th className={`${HEAD} text-right`}>Cost basis</th>
                       <th className={`${HEAD} text-right`}>Cost/share</th>
                       <th className={`${HEAD} text-right`}>Value</th>
-                      <th className={`${HEAD} text-right`}>Gain</th>
+                      <th className={`${HEAD} text-right`} title="What selling this lot today would realize, at the current price.">
+                        If sold today
+                      </th>
                       <th className={`${HEAD} text-right`}>Term</th>
+                      <th className={`${HEAD} text-right`} title="The first day a sale of this lot counts as long-term: more than a year after it was acquired.">
+                        Long-term from
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {openLots.slice(0, openWindow.limit()).map((lot) => {
                       const value = price0 === null ? lot.costBasis : lot.quantity * price0;
                       const gain = value - lot.costBasis;
-                      const heldSince = new Date(`${lot.acquiredDate}T00:00:00`);
-                      const oneYearOn = new Date(heldSince);
-                      oneYearOn.setFullYear(oneYearOn.getFullYear() + 1);
-                      const isLong = new Date() > oneYearOn;
+                      const longTermFrom = longTermDate(lot.acquiredDate);
+                      const isLong = todayIso() >= longTermFrom;
                       return (
                         <tr key={`${lot.accountId}-${lot.id}-${lot.openTxId}`} className="border-b border-border-soft">
                           <td className={`${CELL} text-left text-dim`}>{shortDate(lot.acquiredDate)}</td>
@@ -496,16 +515,24 @@ export function PositionDetail({
                             {price(lot.quantity > 0 ? lot.costBasis / lot.quantity : 0)}
                           </td>
                           <td className={`${CELL} text-right text-foreground`}>{money(value)}</td>
-                          <td className={`${CELL} text-right ${toneFor(gain)}`}>{money(gain)}</td>
+                          <td
+                            className={`${CELL} text-right ${toneFor(gain)}`}
+                            title={price0 === null ? "No quote, so this is the lot at cost." : undefined}
+                          >
+                            {price0 === null ? "—" : money(gain)}
+                          </td>
                           <td className={`${CELL} text-right ${isLong ? "text-positive" : "text-dim"}`}>
                             {isLong ? "Long" : "Short"}
+                          </td>
+                          <td className={`${CELL} text-right text-dim-2`}>
+                            {isLong ? "—" : shortDate(longTermFrom)}
                           </td>
                         </tr>
                       );
                     })}
                   {openLots.length > openWindow.limit() && (
                     <tr>
-                      <td colSpan={9} className="px-3 py-2">
+                      <td colSpan={10} className="px-3 py-2">
                         <MoreRows
                           shown={openWindow.limit()}
                           total={openLots.length}

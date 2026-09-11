@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FacetState } from "@/components/ui/facets";
 import { useSavedFilters, type SavedFilter } from "@/store/useSavedFilters";
 import type { FilterSection } from "./FilterMenu";
+import { dateRangeValueLabel } from "./filters";
 
 /**
  * The bookmark next to the filter button: keep the combination you are looking
@@ -191,7 +192,10 @@ function describe<K extends string>(
   const parts = Object.entries(filter.facets).flatMap(([key, facet]) => {
     const section = sections.find((s) => s.key === key);
     return facet.selected.map((value) => {
-      const label = section?.options.find((o) => o.value === value)?.label ?? value;
+      const label =
+        section?.kind === "dateRange"
+          ? dateRangeValueLabel(value)
+          : section?.options.find((o) => o.value === value)?.label ?? value;
       return facet.mode === "exclude" ? `not ${label}` : label;
     });
   });

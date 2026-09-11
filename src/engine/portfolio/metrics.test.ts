@@ -34,6 +34,8 @@ function holding(patch: Partial<Holding> & { symbol: string }): Holding {
     weight: 0,
     realizedGain: 0,
     income: 0,
+    incomeTtm: 0,
+    dividendYield: null,
     totalGain: 0,
     irr: null,
     lots: [],
@@ -480,6 +482,48 @@ describe("analyzePortfolio", () => {
     expect(withoutCash).toHaveLength(1);
     expect(withoutCash[0].weight).toBeCloseTo(1, 6);
     expect(withoutCash[0].value).toBe(1000);
+  });
+});
+
+describe("dividend yield", () => {
+  it("reads trailing twelve months of income against today's value", () => {
+    const result = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+        // Inside the trailing year.
+        tx({ type: "dividend", date: "2026-06-15", amount: 15 }),
+        tx({ type: "dividend", date: "2025-09-15", amount: 15 }),
+        // Exactly a year ago and older: outside it.
+        tx({ type: "dividend", date: "2025-08-04", amount: 100 }),
+        tx({ type: "dividend", date: "2024-06-15", amount: 100 }),
+      ]),
+      { VTI: { price: 150, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+    const vti = result.holdings.find((h) => h.symbol === "VTI");
+    expect(vti?.income).toBe(230);
+    expect(vti?.incomeTtm).toBe(30);
+    expect(vti?.dividendYield).toBeCloseTo(30 / 1500, 6);
+  });
+
+  it("is null with no income or no quote", () => {
+    const unpriced = analyzePortfolio(
+      portfolio([
+        tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 }),
+        tx({ type: "dividend", date: "2026-06-15", amount: 15 }),
+      ]),
+      {},
+      { asOf: "2026-08-04" },
+    );
+    // Carried at cost, which is still a value -- the yield is against it.
+    expect(unpriced.holdings[0].dividendYield).toBeCloseTo(15 / 1000, 6);
+
+    const quiet = analyzePortfolio(
+      portfolio([tx({ type: "buy", date: "2024-01-10", quantity: 10, price: 100 })]),
+      { VTI: { price: 150, date: "2026-08-03" } },
+      { asOf: "2026-08-04" },
+    );
+    expect(quiet.holdings[0].dividendYield).toBeNull();
   });
 });
 

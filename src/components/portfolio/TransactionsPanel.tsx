@@ -43,6 +43,8 @@ import {
 } from "./grouping";
 import { FilterStatus } from "./FilterStatus";
 import { MoreRows, useRowWindow } from "./rowWindow";
+import { facetActive, facetMatches, type FacetState } from "@/components/ui/facets";
+import { matchesDateRange } from "./filters";
 
 type TxGrouping = "none" | "symbol" | "account" | "type" | "month";
 
@@ -430,6 +432,9 @@ export function TransactionsPanel({
   scopeAccountIds,
   search,
   onSearchChange,
+  typeFacet,
+  dateFacet,
+  onClearFilters,
 }: {
   portfolio: Portfolio;
   /** null = every account (the "all" scope); otherwise the account ids the
@@ -440,6 +445,12 @@ export function TransactionsPanel({
   search: string;
   /** Clicking a lot ID searches for it, which now writes to the shared box. */
   onSearchChange: (next: string) => void;
+  /** Which transaction types to show, from the shared Filters panel. */
+  typeFacet: FacetState;
+  /** A date range, from the same panel -- see `dateRangeOf` in `filters.ts`. */
+  dateFacet: FacetState;
+  /** Clears the two above, for the count's own "clear" link. */
+  onClearFilters: () => void;
 }) {
   const addTransaction = usePortfolioStore((s) => s.addTransaction);
   const updateTransaction = usePortfolioStore((s) => s.updateTransaction);
@@ -447,15 +458,15 @@ export function TransactionsPanel({
   const removeTransactions = usePortfolioStore((s) => s.removeTransactions);
   const moveTransactions = usePortfolioStore((s) => s.moveTransactions);
   const splitTransactions = usePortfolioStore((s) => s.splitTransactions);
+  const retypeTransactions = usePortfolioStore((s) => s.retypeTransactions);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [bulkAccountId, setBulkAccountId] = useState("");
+  const [bulkType, setBulkType] = useState<TransactionType | "">("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [splitPct, setSplitPct] = useState("50");
   const [adding, setAdding] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [typeFilter, setTypeFilter] = useState<TransactionType | "all" | `group:${string}`>("all");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
   /** Grouped by account out of the box, for the same reason Holdings is: a
    *  ledger merged across accounts reads as one undifferentiated stream, and
    *  which account a row belongs to is the fact that separates them. */
@@ -499,12 +510,6 @@ export function TransactionsPanel({
 
   const filtered = useMemo(() => {
     const query = search.trim().toUpperCase();
-    // A group selection matches every type in that group, so "Short" pulls both
-    // the opening sale and the cover without needing two passes.
-    const groupTypes =
-      typeFilter.startsWith("group:")
-        ? TRANSACTION_TYPE_GROUPS.find((g) => g.label === typeFilter.slice(6))?.types ?? []
-        : null;
     // A query that's an exact ticker (picked from the datalist, or just typed
     // in full) narrows to that one symbol -- otherwise short tickers like "U"
     // would wildcard-match every lot id and symbol that merely contains a U.
@@ -521,16 +526,14 @@ export function TransactionsPanel({
         if (exactTicker) return (tx.symbol ?? "") === exactTicker;
         return (tx.symbol ?? "").includes(query) || (tx.lotId ?? "").toUpperCase().includes(query);
       })
-      .filter((tx) =>
-        typeFilter === "all" ? true : groupTypes ? groupTypes.includes(tx.type) : tx.type === typeFilter,
-      )
-      .filter((tx) => (!fromDate || tx.date >= fromDate) && (!toDate || tx.date <= toDate));
-  }, [portfolio.transactions, scopeAccountIds, search, typeFilter, fromDate, toDate, tickers]);
+      .filter((tx) => facetMatches([tx.type], typeFacet))
+      .filter((tx) => matchesDateRange(tx.date, dateFacet));
+  }, [portfolio.transactions, scopeAccountIds, search, typeFacet, dateFacet, tickers]);
 
   const rows = useMemo(() => apply(filtered), [apply, filtered]);
   // Only this tab's own filters -- the shared search has its own way out in
   // the bar that owns it.
-  const filtersActive = typeFilter !== "all" || fromDate !== "" || toDate !== "";
+  const filtersActive = facetActive(typeFacet) || facetActive(dateFacet);
 
   const accountGroups = useMemo(() => accountGroupsOf(portfolio.accounts), [portfolio.accounts]);
 
@@ -604,61 +607,15 @@ export function TransactionsPanel({
           Transactions
           <span className="ml-2 text-[12px] font-normal text-dim-2">{rows.length} rows</span>
         </h2>
+        {/* The type and date filters that used to sit here are sections of
+            the shared Filters panel now, beside every other filter and
+            remembered by saved combinations. Only the count stays. */}
         <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto sm:items-center">
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
-            className={`${INPUT} w-full sm:w-auto`}
-          >
-            <option value="all">All types</option>
-            {TRANSACTION_TYPE_GROUPS.map((group) => (
-              <optgroup key={group.label} label={group.label}>
-                <option value={`group:${group.label}`}>All {group.label.toLowerCase()}</option>
-                {group.types.map((type) => (
-                  <option key={type} value={type}>
-                    {TRANSACTION_TYPE_LABELS[type]}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-          {/* From and To are one control -- a range -- so they share a unit and
-              are never split by a wrap. Each label sits inline to the left of
-              its own box rather than above it, and the box is sized to its
-              content (a short date) rather than stretched -- a stretched,
-              stacked pair was the fix for a real overflow bug, but the
-              overflow came from forcing the box to 100% of a too-narrow grid
-              column, not from the box needing the width. Left to size itself,
-              it doesn't overflow, and the pair fits on one row. */}
-          <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 sm:w-auto">
-            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-              <span>From</span>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className={INPUT}
-              />
-            </label>
-            <label className="flex items-center gap-1 text-[11.5px] text-dim-2">
-              <span>To</span>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className={INPUT}
-              />
-            </label>
-          </div>
           <FilterStatus
             shown={rows.length}
             total={portfolio.transactions.length}
             active={filtersActive}
-            onClear={() => {
-              setTypeFilter("all");
-              setFromDate("");
-              setToDate("");
-            }}
+            onClear={onClearFilters}
           />
           {/* Deletes exactly what the filters are showing, so the same control
               covers emptying the ledger before re-importing a corrected file
@@ -792,7 +749,68 @@ export function TransactionsPanel({
             Split into it
           </Btn>
 
-          <Btn onClick={clearSelection}>Clear</Btn>
+          <span className="text-dim-2">|</span>
+
+          <select
+            value={bulkType}
+            onChange={(e) => setBulkType(e.target.value as TransactionType | "")}
+            className={INPUT}
+            aria-label="Type to set on the selected rows"
+          >
+            <option value="">— set type —</option>
+            {TRANSACTION_TYPE_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.types.map((type) => (
+                  <option key={type} value={type}>
+                    {TRANSACTION_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <Btn
+            onClick={() => {
+              if (!bulkType) return;
+              retypeTransactions(selectedVisible, bulkType);
+              clearSelection();
+              setBulkType("");
+            }}
+            className={bulkType ? "" : "pointer-events-none opacity-40"}
+            title="Give every selected row this type. For a run of rows a statement mistyped, without editing each one."
+          >
+            Set type
+          </Btn>
+
+          <span className="text-dim-2">|</span>
+
+          {confirmingDelete ? (
+            <>
+              <Btn
+                onClick={() => {
+                  removeTransactions(selectedVisible);
+                  setConfirmingDelete(false);
+                  clearSelection();
+                }}
+                title="This cannot be undone"
+              >
+                Delete {selectedVisible.length}
+              </Btn>
+              <Btn onClick={() => setConfirmingDelete(false)}>Keep</Btn>
+            </>
+          ) : (
+            <Btn onClick={() => setConfirmingDelete(true)} title="Delete every selected row">
+              Delete selected
+            </Btn>
+          )}
+
+          <Btn
+            onClick={() => {
+              clearSelection();
+              setConfirmingDelete(false);
+            }}
+          >
+            Clear
+          </Btn>
         </div>
       )}
 

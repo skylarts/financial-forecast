@@ -14,6 +14,7 @@ import {
   type PortfolioAccount,
   type Security,
   type Transaction,
+  type TransactionType,
 } from "@/domain/portfolio";
 import type { DraftTransaction } from "@/lib/portfolio/importer";
 import { withAssignedLotIds } from "@/lib/portfolio/lotAssignment";
@@ -130,6 +131,12 @@ interface PortfolioState {
    * the whole portfolio once per row. Returns how many actually went.
    */
   removeTransactions: (ids: readonly string[]) => number;
+  /**
+   * Sets one type on every row named, in a single write. For a batch a
+   * statement mistyped -- a run of "Reinvest Dividend" rows imported as
+   * purchases, say -- where editing each one replays the ledger each time.
+   */
+  retypeTransactions: (ids: readonly string[], type: TransactionType) => number;
   /**
    * Writes one import as a single batch, each row carrying the account it was
    * routed to. Returns the batch id, so a bad import can be rolled back
@@ -310,6 +317,21 @@ export const usePortfolioStore = create<PortfolioState>()(
             "deleting transactions",
           );
           return before - get().portfolio.transactions.length;
+        },
+
+        retypeTransactions: (ids, type) => {
+          if (ids.length === 0) return 0;
+          const wanted = new Set(ids);
+          let changed = 0;
+          mutate((p) => ({
+            ...p,
+            transactions: p.transactions.map((tx) => {
+              if (!wanted.has(tx.id) || tx.type === type) return tx;
+              changed += 1;
+              return { ...tx, type };
+            }),
+          }));
+          return changed;
         },
 
         importTransactions: (rows) => {
