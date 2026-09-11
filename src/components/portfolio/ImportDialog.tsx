@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useModalDialog } from "@/components/ui/useModalDialog";
 import { SchwabFetchPanel } from "./SchwabFetchPanel";
 import type { PortfolioAccount, Transaction } from "@/domain/portfolio";
 import { TRANSACTION_TYPE_LABELS } from "@/domain/portfolio";
@@ -90,6 +91,7 @@ export function ImportDialog({
   onClose: () => void;
 }) {
   const [text, setText] = useState("");
+  const box = useModalDialog<HTMLDivElement>(onClose);
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [mappingOverride, setMappingOverride] = useState<Partial<ColumnMapping>>({});
   const [skipDuplicates, setSkipDuplicates] = useState(true);
@@ -219,14 +221,24 @@ export function ImportDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/50 p-0 sm:items-center sm:p-4"
-      onClick={onClose}
+      // A stray click outside the card closes an empty dialog, which is what
+      // a stray click means. Once something has been pasted it does nothing:
+      // a thousand rows of statement are not to be lost to a misplaced click,
+      // and Escape or the Close button are still there for closing on purpose.
+      onClick={text.trim() === "" ? onClose : undefined}
     >
       <div
+        ref={box}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="import-dialog-title"
         className="flex max-h-full w-full max-w-5xl flex-col overflow-hidden border-border bg-panel sm:rounded-lg sm:border"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
-          <h2 className="text-[15px] font-semibold text-foreground">Import transactions</h2>
+          <h2 id="import-dialog-title" className="text-[15px] font-semibold text-foreground">
+            Import transactions
+          </h2>
           <button
             type="button"
             onClick={onClose}

@@ -311,6 +311,14 @@ export function HoldingsTable({
                   onToggle={() => collapse.toggle(group.key)}
                   depth={group.depth}
                   labelSpan={labelSpan}
+                  summary={
+                    <>
+                      <span className="text-foreground">{money(totals.marketValue)}</span>
+                      <span className={toneFor(totals.unrealizedGain)}>
+                        {money(totals.unrealizedGain)}
+                      </span>
+                    </>
+                  }
                   cells={[
                     <span key="value" className="text-foreground">
                       {money(totals.marketValue)}

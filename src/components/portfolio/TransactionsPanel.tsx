@@ -401,6 +401,30 @@ function num(raw: string): number {
   return Number.isFinite(value) ? Math.abs(value) : 0;
 }
 
+/**
+ * Net shares a set of rows moved, or null when they span more than one
+ * security.
+ *
+ * Adding VTI shares to BND shares produces a number that means nothing, and
+ * the totals row used to print exactly that under a tooltip claiming it
+ * reconciled against "the position's" share count. There is only a position
+ * to reconcile against when every row is the same symbol -- a single-name
+ * search, a lot-id search, a filtered account holding one fund -- so that is
+ * the only time a figure is shown. Cash-only rows carry no symbol and are
+ * ignored: a deposit beside a stack of VTI buys doesn't make it two symbols.
+ */
+function netSharesIfOneSymbol(rows: readonly Transaction[]): number | null {
+  let only: string | null = null;
+  for (const tx of rows) {
+    if (tx.symbol === null) continue;
+    const symbol = normalizeSymbol(tx.symbol);
+    if (only === null) only = symbol;
+    else if (only !== symbol) return null;
+  }
+  if (only === null) return null;
+  return rows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
+}
+
 export function TransactionsPanel({
   portfolio,
   scopeAccountIds,
@@ -835,7 +859,7 @@ export function TransactionsPanel({
             <tbody>
               {groups.map((group) => {
                 const netCash = group.totalRows.reduce((sum, tx) => sum + signedCashFlow(tx), 0);
-                const netQuantity = group.totalRows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
+                const netQuantity = netSharesIfOneSymbol(group.totalRows);
                 const collapsed = grouping !== "none" && collapse.isCollapsed(group.key);
                 // A subdivision folds away with the account it belongs to.
                 if (group.parentKey !== null && collapse.isCollapsed(group.parentKey)) return null;
@@ -856,12 +880,14 @@ export function TransactionsPanel({
                         labelSpan={5}
                         leadSpan={1}
                         cells={[
-                          <span
-                            key="qty"
-                            title="Net shares this group moved: buys less sells. Reconciles against the position's share count."
-                          >
-                            {shares(netQuantity)}
-                          </span>,
+                          netQuantity === null ? null : (
+                            <span
+                              key="qty"
+                              title="Net shares this group moved: buys less sells. Reconciles against the position's share count."
+                            >
+                              {shares(netQuantity)}
+                            </span>
+                          ),
                           null,
                           <span
                             key="net"
@@ -1005,8 +1031,13 @@ export function TransactionsPanel({
                 <td className={`${FOOT_FROZEN} text-left text-foreground`}>Total</td>
                 <td className={FOOT} colSpan={3}></td>
                 {(() => {
-                  const netQuantity = rows.reduce((sum, tx) => sum + signedQuantity(tx), 0);
-                  return (
+                  const netQuantity = netSharesIfOneSymbol(rows);
+                  return netQuantity === null ? (
+                    <td
+                      className={`${FOOT} text-right text-dim-2`}
+                      title="Shares of different securities don't add up. Narrow to one symbol to see its net share count."
+                    />
+                  ) : (
                     <td
                       className={`${FOOT} text-right text-foreground`}
                       title="Net shares all rows moved: buys less sells. Reconciles against the position's share count."

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type { Id } from "@/domain";
 import type { Transaction } from "@/domain/portfolio";
@@ -10,7 +10,8 @@ import type { Holding } from "@/engine/portfolio/metrics";
 import { rollUpBySymbol } from "@/engine/portfolio/bySymbol";
 import { lotTermLabel, money, percent, price, shares, shortDate, toneFor } from "@/lib/portfolio/format";
 import { Segmented } from "@/components/ui/controls";
-import type { PricePoint } from "./PriceChart";
+import { useModalDialog } from "@/components/ui/useModalDialog";
+import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { MoreRows, useRowWindow } from "./rowWindow";
 
 /**
@@ -56,8 +57,39 @@ const RANGES = [
 
 type Range = (typeof RANGES)[number]["value"] | "custom";
 
-/** Fetch window backing a custom range. Clipped client-side to the exact dates. */
-const CUSTOM_FETCH_RANGE = "max";
+/**
+ * The one range ever fetched, whatever the buttons say.
+ *
+ * Every window is clipped out of this series client-side. Asking the feed for
+ * "max" -- which is what the Max button and every custom window used to do --
+ * quietly comes back as monthly closes, so Max drew a month-end chart and a
+ * two-week custom window drew a point or two. Ten years is the deepest range
+ * the feed still answers daily, and it's the same range the summary cards and
+ * the Performance tab pull, so the three share one cached series per symbol
+ * instead of each fetching its own.
+ */
+const HISTORY_RANGE = "10y";
+
+/** How many months back each preset reaches; Max is the whole fetched series. */
+const MONTHS_BACK: Partial<Record<Range, number>> = {
+  "1mo": 1,
+  "3mo": 3,
+  "1y": 12,
+  "5y": 60,
+};
+
+function isoMonthsAgo(months: number, now: Date = new Date()): string {
+  const date = new Date(now);
+  date.setMonth(date.getMonth() - months);
+  return date.toISOString().slice(0, 10);
+}
+
+/** The first date a preset range shows, or null for the whole series. */
+function rangeStart(range: Range, now: Date = new Date()): string | null {
+  if (range === "max" || range === "custom") return null;
+  if (range === "ytd") return `${now.toISOString().slice(0, 4)}-01-01`;
+  return isoMonthsAgo(MONTHS_BACK[range] ?? 12, now);
+}
 
 const HEAD = "px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-dim-2";
 const CELL = "px-3 py-1.5 text-[12px] tabular-nums";
@@ -134,7 +166,7 @@ export function PositionDetail({
   const [range, setRange] = useState<Range>(() => rangeCovering(firstTradeDate));
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [loaded, setLoaded] = useState<{ key: string; points: PricePoint[] } | null>(null);
+  const box = useModalDialog<HTMLDivElement>(onClose);
 
   const openHoldings = useMemo(
     () =>
@@ -196,39 +228,23 @@ export function PositionDetail({
   const closedWindow = useRowWindow(lotsClosed);
   const txWindow = useRowWindow(txs);
 
-  // A custom window is served by clipping the full history rather than by
-  // asking the feed for arbitrary dates: the feed only speaks in named ranges,
-  // and the full series is cached anyway, so this costs one fetch and then none.
-  const fetchRange = range === "custom" ? CUSTOM_FETCH_RANGE : range;
-  const requestKey = `${symbol}:${fetchRange}`;
-
-  useEffect(() => {
-    let cancelled = false;
-    const [requestedSymbol, requestedRange] = requestKey.split(":");
-    fetch(`/api/prices/history?symbol=${encodeURIComponent(requestedSymbol)}&range=${requestedRange}`)
-      .then((r) => (r.ok ? r.json() : { points: [] }))
-      .then((body: { points?: PricePoint[] }) => {
-        if (!cancelled) setLoaded({ key: requestKey, points: body.points ?? [] });
-      })
-      .catch(() => {
-        if (!cancelled) setLoaded({ key: requestKey, points: [] });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [requestKey]);
-
-  // Derived rather than a separate flag, so switching range can't leave the
-  // previous symbol's series on screen looking like the new one's.
-  const loading = loaded?.key !== requestKey;
+  // One ten-year fetch per symbol, through the same hook and caches the
+  // summary cards and the Performance tab use -- module memory, IndexedDB,
+  // then the feed -- so opening a name already priced elsewhere on the page
+  // costs no request at all, and every range button is a client-side clip.
+  const historyFrom = useMemo(() => isoMonthsAgo(120), []);
+  const symbolList = useMemo(() => [symbol], [symbol]);
+  const { histories, loading } = usePriceHistories(symbolList, HISTORY_RANGE, historyFrom);
 
   const points = useMemo(() => {
-    const fetched = loaded?.key === requestKey ? loaded.points : [];
-    if (range !== "custom" || (!fromDate && !toDate)) return fetched;
-    return fetched.filter(
-      (point) => (!fromDate || point.date >= fromDate) && (!toDate || point.date <= toDate),
+    const series = histories.get(symbol) ?? [];
+    const start = range === "custom" ? fromDate || null : rangeStart(range);
+    const end = range === "custom" ? toDate || null : null;
+    if (start === null && end === null) return series;
+    return series.filter(
+      (point) => (start === null || point.date >= start) && (end === null || point.date <= end),
     );
-  }, [loaded, requestKey, range, fromDate, toDate]);
+  }, [histories, symbol, range, fromDate, toDate]);
 
   const trades = txs.filter(
     (tx) => tx.quantity > 0 && tx.type !== "split" && tx.type !== "dividend",
@@ -252,14 +268,24 @@ export function PositionDetail({
         : null;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={onClose}>
+    // No click-to-close on the backdrop. A drawer this tall is read by
+    // scrolling, and a scroll that drifts off its edge -- or a click meant for
+    // the table showing through beside it -- used to throw the whole thing
+    // away. Escape and the Close button shut it; nothing else does.
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/40">
       <div
+        ref={box}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="position-detail-title"
         className="flex h-full w-full max-w-4xl flex-col overflow-y-auto border-l border-border bg-panel"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-border bg-panel px-5 py-4">
           <div>
-            <h2 className="flex items-center gap-2 text-[18px] font-semibold text-foreground">
+            <h2
+              id="position-detail-title"
+              className="flex items-center gap-2 text-[18px] font-semibold text-foreground"
+            >
               {symbol}
               {!isOpen && (
                 <span

@@ -46,11 +46,24 @@ function useDebouncedField<T>(value: T, commit: (next: T) => void, delay = COMMI
   const localRef = useRef(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commitRef = useRef(commit);
-  commitRef.current = commit;
 
   useEffect(() => {
-    localRef.current = value;
+    commitRef.current = commit;
+  }, [commit]);
+
+  // When the value behind the field changes from outside (another field's
+  // commit re-derived it, a cloud pull replaced the account), the field
+  // follows it. Done by comparing against the last value seen rather than in
+  // an effect: resetting state from inside an effect renders the stale value
+  // for a frame first, and that flicker is the whole reason React warns
+  // against it.
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
     setLocal(value);
+  }
+  useEffect(() => {
+    localRef.current = value;
   }, [value]);
 
   const flush = useCallback(() => {

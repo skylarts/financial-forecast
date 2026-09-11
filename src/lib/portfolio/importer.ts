@@ -262,9 +262,20 @@ const MONTHS: Record<string, string> = {
   jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
 };
 
-/** Normalizes the date formats brokerages actually emit into YYYY-MM-DD. */
+/**
+ * Normalizes the date formats brokerages actually emit into YYYY-MM-DD.
+ *
+ * Schwab writes a settled row as "08/17/2026 as of 08/15/2026": the first
+ * date is when the row posted, the second is when the trade happened. The
+ * ledger runs on trade dates -- it is what the app's own Schwab API sync keys
+ * on, and what a lot's holding period runs from -- so when both are present
+ * the "as of" date wins. This used to keep the posting date instead, which
+ * put the same trade on different days depending on whether it arrived by
+ * CSV or by API, and the duplicate check keys on the date.
+ */
 export function parseDate(raw: string): ISODate | null {
-  const text = raw.trim().replace(/\s+as\s+of.*$/i, "");
+  const asOf = raw.match(/\bas\s+of\s+(.+)$/i);
+  const text = (asOf ? asOf[1] : raw).trim();
   if (!text) return null;
 
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -304,6 +315,15 @@ export function parseNumber(raw: string): number | null {
 }
 
 const TYPE_PATTERNS: [RegExp, TransactionType][] = [
+  // Schwab's CSV splits a reinvestment into two rows. "Reinvest Dividend" and
+  // "Qual Div Reinvest" are the dividend itself -- cash *in*, credited before
+  // it is spent -- and "Reinvest Shares" is the purchase it funds. Both
+  // dividend rows contain the word "reinvest", so the generic pattern below
+  // typed them as the purchase and booked each dividend as cash going out.
+  // Anchored to Schwab's exact wording so Fidelity's "DIVIDEND REINVESTMENT"
+  // (which genuinely is the purchase) keeps going where it always has.
+  [/^reinvest(ed)?\s+dividend$/i, "dividend"],
+  [/^qual(ified)?\s+div(idend)?\s+reinvest(ed|ment)?$/i, "dividend"],
   [/reinvest|drip/i, "reinvest"],
   [/dividend|cap(ital)?\s*gain|distribution\s*received/i, "dividend"],
   [/interest/i, "interest"],
