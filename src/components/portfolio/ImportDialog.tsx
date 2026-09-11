@@ -25,11 +25,18 @@ import {
   type ImportPresetId,
 } from "@/lib/portfolio/importPresets";
 import { splitDraft, suggestSplitRows, type SplitSuggestion } from "@/lib/portfolio/importSplits";
+import {
+  accountForRow as routeRow,
+  bucketOf,
+  isRowChecked,
+  resolveRouting,
+  withTypeOverride,
+  type ReviewBucket,
+} from "@/lib/portfolio/importReview";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { money, price, shares, shortDate } from "@/lib/portfolio/format";
 import { Btn } from "@/components/ui/controls";
 import { accountFamilyIds, accountTreeRows, sleevesOf } from "@/lib/portfolio/accountTree";
-import { suggestSleeve } from "@/lib/portfolio/taxSource";
 
 /** One transaction to write and the account it lands in. */
 export interface ImportAssignment {
@@ -61,24 +68,7 @@ const SAMPLE = `Run Date,Action,Symbol,Quantity,Price,Amount
 01/10/2024,YOU BOUGHT,VTI,10,220.50,-2205.00
 04/15/2024,DIVIDEND RECEIVED,VTI,,,42.10`;
 
-/**
- * Which pile a row is in. Exactly one each, so the tab counts add up to the
- * file's length and a row can never hide from every filter.
- *
- * "Unrecognised" comes first because it is the one pile that blocks the
- * import: a type the broker's table did not vouch for is a guess, and a guess
- * about direction is precisely what corrupts a cash balance if it lands
- * unread.
- */
-type Bucket = "unrecognised" | "ready" | "flagged" | "duplicate" | "ignored" | "error";
-
-function bucketOf(row: ImportRow): Bucket {
-  if (row.ignored) return "ignored";
-  if (row.skip) return "error";
-  if (row.unrecognised) return "unrecognised";
-  if (row.duplicate) return "duplicate";
-  return row.issues.length > 0 ? "flagged" : "ready";
-}
+type Bucket = ReviewBucket;
 
 const BUCKET_LABELS: Record<Bucket, string> = {
   unrecognised: "Needs a decision",
@@ -234,16 +224,12 @@ export function ImportDialog({
   // What each label resolves to: the user's choice if they made one, else the
   // guess read off the label, else nothing -- which leaves those rows on the
   // parent as unassigned rather than picking a pot for them.
-  const resolvedRouting = useMemo(() => {
-    const out: Record<string, string> = {};
-    for (const label of sourceLabels) {
-      out[label] = routing[label] ?? suggestSleeve(label, sleeves)?.id ?? "";
-    }
-    return out;
-  }, [sourceLabels, routing, sleeves]);
+  const resolvedRouting = useMemo(
+    () => resolveRouting(sourceLabels, routing, sleeves),
+    [sourceLabels, routing, sleeves],
+  );
 
-  const accountForRow = (row: ImportRow) =>
-    (routable && resolvedRouting[row.taxSourceLabel]) || accountId;
+  const accountForRow = (row: ImportRow) => routeRow(row, accountId, routable, resolvedRouting);
 
   /**
    * How the user is reviewing this file: which group they are filtering to,
@@ -293,22 +279,13 @@ export function ImportDialog({
   const setType = (index: number, type: TransactionType) =>
     amend((base) => ({ types: { ...base.types, [index]: type } }));
 
-  const defaultChecked = (row: ImportRow) => !row.skip && !(skipDuplicates && row.duplicate);
-  // A row that couldn't be read has nothing to import, so it can't be ticked
-  // back on -- no override survives that. A guess imports only once confirmed.
-  const isChecked = (row: ImportRow, index: number) => {
-    if (row.skip) return false;
-    if (row.unrecognised) return decisions[index] === "confirm";
-    return selection[index] ?? defaultChecked(row);
-  };
+  const isChecked = (row: ImportRow, index: number) =>
+    isRowChecked(row, selection[index], decisions[index], skipDuplicates);
 
   const indexed = useMemo(() => rows.map((row, index) => ({ row, index })), [rows]);
   const chosen = indexed.filter(({ row, index }) => isChecked(row, index));
   /** The rows going in, with any type the user picked over the guess. */
-  const importable = chosen.map(({ row, index }) => {
-    const type = typeOverrides[index];
-    return type && type !== row.draft.type ? { ...row, draft: { ...row.draft, type } } : row;
-  });
+  const importable = chosen.map(({ row, index }) => withTypeOverride(row, typeOverrides[index]));
 
   const undecided = indexed.filter(
     ({ row, index }) => row.unrecognised && !row.skip && decisions[index] === undefined,

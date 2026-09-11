@@ -1,95 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Financial Forecast
 
-## Getting Started
+Two tools in one Next.js app, sharing sign-in, theme, and UI:
 
-First, run the development server:
+- **Forecast** (`/`) projects a household's finances year by year: accounts, income, expenses, one-off events, a home purchase, taxes, required minimum distributions, and a drain order for retirement withdrawals. It answers "will this plan hold" and shows where the money flows each year.
+- **Portfolio** (`/portfolio`) tracks the real accounts behind that plan: holdings, tax lots, cash, realized and unrealized gains, dividends, and time-weighted performance against a benchmark. A linked portfolio account can push its live market value into the forecast's starting balance, so the two tools stop drifting apart.
+
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev -- --port 3001 --experimental-https
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then open <https://127.0.0.1:3001>. TLS is needed because Schwab only accepts `https` callbacks; without a Schwab connection plain `npm run dev` works too.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Checks:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npx vitest run        # unit tests, including the pure engine
+npx tsc --noEmit      # types
+npx eslint src        # lint
+```
 
-## Learn More
+Copy `.env.example` to `.env.local` for Supabase and Schwab settings. With no Supabase project configured the app runs single-user with everything stored in the browser.
 
-To learn more about Next.js, take a look at the following resources:
+## How the portfolio tracker works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**Transactions are the only source of truth.** Holdings, tax lots, cash balances, weights, and every performance figure are replayed from the ledger on each render and never stored. Editing or re-importing a row can therefore never leave a stale derived total behind. Do not add cached totals.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Lot accounting** is specific-ID where a statement supplies a lot id, FIFO otherwise. Same-day buys replay before same-day sells. Transfers out deplete lots without realizing anything. Short positions are tracked on their own side so a sale can never be matched against a short, and a cover never against a long. Option contracts use OCC symbols and a 100-share multiplier.
 
-## Deploy on Vercel
+**Cash is replayed** from deposits, withdrawals, trades, dividends, interest, and fees. An account's `openingCashBalance` is only what it held before its first recorded row. A funded account may go negative, which is what a margin balance is.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+**Performance** is a daily time-weighted series built from the ledger and the feed's price history, with contributions and withdrawals treated as external flows. The summary card's money-weighted figure is the ledger's own IRR and answers a different question. Split-adjusted feed prices are put back into the shares actually held on each day using the feed's split calendar where the ledger has a matching `split` row, and inferred from the trades themselves where it does not.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Importing statements
+
+Open **Import transactions** and paste or upload a file. The dialog detects the format from the header row:
+
+| Preset | What it knows |
+| --- | --- |
+| Schwab CSV | The transactions download for a brokerage or IRA. `Reinvest Dividend` and `Qual Div Reinvest` are dividends; only `Reinvest Shares` is the purchase. Journals, MoneyLink rows and wires are read by sign. `MM/DD/YYYY as of MM/DD/YYYY` keeps the trade date. |
+| Fidelity CSV | The history download. The ticker is read out of the action text when the symbol column is blank; option contracts are built from the prose; the margin mark-to-market rows are dropped as bookkeeping. |
+| Workplace plan export | A 401(k) or 457 export with Investment, Contribution, Activity and Units columns. Fund names are mapped to tickers in the dialog; the Contribution column routes rows to pre-tax and Roth sleeves. |
+| This app's export | The CSV the tracker writes, recognised by its exact type names, so a corrected export imports back with no mapping. |
+
+Anything the preset's table cannot answer is held in a **Needs a decision** pile and the import stays disabled until each row is confirmed or skipped. Duplicates are recognised by a fingerprint of the source row and, failing that, by what the row means (date, type, symbol, shares and price), so re-importing an overlapping export adds only what is new. The dialog also offers `split` rows from the feed's calendar for positions held through a split the file does not record, and links a deposit to a matching withdrawal in another tracked account as a transfer.
+
+A split workplace account is modelled as a parent with two sleeves, one per tax treatment, so the forecast sees two accounts while the custodian sees one.
 
 ## Price feeds
 
-Prices come from whichever feed can supply them, and the order differs by
-what is being asked for:
+Quotes prefer Schwab when a brokerage is connected and fall back to the public feed. History prefers the public feed even when Schwab is connected, because Schwab serves split-adjusted closes without saying a split happened, and the split events are what let a past close be restated into the shares held that day. Option contracts are quoted by both feeds. A quote older than the last completed trading day shows its date beside the price.
 
-- **Quotes** prefer Schwab when a brokerage is connected, and fall back to the
-  public feed. Schwab reports the prior session's close outright, where the
-  public feed leaves it to be recovered from a daily series.
-- **History** prefers the public feed even when Schwab is connected. Schwab
-  serves closes already adjusted for splits but never reports that a split
-  happened, and the events themselves are what let a past close be put back
-  into the shares actually held that day. Schwab still stands behind the public
-  feed as a source of closes when it is unreachable.
-
-Connecting a brokerage is entirely optional. With no Schwab app configured the
-app uses the public feed for everything, the connection banner never appears,
-and manual CSV/statement import works exactly as it always has.
+Connecting a brokerage is optional. With no Schwab app configured the app uses the public feed for everything and the connection banner never appears.
 
 ### Connecting Schwab
 
-1. Create an app at [developer.schwab.com](https://developer.schwab.com) with
-   the **Accounts and Trading** and **Market Data** products.
+1. Create an app at [developer.schwab.com](https://developer.schwab.com) with the **Accounts and Trading** and **Market Data** products.
 2. Register `https://127.0.0.1:3001/api/schwab/callback` as its callback URL.
-   Schwab only accepts `https`, so the dev server has to serve TLS:
-   `npm run dev -- --port 3001 --experimental-https`.
-3. Put the app key and secret in `.env.local` (see `.env.example`).
-4. Open the portfolio and use **Connect Schwab** in the banner.
+3. Put the app key and secret in `.env.local` (see `.env.example`), and set `SCHWAB_ENCRYPTION_KEY` (`openssl rand -hex 32`). Connecting is refused without it rather than storing a token in plaintext.
+4. Open the portfolio menu and choose **Schwab connection**.
+
+Schwab connections expire after seven days and cannot be renewed without a person signing in again. The banner starts asking two days out; if it lapses, prices fall back to the public feed and nothing else changes.
 
 ### Hosting it for more than one person
 
-A Schwab connection belongs to a person, not to the deployment. Where Supabase
-is configured, each user's token is stored in their own `schwab_connections`
-row, encrypted, and reachable only by them -- row-level security enforces that
-in the database, so a route that forgets to scope its query still cannot return
-someone else's credential. Every Schwab route requires a signed-in user.
+A Schwab connection belongs to a person, not the deployment. Where Supabase is configured, each user's token is stored in their own `schwab_connections` row, encrypted, and reachable only by them under row-level security. Every Schwab route requires a signed-in user. Run `supabase/schwab_connections.sql` once, set `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, and a `SCHWAB_CALLBACK_URL` on the production domain, and register that callback on the Schwab app. Schwab requires commercial approval before an app may connect other people's accounts; without it, each user registers their own app and supplies their own key and secret in the UI.
 
-The single-user file under `data/` is only used when Supabase is not configured
-at all, which is the same condition under which this app has no login. As soon
-as there is a Supabase project, an unauthenticated request is refused rather
-than falling back to that file -- otherwise it would be one shared brokerage
-connection handed to every visitor.
+## Sync safety
 
-To deploy:
+The portfolio syncs to Supabase as one document per household. The rules in `src/lib/portfolio/syncSafety.ts` exist because of a real data loss and must keep holding:
 
-1. Run `supabase/schwab_connections.sql` in the Supabase SQL editor.
-2. Set `SCHWAB_ENCRYPTION_KEY` (`openssl rand -hex 32`). Connecting is refused
-   without it rather than storing a brokerage token in plaintext.
-3. Set `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, and a `SCHWAB_CALLBACK_URL` on
-   the production domain, and register that callback on the Schwab app.
+- Never push when the pull failed. A failed pull keeps the local copy and syncs nothing.
+- Never push an empty ledger unless this session has seen a non-empty one.
+- Never let a cloud copy with no transactions overwrite a local copy that has some.
+- Never destroy a redundant copy before the replacement has been read back.
 
-Note that Schwab requires **commercial approval** before an app may connect
-*other people's* accounts. Without it, each user must register their own
-individual Schwab app and supply their own key and secret.
+Local snapshots are written to a separate IndexedDB database whenever a change would reduce the transaction count, and can be restored from the portfolio menu. The sync path never writes them.
 
-**Schwab connections expire after seven days.** The refresh token cannot be
-renewed programmatically — Schwab requires a human to sign in again. The banner
-starts asking two days out; if it lapses, prices fall back to the public feed
-until the next sign-in and nothing else changes.
+## Layout
+
+```
+src/domain/       schemas for the plan and the portfolio (zod)
+src/engine/       the forecast projection and, under portfolio/, the ledger engine
+src/lib/          importers, feeds, sync, formatting
+src/store/        zustand stores and the sync hooks
+src/components/   UI, with portfolio/ for the tracker
+src/app/          routes and API handlers
+```
+
+The engine directories are pure and fully unit-tested; anything that touches the browser, a feed, or Supabase lives outside them.

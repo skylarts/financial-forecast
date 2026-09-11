@@ -3,12 +3,8 @@
 import { useMemo, useState } from "react";
 import { formatOptionSymbol, type Portfolio } from "@/domain/portfolio";
 import type { Holding, PortfolioSummary } from "@/engine/portfolio/metrics";
-import {
-  buildPerformanceSeries,
-  earliestCoveredDate,
-  symbolsForWindow,
-  windowReturn,
-} from "@/engine/portfolio/performance";
+import { buildPerformanceSeries, symbolsForWindow } from "@/engine/portfolio/performance";
+import { summaryReturns } from "@/engine/portfolio/summaryReturns";
 import { money, percent, shortDate, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { useMarketIndexes } from "@/store/useMarketIndexes";
@@ -42,12 +38,6 @@ const HISTORY_RANGE = "10y";
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-function isoYearAgo(): string {
-  const date = new Date();
-  date.setFullYear(date.getFullYear() - 1);
-  return date.toISOString().slice(0, 10);
 }
 
 function Card({
@@ -183,37 +173,7 @@ export function SummaryCards({
     [scopedTransactions, histories, splits, earliest, to, scopeAccountIds, openingCash],
   );
 
-  const returns = useMemo(() => {
-    const points = series.points;
-    /** How far back the loaded closes reach. */
-    const feedStart = earliestCoveredDate(histories);
-    /**
-     * How far back this portfolio reaches. Its own first point is covered by
-     * definition -- it exists only because a loaded history reached that far.
-     */
-    const seriesStart = points[0]?.date ?? null;
-
-    /**
-     * What a fixed-lookback window is measured as covered against: the later of
-     * the two starts.
-     *
-     * A window has to reach back that far in the *ledger* as well as in the
-     * feed, or a six-month-old account reports its six months as a one-year
-     * return. Year-to-date deliberately doesn't use this -- an account opened
-     * in March has no January, but the return since March genuinely is its
-     * year to date.
-     */
-    const lookbackStart =
-      feedStart === null || seriesStart === null ? null : feedStart > seriesStart ? feedStart : seriesStart;
-
-    const lifetime = windowReturn(points, seriesStart ?? to, to, seriesStart);
-    return {
-      ytd: windowReturn(points, `${to.slice(0, 4)}-01-01`, to, feedStart).total,
-      oneYear: windowReturn(points, isoYearAgo(), to, lookbackStart).total,
-      lifetime: lifetime.total,
-      lifetimeCagr: lifetime.annualized,
-    };
-  }, [series.points, histories, to]);
+  const returns = useMemo(() => summaryReturns(series.points, histories, to), [series.points, histories, to]);
 
   /**
    * The day's biggest movers -- gainers or losers, ranked in dollars or in
