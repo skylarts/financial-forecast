@@ -47,7 +47,8 @@ describe("resolveEvents (mock fixture)", () => {
     expect(downPayment!.category).toBe("transfer");
   });
 
-  it("generates childcare postings only within the have_a_kid window", () => {
+  it("generates childcare postings only within the childcare expense's window", () => {
+    // A child is ordinary expenses since v5 (no more have_a_kid event).
     const childcare = resolved.postings.filter((p) => p.label.startsWith("Childcare"));
     expect(childcare[0].date).toBe("2028-03-01");
     expect(childcare[childcare.length - 1].date < "2033-09-02").toBe(true);
@@ -123,30 +124,23 @@ describe("resolveEvents -- today's dollars for future-dated items with no growth
     expect(outgoing.amount).toBeCloseTo(-30_000 * inflationFactor, 6);
   });
 
-  it("inflates have_a_kid's childcare expense and one-time cost", () => {
+  it("inflates a future-dated childcare expense and its one-time cost", () => {
     const cash = makeAccount({ class: "cash", name: "Cash" });
     const scenario = makeScenario({
       accounts: [cash],
-      events: [
-        {
-          id: nanoid(),
-          type: "have_a_kid",
-          name: "Kid",
-          startDate: futureDate,
-          childcareMonthlyExpense: 2_000,
-          childcareEndDate: null,
-          additionalOneTimeCost: 10_000,
-          paymentAccountId: cash.id,
-        },
+      expenses: [
+        makeExpense({ name: "Childcare", amount: 2_000, frequency: "monthly", startDate: futureDate, endDate: null, growthRatePct: null, paymentAccountId: cash.id, category: "childcare" }),
+        makeExpense({ name: "One-time cost", amount: 10_000, frequency: "one_time", startDate: futureDate, growthRatePct: null, paymentAccountId: cash.id, category: "childcare" }),
       ],
       startDate: planStart,
       horizonEndDate: "2036-12-31",
       inflationRatePct,
     });
     const resolved = resolveEvents(scenario);
-    const firstChildcare = resolved.postings.find((p) => p.label.startsWith("Childcare"))!;
-    const oneTime = resolved.postings.find((p) => p.label.startsWith("One-time cost"))!;
+    const firstChildcare = resolved.postings.find((p) => p.label === "Childcare")!;
+    const oneTime = resolved.postings.find((p) => p.label === "One-time cost")!;
     expect(firstChildcare.amount).toBeCloseTo(-2_000 * inflationFactor, 6);
+
     expect(oneTime.amount).toBeCloseTo(-10_000 * inflationFactor, 6);
   });
 });

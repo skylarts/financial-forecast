@@ -99,7 +99,7 @@ export function buildChartMarkers({
   accounts?: Account[];
 }): ChartMarker[] {
   const personName = (id: string | null) => (id ? people.find((p) => p.id === id)?.name ?? "Someone" : "Joint");
-  const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "a home";
+  const accountName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "an account";
 
   const markers: ChartMarker[] = [];
 
@@ -140,16 +140,23 @@ export function buildChartMarkers({
         rows.push({ label: "Home", value: accountName(ev.realEstateAccountId) });
         rows.push({ label: "Net proceeds", value: formatMoney(ev.netProceeds) });
         break;
-      case "have_a_kid":
-        rows.push({ label: "Repeat every", value: "1 month" });
-        rows.push({
-          label: "End year",
-          value: ev.childcareEndDate ? String(yearOf(ev.childcareEndDate)) : "Ongoing",
-        });
-        rows.push({ label: "Monthly childcare expense", value: formatMoney(ev.childcareMonthlyExpense) });
-        if (ev.additionalOneTimeCost) {
-          rows.push({ label: "Upfront child costs", value: formatMoney(ev.additionalOneTimeCost) });
-        }
+      case "roth_conversion":
+        rows.push({ label: "From", value: accountName(ev.fromAccountId) });
+        rows.push({ label: "To", value: accountName(ev.toAccountId) });
+        if (ev.fillToBracketRate != null) rows.push({ label: "Fill to bracket", value: `${Math.round(ev.fillToBracketRate * 100)}%` });
+        else if (ev.amount != null) rows.push({ label: ev.frequency === "one_time" ? "Amount" : "Yearly amount", value: formatMoney(ev.amount) });
+        if (ev.frequency !== "one_time") rows.push({ label: "End year", value: ev.endDate ? String(yearOf(ev.endDate)) : "Ongoing" });
+        rows.push({ label: "Tax paid from", value: ev.taxSource === "withhold" ? "The conversion" : "Cash" });
+        break;
+      case "pay_off_loan":
+        rows.push({ label: "Loan", value: accountName(ev.loanAccountId) });
+        rows.push({ label: "Paid from", value: accountName(ev.fromAccountId) });
+        rows.push({ label: "Amount", value: ev.amount == null ? "Whatever is left" : formatMoney(ev.amount) });
+        break;
+      case "rollover":
+        rows.push({ label: "From", value: accountName(ev.fromAccountId) });
+        rows.push({ label: "To", value: accountName(ev.toAccountId) });
+        rows.push({ label: "Amount", value: ev.amount == null ? "Whole balance" : formatMoney(ev.amount) });
         break;
       case "custom_transfer": {
         const repeat = repeatLabel(ev.frequency, ev.intervalYears);

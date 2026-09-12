@@ -20,7 +20,7 @@ const GLOSSARY = `## Glossary
 
 - **Take-home / net income**: every income source's \`amount\` in this export (except Social Security and pension, see below) is already **net of taxes and payroll deductions** — the actual cash that lands in an account.
 - **Social Security & pension are gross**: these two income categories are entered as their **gross** (pre-tax) amount. The engine computes tax on them itself (Social Security is only partly taxable, per IRS rules); don't treat their listed amount as take-home cash.
-- **Account \`class\`**: the type of account — \`cash\`, \`taxable_investment\`, \`tax_deferred\` (traditional 401k/IRA), \`tax_free\` (Roth), \`real_estate\`, \`other_asset\`, \`credit_card\`, \`loan\`, or \`mortgage\`. Anything in \`credit_card\`/\`loan\`/\`mortgage\` is a liability; everything else is an asset.
+- **Account \`class\`**: the type of account — \`cash\`, \`taxable_investment\`, \`tax_deferred\` (traditional 401k/IRA), \`tax_free\` (Roth), \`hsa\` (health savings: paycheck-funded, withdrawals tax-free), \`education_529\` (withdrawals tax-free), \`real_estate\`, \`other_asset\`, \`credit_card\`, \`loan\`, or \`mortgage\`. Anything in \`credit_card\`/\`loan\`/\`mortgage\` is a liability; everything else is an asset.
 - **Account \`taxTreatment\`**: how withdrawals/growth are taxed — \`taxable\` (brokerage/savings), \`tax_deferred\` (pay ordinary income tax on withdrawal, e.g. traditional 401k/IRA), \`tax_free\` (Roth — no tax on qualified withdrawals), or \`n/a\` (real estate, loans, etc.). When left at \`n/a\`, the engine infers the treatment from the class, so a brokerage/traditional/Roth account is still taxed correctly.
 - **Routing (Extra Savings / split order / drain order)**: money doesn't move between accounts arbitrarily. Exactly one account per scenario is flagged \`isExtraSavings\` — it's the mandatory spending hub: income deposits there, expenses pay from there, and it has no user-configurable floor or ceiling of its own. Each month it captures whatever net income-minus-expenses landed on it (the "fresh surplus"), and the **split order** (an ordered list of accounts, each a flat dollar amount or a cascading percentage of what's left after the stops above it, plus an optional balance cap) decides where that surplus goes; whatever the list doesn't claim simply stays in Extra Savings. When Extra Savings' balance would go below $0, the shortfall is covered by the **drain order** (an ordered list of accounts drawn down to cover the gap, e.g. selling investments to cover a deficit).
 - **Nominal vs. real dollars**: "nominal" = actual future dollar amounts (what your account statement will literally say). "real" = nominal amounts deflated back to today's purchasing power using the plan's inflation rate, so you can compare a dollar in 2050 to a dollar today.
@@ -46,7 +46,11 @@ Each month, in this exact order:
 
 **Taxes.** Any dollar leaving a \`tax_deferred\` account is taxed as ordinary income in full, plus a 10% early-withdrawal penalty if the owner is under 59½ (unless the account is flagged exempt via 72(t)/rule of 55). Any dollar leaving a \`taxable\` account is taxed only on its realized-gain portion, using **average-cost basis**: basis is the account's \`startingCostBasis\` (or the whole starting balance when unset) plus every dollar of new money added since (contributions, routed surplus, transfers); growth never adds basis. \`tax_free\` (Roth) and cash withdrawals realize no tax. The estimated tax withheld on a withdrawal is deducted from the same account it came out of.
 
-**Money sent to a liability pays it down.** A transfer (or income) directed at a mortgage/loan/credit-card account reduces the amount owed, capped at the remaining balance; any excess returns to Extra Savings.
+**Money sent to a liability pays it down.** A transfer (or income) directed at a mortgage/loan/credit-card account reduces the amount owed, capped at the remaining balance; any excess returns to Extra Savings. Money taken FROM a liability is borrowing and grows the amount owed.
+
+**Roth conversions and rollovers are their own events.** A \`roth_conversion\` moves money from a tax-deferred account to a Roth: the amount is ordinary income in that year, never subject to the 10% penalty, and its tax is paid from Extra Savings (or withheld from the conversion when \`taxSource\` is \`withhold\`). A "fill to the top of a bracket" conversion runs each December and converts just enough to bring that year's ordinary taxable income up to the top of the named bracket. A \`rollover\` between two tax-deferred accounts is not a taxable event. A \`pay_off_loan\` event pays a loan down or off from an asset account on a date.
+
+**Death is modelled.** Each person's \`planningEndAge\` is the age they are modelled as passing. From that date their salary, rental, and other income stop; a pension continues at its \`survivorPct\` share (else stops); of two Social Security benefits the survivor keeps the larger; their accounts pass to the survivor for age-based rules; and a married household files single from the following calendar year.
 
 At year-end the engine computes the **exact** federal bill from real IRS bracket tables (brackets and the standard deduction are inflation-indexed forward from 2026): ordinary income = gross tax-deferred withdrawals + gross pension + the taxable portion of Social Security (per the IRS partial-inclusion rule), less the standard deduction; long-term capital gains are stacked on top of ordinary income in the LTCG brackets; early-withdrawal penalties are added on top. The optional flat add-on rate is applied to the same combined base to approximate state/local tax. **Each December the estimated withholding is settled against this exact bill** -- a refund (or extra charge) posted to Extra Savings -- so the household's actual cash tax for a year always equals the exact bracket bill, and the balances/net-worth trajectory reflect it. Because tax during the monthly loop depends on rates that depend on the year's income, the whole simulation is re-run a few times until each year's marginal-rate estimate converges on its actual result.
 
@@ -111,7 +115,7 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push(section("Household"));
   for (const p of scenario.household.people) {
     lines.push(
-      `- **${p.name}** (id: \`${p.id}\`) — born ${p.birthDate}, plans to retire at age ${p.retirementAge}, plan horizon runs through age ${p.planningEndAge}.`
+      `- **${p.name}** (id: \`${p.id}\`) — born ${p.birthDate}, plans to retire at age ${p.retirementAge}, modelled as living to age ${p.planningEndAge} (the plan runs through the latest such date; see "Death is modelled" above).`
     );
   }
 
@@ -160,14 +164,18 @@ export function buildLlmExport(scenario: Scenario): string {
           ? `flat ${stop.amount == null ? "unset (receives nothing)" : formatMoney(stop.amount)} (today's dollars, grown by inflation)`
           : `${stop.pct == null ? "unset (receives nothing)" : fmtPct(stop.pct)} of what's left after the stops above it`
       );
-      if (stop.maxBalance == null) {
+      const target = scenario.accounts.find((a) => a.id === stop.accountId);
+      if (target?.balanceCeiling == null) {
         parts.push("uncapped (catch-all — absorbs everything offered to it)");
       } else {
         const capGrowth =
-          stop.maxBalanceGrowthRatePct == null
+          target.balanceCeilingGrowthRatePct == null
             ? `growing with inflation (${fmtPct(s.inflationRatePct)}/yr)`
-            : `growing ${fmtPct(stop.maxBalanceGrowthRatePct)}/yr`;
-        parts.push(`capped at ${formatMoney(stop.maxBalance)}, ${capGrowth}`);
+            : `growing ${fmtPct(target.balanceCeilingGrowthRatePct)}/yr`;
+        parts.push(`capped at ${formatMoney(target.balanceCeiling)} (set on the account), ${capGrowth}`);
+      }
+      if (stop.limitAmount != null) {
+        parts.push(`at most ${formatMoney(stop.limitAmount)} per ${stop.limitPeriod ?? "annual"} period`);
       }
       if (stop.startDate || stop.endDate) {
         parts.push(`active ${stop.startDate ?? "plan start"} → ${stop.endDate ?? "plan end"}`);
@@ -198,14 +206,17 @@ export function buildLlmExport(scenario: Scenario): string {
           ? `flat ${stop.amount == null ? "unset (covers nothing)" : formatMoney(stop.amount)} (today's dollars, grown by inflation)`
           : `${stop.pct == null ? "unset (covers nothing)" : fmtPct(stop.pct)} of what's left after the stops above it`
       );
-      if (stop.minBalance != null) {
+      if (account?.balanceFloor != null) {
         const floorGrowth =
-          stop.minBalanceGrowthRatePct == null
+          account.balanceFloorGrowthRatePct == null
             ? `inflation (${fmtPct(s.inflationRatePct)}/yr)`
-            : `${fmtPct(stop.minBalanceGrowthRatePct)}/yr`;
-        parts.push(`never drained below ${formatMoney(stop.minBalance)} (today's dollars, grown by ${floorGrowth})`);
+            : `${fmtPct(account.balanceFloorGrowthRatePct)}/yr`;
+        parts.push(`never drained below ${formatMoney(account.balanceFloor)} (set on the account; today's dollars, grown by ${floorGrowth})`);
       } else {
         parts.push("no floor");
+      }
+      if (stop.limitAmount != null) {
+        parts.push(`at most ${formatMoney(stop.limitAmount)} per ${stop.limitPeriod ?? "annual"} period`);
       }
       if (stop.startDate || stop.endDate) {
         parts.push(`active ${stop.startDate ?? "plan start"} → ${stop.endDate ?? "plan end"}`);
@@ -257,6 +268,8 @@ export function buildLlmExport(scenario: Scenario): string {
     if (a.linkedLiabilityId) {
       lines.push(`  - Linked liability: ${accountName(a.linkedLiabilityId)}.`);
     }
+    if (a.balanceCeiling != null) lines.push(`  - Balance cap: ${formatMoney(a.balanceCeiling)} (today's dollars).`);
+    if (a.balanceFloor != null) lines.push(`  - Balance floor: ${formatMoney(a.balanceFloor)} (today's dollars).`);
     if (a.class === "real_estate") {
       const ownership = [
         a.propertyTaxRatePct ? `property tax ${fmtPct(a.propertyTaxRatePct)}/yr of value` : null,
@@ -274,7 +287,7 @@ export function buildLlmExport(scenario: Scenario): string {
   for (const inc of scenario.incomeSources as IncomeSource[]) {
     const gross = inc.category === "social_security" || inc.category === "pension";
     lines.push(
-      `- **${inc.name}** (id: \`${inc.id}\`, category: ${inc.category}) — ${fmtRecurrence(inc.amount, inc.frequency, inc.intervalYears)} ${gross ? "**gross (pre-tax)**" : "take-home (net of tax)"}, ${fmtGrowth(inc.growthRatePct)}, owner: ${personName(inc.ownerId)}, deposits to ${accountName(inc.depositAccountId)}, ${inc.startDate} → ${inc.endDate ?? "end of plan"}${inc.isExcluded ? " — **excluded**" : ""}`
+      `- **${inc.name}** (id: \`${inc.id}\`, category: ${inc.category}) — ${fmtRecurrence(inc.amount, inc.frequency, inc.intervalYears)} ${gross ? "**gross (pre-tax)**" : "take-home (net of tax)"}, ${fmtGrowth(inc.growthRatePct)}, owner: ${personName(inc.ownerId)}, deposits to ${accountName(inc.depositAccountId)}, ${inc.startDate} → ${inc.endDate ?? "end of plan"}${inc.claimAge != null ? `, claimed at age ${inc.claimAge}` : ""}${inc.category === "pension" ? `, survivor benefit ${fmtPct(inc.survivorPct ?? 0)}` : ""}${inc.isExcluded ? " — **excluded**" : ""}`
     );
     if (inc.grossAmount != null) {
       lines.push(
@@ -345,9 +358,21 @@ export function buildLlmExport(scenario: Scenario): string {
             `  - That home's asset and mortgage are both fully retired (zeroed) this date -- not just stopped, unlike a buy_home event's "replace existing housing expenses".`
           );
           break;
-        case "have_a_kid":
+        case "roth_conversion":
           lines.push(
-            `  - Childcare ${formatMoney(ev.childcareMonthlyExpense)}/mo until ${ev.childcareEndDate ?? "end of plan"}${ev.additionalOneTimeCost ? `, plus a one-time ${formatMoney(ev.additionalOneTimeCost)}` : ""}, paid from ${accountName(ev.paymentAccountId)}.`
+            ev.fillToBracketRate != null
+              ? `  - Each December${ev.frequency === "one_time" ? " of the start year only" : ""}, convert from ${accountName(ev.fromAccountId)} to ${accountName(ev.toAccountId)} just enough to fill ordinary taxable income to the top of the ${fmtPct(ev.fillToBracketRate)} bracket. Tax ${ev.taxSource === "withhold" ? "withheld from the conversion" : "paid from Extra Savings"}.`
+              : `  - Convert ${formatMoney(ev.amount ?? 0)} ${ev.frequency === "one_time" ? "once" : "per year"} from ${accountName(ev.fromAccountId)} to ${accountName(ev.toAccountId)}, ${fmtGrowth(ev.growthRatePct)}. Ordinary income, no penalty; tax ${ev.taxSource === "withhold" ? "withheld from the conversion" : "paid from Extra Savings"}.`
+          );
+          break;
+        case "pay_off_loan":
+          lines.push(
+            `  - Pay ${ev.amount == null ? "off whatever is left on" : `${formatMoney(ev.amount)} toward`} ${accountName(ev.loanAccountId)} from ${accountName(ev.fromAccountId)}.`
+          );
+          break;
+        case "rollover":
+          lines.push(
+            `  - Roll ${ev.amount == null ? "the whole balance" : formatMoney(ev.amount)} from ${accountName(ev.fromAccountId)} into ${accountName(ev.toAccountId)} (not a taxable event).`
           );
           break;
         case "custom_transfer":
@@ -418,13 +443,13 @@ export function buildLlmExport(scenario: Scenario): string {
     "When suggesting a change, name the specific input below and, where possible, the section of the app it lives in. Anything not on this list is not user-editable and shouldn't be recommended."
   );
   lines.push("");
-  lines.push("- **Household** — each person's birth date, retirement age, and planning end age (which sets the plan horizon).");
+  lines.push("- **Household** — each person's birth date, retirement age, and planning end age (the age they are modelled as living to; it sets the plan horizon and drives the survivor rules).");
   lines.push("- **Settings** — plan start/end dates, inflation rate, filing status, whether RMDs are modeled, and the flat state/local tax add-on.");
-  lines.push("- **Routing tab** — which accounts are spending hubs and their buffer amounts; the split order, each stop's flat-amount-or-percentage kind, cap, and cap growth rate; the drain order, each stop's flat-amount-or-percentage kind, floor, floor growth rate, and date window. Reordering the drain order is the highest-leverage tax change available.");
+  lines.push("- **Routing tab** — the split order (each stop's flat-amount-or-percentage kind, per-period limit, and date window) and the drain order (each stop's kind, per-period max draw, and date window). An account's balance cap and floor live on the account. Reordering the drain order is the highest-leverage tax change available.");
   lines.push("- **Accounts** — name, class, tax treatment, owner, starting balance, starting cost basis, growth rate (or a dated growth-rate schedule), RMD flag, early-withdrawal-penalty exemption, an account start date (for a not-yet-existing account), loan terms, and the contribution (amount, frequency, growth, payroll-deducted flag, end date) or a multi-segment contribution schedule.");
-  lines.push("- **Income sources** — amount, an optional gross (Box-1-style) amount for bracket placement while working, frequency (or an every-N-years interval), nominal growth rate, owner, deposit account, start/end dates, category, and temporary adjustment windows.");
+  lines.push("- **Income sources** — amount, an optional gross (Box-1-style) amount for bracket placement while working, frequency (or an every-N-years interval), nominal growth rate (a pension's blank = 0, no COLA), owner, deposit account, start/end dates, category, a claiming age for Social Security/pension, a pension's survivor share, and temporary adjustment windows.");
   lines.push("- **Expenses** — amount, frequency (or an every-N-years interval), nominal growth rate, payment account, start/end dates, category, and temporary adjustment windows.");
-  lines.push("- **Events** — retire, buy a home, have a kid, and custom transfer, each with its own fields as shown above.");
+  lines.push("- **Events** — retire, buy a home, sell a home, Roth conversion (fixed amount or fill-to-bracket), pay off a loan, rollover, and custom transfer, each with its own fields as shown above.");
   lines.push("- **`isExcluded`** — on any account, income source, expense, or event. Toggling this is the cleanest way to test one item's impact without deleting it.");
   lines.push("");
   lines.push(

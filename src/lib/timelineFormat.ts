@@ -23,7 +23,9 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   retire: "Retire",
   buy_home: "Buy a home",
   sell_home: "Sell a home",
-  have_a_kid: "Have a kid",
+  roth_conversion: "Roth conversion",
+  pay_off_loan: "Pay off loan",
+  rollover: "Rollover",
   custom_transfer: "Transfer",
 };
 

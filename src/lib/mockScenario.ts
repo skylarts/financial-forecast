@@ -247,18 +247,32 @@ export const mockScenario: Scenario = {
       paymentAccountId: null, // automatic -- paid from Extra Savings
       category: "housing",
     },
-  ],
-  events: [
+    // A child is ordinary expenses: monthly childcare with an end date, plus
+    // a one-time cost when they arrive.
     {
       id: nanoid(),
-      type: "have_a_kid",
-      name: "First kid",
+      name: "Childcare: first kid",
+      amount: 1_800,
+      frequency: "monthly",
       startDate: "2028-03-01",
-      childcareMonthlyExpense: 1_800,
-      childcareEndDate: "2033-09-01",
-      additionalOneTimeCost: 5_000,
-      paymentAccountId: extraSavingsId,
+      endDate: "2033-09-01",
+      growthRatePct: null,
+      paymentAccountId: null,
+      category: "childcare",
     },
+    {
+      id: nanoid(),
+      name: "One-time cost: first kid",
+      amount: 5_000,
+      frequency: "one_time",
+      startDate: "2028-03-01",
+      endDate: null,
+      growthRatePct: null,
+      paymentAccountId: null,
+      category: "childcare",
+    },
+  ],
+  events: [
     {
       id: nanoid(),
       type: "buy_home",

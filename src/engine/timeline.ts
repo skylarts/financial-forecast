@@ -1,5 +1,5 @@
 import type { Scenario, ScenarioEvent, TimelineRow } from "@/domain";
-import { ageOn, elapsedYears, yearOf } from "./dateMath";
+import { ageOn, yearOf } from "./dateMath";
 import { freqLabel } from "@/lib/timelineFormat";
 
 export function buildTimeline(scenario: Scenario): TimelineRow[] {
@@ -43,15 +43,23 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
             : `Sell ${accountName(event.realEstateAccountId)} for a net $${event.netProceeds.toLocaleString()}`;
         break;
       }
-      case "have_a_kid": {
-        const end = event.childcareEndDate;
-        const duration = end
-          ? `for ${Math.round(elapsedYears(event.startDate, end))} yrs (through ${yearOf(end)})`
-          : "through end of plan";
-        const oneTime = event.additionalOneTimeCost
-          ? ` · $${event.additionalOneTimeCost.toLocaleString()} upfront`
-          : "";
-        description = `Childcare $${event.childcareMonthlyExpense.toLocaleString()}/mo ${duration}${oneTime}`;
+      case "roth_conversion": {
+        const how =
+          event.fillToBracketRate != null
+            ? `up to the top of the ${Math.round(event.fillToBracketRate * 100)}% bracket each year`
+            : `$${(event.amount ?? 0).toLocaleString()}${event.frequency === "one_time" ? " once" : "/yr"}`;
+        const until = event.endDate ? ` until ${yearOf(event.endDate)}` : "";
+        description = `Convert ${how} from ${accountName(event.fromAccountId)} to ${accountName(event.toAccountId)}${until}${
+          event.taxSource === "withhold" ? " (tax withheld from the conversion)" : " (tax paid from cash)"
+        }`;
+        break;
+      }
+      case "pay_off_loan": {
+        description = `Pay ${event.amount == null ? "off" : `$${event.amount.toLocaleString()} toward`} ${accountName(event.loanAccountId)} from ${accountName(event.fromAccountId)}`;
+        break;
+      }
+      case "rollover": {
+        description = `Roll ${event.amount == null ? "the whole balance" : `$${event.amount.toLocaleString()}`} from ${accountName(event.fromAccountId)} into ${accountName(event.toAccountId)}`;
         break;
       }
       case "custom_transfer": {

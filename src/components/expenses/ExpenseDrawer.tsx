@@ -110,7 +110,8 @@ export function ExpenseDrawer({
       startDate: values.startDate,
       endDate: values.frequency === "one_time" ? null : values.endDate || null,
       growthRatePct: percentStrToFraction(values.growthRatePct),
-      intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
+      // A one-time item is one-time: never carry a hidden repeat interval.
+      intervalYears: values.frequency !== "one_time" && values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       paymentAccountId: values.paymentAccountId === "" ? null : values.paymentAccountId,
       category: values.category,
       adjustments,
@@ -184,7 +185,11 @@ export function ExpenseDrawer({
             reg={register("paymentAccountId")}
             options={[
               { value: "", label: "Extra Savings (Default)" },
-              ...accounts.filter((a) => !a.isExtraSavings).map((a) => ({ value: a.id, label: a.name })),
+              // Paying an expense FROM a loan is borrowing, and from a home
+              // is meaningless: only spendable asset accounts are offered.
+              ...accounts
+                .filter((a) => !a.isExtraSavings && a.category === "asset" && a.class !== "real_estate")
+                .map((a) => ({ value: a.id, label: a.name })),
             ]}
           />
         </Field>

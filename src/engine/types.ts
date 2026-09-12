@@ -79,6 +79,32 @@ export interface Posting {
   transferKind?: TransferKind;
   /** The other account of a transfer leg. */
   counterpartyAccountId?: Id;
+  /**
+   * A transfer whose size is only known at run time: "the whole balance" of
+   * the source (a rollover), or "whatever is left on the loan" (a payoff).
+   * Carried on a single posting from the source; the engine sizes it and
+   * moves the money to `counterpartyAccountId` itself.
+   */
+  wholeBalance?: boolean;
+  /** Roth conversion only: where the tax on it comes from. */
+  taxSource?: "cash" | "withhold";
+}
+
+/**
+ * A "fill to the top of a bracket" Roth conversion, applied by the engine in
+ * December once the year's ordinary income is known.
+ */
+export interface BracketFillRule {
+  eventId: Id;
+  label: string;
+  fromAccountId: Id;
+  toAccountId: Id;
+  /** The bracket whose top to fill up to, e.g. 0.12. */
+  bracketRate: number;
+  startDate: ISODate;
+  endDate: ISODate | null;
+  oneTime: boolean;
+  taxSource: "cash" | "withhold";
 }
 
 export interface MortgageSpec {
@@ -97,4 +123,5 @@ export interface ResolvedSchedule {
   postings: Posting[];
   mortgages: MortgageSpec[];
   timeline: TimelineRow[];
+  bracketFills: BracketFillRule[];
 }

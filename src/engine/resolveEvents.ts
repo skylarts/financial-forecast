@@ -1,10 +1,11 @@
 import type { Account, Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
 import { addDays, compareDates, elapsedYears, todayISO } from "./dateMath";
+import { deathDateOf, survivorsOn } from "./household";
 import { expandOccurrences } from "./occurrences";
 import { growthAdjustedAmount, todaysDollarsAmount } from "./growth";
 import { buildTimeline } from "./timeline";
 import { resolvePrimarySpendingAccountId } from "./moneyFlow";
-import type { EngineAccount, MortgageSpec, Posting, ResolvedSchedule, TransferKind } from "./types";
+import type { BracketFillRule, EngineAccount, MortgageSpec, Posting, ResolvedSchedule, TransferKind } from "./types";
 
 /** The earlier of two optional dates; null only when both are null. */
 function earliestDate(a: ISODate | null, b: ISODate | null): ISODate | null {
@@ -193,10 +194,48 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   }));
   const postings: Posting[] = [];
   const mortgages: MortgageSpec[] = [];
+  const bracketFills: BracketFillRule[] = [];
 
   const pushPosting = (posting: Posting) => {
     if (excludedAccountIds.has(posting.accountId)) return;
     postings.push(posting);
+  };
+
+  /** Both legs of a fixed-size transfer between two accounts. */
+  const pushTransferPair = (
+    eventId: Id,
+    label: string,
+    date: ISODate,
+    fromAccountId: Id,
+    toAccountId: Id,
+    amount: number,
+    transferKind: TransferKind,
+    taxSource?: "cash" | "withhold"
+  ) => {
+    if (amount <= 0) return;
+    pushPosting({
+      date,
+      yearMonth: date.slice(0, 7),
+      accountId: fromAccountId,
+      amount: -amount,
+      category: "transfer",
+      label,
+      sourceId: `${eventId}:from`,
+      transferKind,
+      counterpartyAccountId: toAccountId,
+      taxSource,
+    });
+    pushPosting({
+      date,
+      yearMonth: date.slice(0, 7),
+      accountId: toAccountId,
+      amount,
+      category: "transfer",
+      label,
+      sourceId: `${eventId}:to`,
+      transferKind,
+      counterpartyAccountId: fromAccountId,
+    });
   };
 
   // The account a null depositAccountId/paymentAccountId/payingAccountId
@@ -307,9 +346,52 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // once-per-year (not continuous) COLA compounding below. No event needed.
   const incomeSources: IncomeSource[] = [...scenario.incomeSources];
 
+  // --- What a person's modelled death does to their income ---
+  // Salary, rental, and "other" income owned by someone ends at their death.
+  // A pension continues at its survivor share to a surviving member, else
+  // stops. Social Security follows the survivor rule: of the two benefits,
+  // the survivor keeps the larger -- so the smaller one stops at the first
+  // death, whichever person it belonged to.
+  const people = scenario.household.people;
+  const deathOf = new Map(people.map((p) => [p.id, deathDateOf(p)]));
+  const ssBySource = new Map<Id, number>();
+  for (const src of incomeSources) {
+    if (src.category === "social_security" && src.ownerId && !src.isExcluded) ssBySource.set(src.id, src.amount);
+  }
+  /** The date this source stops because of a death, if any, and the share that continues after it. */
+  const deathRuleFor = (src: IncomeSource): { endsOn: ISODate | null; survivorShare: number } => {
+    if (!src.ownerId) return { endsOn: null, survivorShare: 0 };
+    const ownerDeath = deathOf.get(src.ownerId);
+    if (!ownerDeath) return { endsOn: null, survivorShare: 0 };
+    const survivors = survivorsOn(people, addDays(ownerDeath, 1));
+    if (src.category === "pension") {
+      const share = survivors.length > 0 ? (src.survivorPct ?? 0) : 0;
+      return share > 0 ? { endsOn: null, survivorShare: share } : { endsOn: ownerDeath, survivorShare: 0 };
+    }
+    if (src.category === "social_security") {
+      // Find the other member's benefit; the smaller of the two stops at the
+      // first death. With no survivor, the benefit simply stops.
+      const others = incomeSources.filter(
+        (o) => o.id !== src.id && o.category === "social_security" && o.ownerId && o.ownerId !== src.ownerId && !o.isExcluded
+      );
+      const otherIsLarger = others.some((o) => o.amount > src.amount);
+      // The smaller benefit ends at the FIRST death in the couple, whichever
+      // person it belonged to (the survivor keeps the larger one); the larger
+      // benefit runs on to the survivor and stops only when nobody is left.
+      const otherDeaths = others.map((o) => deathOf.get(o.ownerId!)).filter((d): d is ISODate => !!d);
+      const firstDeath = [ownerDeath, ...otherDeaths].sort(compareDates)[0];
+      if (otherIsLarger) return { endsOn: firstDeath, survivorShare: 0 };
+      if (survivors.length === 0) return { endsOn: ownerDeath, survivorShare: 0 };
+      return { endsOn: null, survivorShare: 1 };
+    }
+    return { endsOn: ownerDeath, survivorShare: 0 };
+  };
+
   for (const src of incomeSources) {
     if (src.isExcluded) continue;
-    const effectiveEnd = incomeEndOverrides.get(src.id) ?? src.endDate;
+    const rule = deathRuleFor(src);
+    const ownerDeath = src.ownerId ? deathOf.get(src.ownerId) ?? null : null;
+    const effectiveEnd = earliestDate(incomeEndOverrides.get(src.id) ?? src.endDate, rule.endsOn);
     const windows = src.adjustments ?? [];
     const occurrences = expandOccurrences(src.startDate, effectiveEnd, src.frequency, horizonEnd, src.intervalYears);
     for (const occ of occurrences) {
@@ -328,7 +410,11 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         src.growthRatePct ?? settings.inflationRatePct, // blank growth = keep pace with inflation
         src.category === "social_security"
       );
-      const amount = base * activeMultiplier(windows, occ);
+      // After the owner's death only the survivor share continues (a pension
+      // with a survivor benefit, or the larger Social Security check).
+      const afterDeath = ownerDeath !== null && compareDates(occ, ownerDeath) > 0;
+      const survivorFactor = afterDeath ? (rule.survivorShare > 0 ? rule.survivorShare : 0) : 1;
+      const amount = base * activeMultiplier(windows, occ) * survivorFactor;
       if (amount === 0) continue;
       const accountId = src.depositAccountId ?? primarySpendingAccountId;
       if (!accountId) continue;
@@ -345,7 +431,9 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
               settings.inflationRatePct,
               src.growthRatePct ?? settings.inflationRatePct,
               src.category === "social_security"
-            ) * activeMultiplier(windows, occ)
+            ) *
+            activeMultiplier(windows, occ) *
+            survivorFactor
           : undefined;
       pushPosting({
         date: occ,
@@ -565,43 +653,68 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           sourceId: `${event.id}:proceeds`,
         });
       }
-    } else if (event.type === "have_a_kid") {
-      const end = event.childcareEndDate ?? horizonEnd;
-      const occurrences = expandOccurrences(event.startDate, end, "monthly", horizonEnd);
-      for (const occ of occurrences) {
-        // Childcare entered in today's dollars; inflates from plan start (not
-        // just the kid's arrival) to each occurrence date.
-        const amount = growthAdjustedAmount(
-          event.childcareMonthlyExpense,
-          elapsedYears(settings.startDate, occ),
-          settings.inflationRatePct
-        );
-        pushPosting({
-          date: occ,
-          yearMonth: occ.slice(0, 7),
-          accountId: event.paymentAccountId,
-          amount: -amount,
-          category: "expense",
-          label: `Childcare: ${event.name}`,
-          sourceId: `${event.id}:childcare`,
+    } else if (event.type === "roth_conversion") {
+      if (event.fillToBracketRate != null) {
+        bracketFills.push({
+          eventId: event.id,
+          label: event.name,
+          fromAccountId: event.fromAccountId,
+          toAccountId: event.toAccountId,
+          bracketRate: event.fillToBracketRate,
+          startDate: event.startDate,
+          endDate: event.endDate ?? null,
+          oneTime: event.frequency === "one_time",
+          taxSource: event.taxSource ?? "cash",
         });
+      } else if (event.amount != null) {
+        const occurrences = expandOccurrences(event.startDate, event.endDate ?? null, event.frequency, horizonEnd);
+        for (const occ of occurrences) {
+          const amount = todaysDollarsAmount(
+            event.amount,
+            settings.startDate,
+            event.startDate,
+            occ,
+            settings.inflationRatePct,
+            event.growthRatePct ?? settings.inflationRatePct
+          );
+          pushTransferPair(event.id, event.name, occ, event.fromAccountId, event.toAccountId, amount, "conversion", event.taxSource ?? "cash");
+        }
       }
-      if (event.additionalOneTimeCost) {
-        // Also entered in today's dollars; inflate to the event's start date.
-        const amount = growthAdjustedAmount(
-          event.additionalOneTimeCost,
-          elapsedYears(settings.startDate, event.startDate),
-          settings.inflationRatePct
-        );
+    } else if (event.type === "rollover") {
+      if (event.amount == null) {
         pushPosting({
           date: event.startDate,
           yearMonth: event.startDate.slice(0, 7),
-          accountId: event.paymentAccountId,
-          amount: -amount,
-          category: "expense",
-          label: `One-time cost: ${event.name}`,
-          sourceId: `${event.id}:onetime`,
+          accountId: event.fromAccountId,
+          amount: 0,
+          category: "transfer",
+          label: event.name,
+          sourceId: `${event.id}:from`,
+          transferKind: "rollover",
+          counterpartyAccountId: event.toAccountId,
+          wholeBalance: true,
         });
+      } else {
+        const amount = growthAdjustedAmount(event.amount, elapsedYears(settings.startDate, event.startDate), settings.inflationRatePct);
+        pushTransferPair(event.id, event.name, event.startDate, event.fromAccountId, event.toAccountId, amount, "rollover");
+      }
+    } else if (event.type === "pay_off_loan") {
+      if (event.amount == null) {
+        pushPosting({
+          date: event.startDate,
+          yearMonth: event.startDate.slice(0, 7),
+          accountId: event.fromAccountId,
+          amount: 0,
+          category: "transfer",
+          label: event.name,
+          sourceId: `${event.id}:from`,
+          transferKind: "payoff",
+          counterpartyAccountId: event.loanAccountId,
+          wholeBalance: true,
+        });
+      } else {
+        const amount = growthAdjustedAmount(event.amount, elapsedYears(settings.startDate, event.startDate), settings.inflationRatePct);
+        pushTransferPair(event.id, event.name, event.startDate, event.fromAccountId, event.loanAccountId, amount, "payoff");
       }
     } else if (event.type === "retire" && event.retirementExpense) {
       const exp = event.retirementExpense;
@@ -680,7 +793,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     }
   }
 
-  return { accounts, postings, mortgages, timeline: buildTimeline(scenario) };
+  return { accounts, postings, mortgages, timeline: buildTimeline(scenario), bracketFills };
 }
 
 /** How a withdrawal from this account is taxed: the explicit treatment, else inferred from the class. */
@@ -693,6 +806,8 @@ export function treatmentOf(account: Pick<Account, "taxTreatment" | "class"> | u
     case "tax_deferred":
       return "tax_deferred";
     case "tax_free":
+    case "hsa":
+    case "education_529":
       return "tax_free";
     default:
       return "n/a";

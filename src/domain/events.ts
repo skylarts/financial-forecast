@@ -96,15 +96,51 @@ export const sellHomeEventSchema = z.object({
 });
 export type SellHomeEvent = z.infer<typeof sellHomeEventSchema>;
 
-export const haveAKidEventSchema = z.object({
+/**
+ * A Roth conversion: money moved from a tax-deferred account to a tax-free
+ * one. Ordinary income in the year it happens, never the 10% penalty.
+ * Either a fixed amount per occurrence, or "fill to the top of a bracket":
+ * convert just enough each December to bring the year's ordinary taxable
+ * income up to the top of the named bracket.
+ */
+export const rothConversionEventSchema = z.object({
   ...baseEventFields,
-  type: z.literal("have_a_kid"),
-  childcareMonthlyExpense: z.number().nonnegative(),
-  childcareEndDate: isoDateSchema.nullable(),
-  additionalOneTimeCost: z.number().nonnegative().optional(),
-  paymentAccountId: idSchema,
+  type: z.literal("roth_conversion"),
+  fromAccountId: idSchema,
+  toAccountId: idSchema,
+  /** Today's dollars per occurrence. null when fillToBracketRate is set. */
+  amount: z.number().positive().nullable().default(null),
+  /** e.g. 0.12: convert up to the top of the 12% bracket each year. null = use `amount`. */
+  fillToBracketRate: z.number().min(0).max(1).nullable().default(null),
+  frequency: z.enum(["annual", "one_time"]).default("annual"),
+  /** "cash": the tax is paid from the spending hub (the default and usual advice). "withhold": it is withheld from the converted amount, so less lands in the Roth. */
+  taxSource: z.enum(["cash", "withhold"]).default("cash"),
+  /** null/omitted = the fixed amount keeps pace with inflation; 0 = flat. */
+  growthRatePct: z.number().nullable().optional(),
 });
-export type HaveAKidEvent = z.infer<typeof haveAKidEventSchema>;
+export type RothConversionEvent = z.infer<typeof rothConversionEventSchema>;
+
+/** Pay a loan or mortgage down (or off) from an asset account on a date. */
+export const payOffLoanEventSchema = z.object({
+  ...baseEventFields,
+  type: z.literal("pay_off_loan"),
+  loanAccountId: idSchema,
+  fromAccountId: idSchema,
+  /** Today's dollars. null = pay off whatever is left on that date. */
+  amount: z.number().positive().nullable().default(null),
+});
+export type PayOffLoanEvent = z.infer<typeof payOffLoanEventSchema>;
+
+/** Move money between two tax-deferred accounts (e.g. a 401k to an IRA). Not a taxable event. */
+export const rolloverEventSchema = z.object({
+  ...baseEventFields,
+  type: z.literal("rollover"),
+  fromAccountId: idSchema,
+  toAccountId: idSchema,
+  /** Today's dollars. null = the whole balance on that date. */
+  amount: z.number().positive().nullable().default(null),
+});
+export type RolloverEvent = z.infer<typeof rolloverEventSchema>;
 
 export const customTransferEventSchema = z.object({
   ...baseEventFields,
@@ -125,12 +161,23 @@ export const scenarioEventSchema = z
     retireEventSchema,
     buyHomeEventSchema,
     sellHomeEventSchema,
-    haveAKidEventSchema,
+    rothConversionEventSchema,
+    payOffLoanEventSchema,
+    rolloverEventSchema,
     customTransferEventSchema,
   ])
-  .refine((e) => e.type !== "custom_transfer" || e.fromAccountId !== e.toAccountId, {
-    message: "fromAccountId and toAccountId must differ",
-    path: ["toAccountId"],
+  .refine(
+    (e) =>
+      !("fromAccountId" in e && "toAccountId" in e) || e.fromAccountId !== e.toAccountId,
+    { message: "The two accounts must differ", path: ["toAccountId"] }
+  )
+  .refine((e) => e.type !== "pay_off_loan" || e.fromAccountId !== e.loanAccountId, {
+    message: "The two accounts must differ",
+    path: ["loanAccountId"],
+  })
+  .refine((e) => e.type !== "roth_conversion" || e.amount != null || e.fillToBracketRate != null, {
+    message: "Enter an amount, or choose a bracket to fill",
+    path: ["amount"],
   });
 export type ScenarioEvent = z.infer<typeof scenarioEventSchema>;
 export type EventType = ScenarioEvent["type"];
