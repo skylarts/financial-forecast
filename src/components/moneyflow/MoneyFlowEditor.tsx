@@ -2,11 +2,22 @@
 
 import { useState } from "react";
 import { nanoid } from "nanoid";
-import type { Account, FlowLimitPeriod, ForecastSettings, MoneyFlow } from "@/domain";
+import type { Account, FlowLimitPeriod, ForecastSettings, MoneyFlow, WithdrawalStrategy } from "@/domain";
 import { forecastSettingsSchema } from "@/domain";
 import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
+import {
+  STRATEGY_DESCRIPTIONS,
+  STRATEGY_LABELS,
+  TIER_LABELS,
+  accountsInStrategyOrder,
+  drainTierOf,
+  materializeDrainOrder,
+  unreachableAccounts,
+} from "@/engine/strategy";
+
+const PRESET_KEYS: WithdrawalStrategy[] = ["conventional", "tax_deferred_first", "pro_rata", "custom"];
 
 /**
  * Cash-flow routing, edited from one place instead of scattered per-account
@@ -32,14 +43,34 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
   const availableAccounts = (excludeIds: Set<string>) =>
     accounts.filter((a) => !excludeIds.has(a.id) && a.category === "asset" && a.class !== "real_estate");
 
-  const save = (next: MoneyFlow) => {
-    const result = forecastSettingsSchema.safeParse({ ...settings, moneyFlow: next });
+  // Patch against the store's current settings rather than the prop, so an
+  // edit here can never write back a stale copy of something changed elsewhere.
+  const saveSettings = (patch: Partial<ForecastSettings>) => {
+    const current = usePlanStore.getState().activeScenario().settings;
+    const result = forecastSettingsSchema.safeParse({ ...current, ...patch });
     if (!result.success) {
       setError(result.error.issues[0]?.message ?? "Invalid money flow configuration.");
       return;
     }
     setError(null);
     updateSettings(result.data);
+  };
+  const save = (next: MoneyFlow) => saveSettings({ moneyFlow: next });
+
+  // --- Withdrawal strategy (what covers a shortfall) ---
+  const strategy = settings.withdrawalStrategy;
+  const presetOrder = strategy === "custom" ? [] : accountsInStrategyOrder(strategy, accounts);
+  const neverDrawn = accounts.filter((a) => a.category === "asset" && !a.isExtraSavings && !a.isExcluded && drainTierOf(a) === null);
+  const unreachable = strategy === "custom" ? unreachableAccounts(moneyFlow.drainOrder, accounts) : [];
+  const chooseStrategy = (next: WithdrawalStrategy) => {
+    if (next === strategy) return;
+    if (next === "custom") {
+      // Start the editor from the order the current preset was using.
+      const seed = strategy === "custom" ? moneyFlow.drainOrder : materializeDrainOrder(strategy, accounts);
+      saveSettings({ withdrawalStrategy: "custom", moneyFlow: { ...moneyFlow, drainOrder: seed } });
+      return;
+    }
+    saveSettings({ withdrawalStrategy: next });
   };
 
   // --- Extra Savings split (surplus routing) ---
@@ -212,12 +243,72 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
         />
       </section>
 
-      {/* Drain order */}
-      <section className="flex flex-col gap-2">
+      {/* Withdrawal strategy: what covers a shortfall */}
+      <section className="flex flex-col gap-3">
         <h3 className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-dim">
-          When I&rsquo;m short, drain in this order
-          <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total shortfall). A stop can also have a per-period Max draw (how fast it may drain) and a Start/End date -- leave either blank for 'always'. The same account can be added more than once with different windows for a phased drawdown. An account's balance floor lives on the account itself, over on the Accounts tab." />
+          When I&rsquo;m short, draw from
+          <InfoTooltip text="Which accounts cover a shortfall in Extra Savings, and in what order. A preset derives the order from your accounts (so a new account is never left out); Custom lets you set every stop, share, limit and date window yourself. This order is the biggest lever on your lifetime tax bill." />
         </h3>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {PRESET_KEYS.map((key) => {
+            const active = key === strategy;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => chooseStrategy(key)}
+                aria-pressed={active}
+                className={`rounded-md border p-2.5 text-left transition-colors ${
+                  active ? "border-accent bg-accent/10" : "border-border hover:border-accent/60"
+                }`}
+              >
+                <div className="text-sm font-medium">{STRATEGY_LABELS[key]}</div>
+                <div className="mt-0.5 text-[11px] text-dim">{STRATEGY_DESCRIPTIONS[key]}</div>
+              </button>
+            );
+          })}
+        </div>
+        {strategy !== "custom" ? (
+          <div className="flex flex-col gap-2 rounded-md border border-border p-2.5 text-xs">
+            <div className="font-semibold text-dim">The order the plan will use</div>
+            {presetOrder.length === 0 ? (
+              <p className="text-dim">No account can cover a shortfall yet. Add a cash or investment account.</p>
+            ) : (
+              <ol className="flex flex-col gap-1">
+                {presetOrder.map((a, i) => (
+                  <li key={a.id} className="flex items-center gap-2">
+                    <span className="w-4 text-right font-mono text-dim-2">{i + 1}.</span>
+                    <span>{a.name}</span>
+                    <span className="text-dim-2">· {TIER_LABELS[drainTierOf(a)!]}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {strategy === "pro_rata" && presetOrder.length > 0 && (
+              <p className="text-dim-2">Cash accounts empty in order; the investment accounts then share each shortfall in proportion to their balances.</p>
+            )}
+            {neverDrawn.length > 0 && (
+              <p className="text-dim-2">
+                Never drawn: {neverDrawn.map((a) => a.name).join(", ")}. Homes, other assets, HSAs and 529s are left for their own purpose; use Custom to include one.
+              </p>
+            )}
+            <div>
+              <button
+                type="button"
+                onClick={() => chooseStrategy("custom")}
+                className="rounded-md border border-border px-2.5 py-1 text-xs text-dim hover:border-accent hover:text-foreground"
+              >
+                Customize this order
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {unreachable.length > 0 && (
+              <p className="rounded-md border border-negative/40 bg-negative/10 px-2.5 py-2 text-xs text-negative">
+                Never drawn from: {unreachable.map((a) => a.name).join(", ")}. These will not cover a shortfall. Add them below, or pick a preset.
+              </p>
+            )}
         {moneyFlow.drainOrder.length === 0 && <p className="text-xs text-dim">No drain sources configured yet.</p>}
         {moneyFlow.drainOrder.map((stop, i) => (
           <div key={stop.id} className="flex flex-col gap-2 rounded-md border border-border p-2">
@@ -296,6 +387,22 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
           onAdd={addDrainSource}
           placeholder="+ Add drain source"
         />
+          </>
+        )}
+        <label className="flex flex-col gap-1 text-xs text-dim">
+          <span className="inline-flex items-center gap-1">
+            Cash to keep on hand
+            <InfoTooltip text="A buffer in Extra Savings, in today's dollars. Whenever spending draws it down, the order above tops it back up -- so retirement is not run with cash at $0 between bills. Leave blank to draw exactly what each month needs." />
+          </span>
+          <span className="w-40">
+            <MoneyInput
+              key={settings.cashBufferTarget ?? "blank"}
+              placeholder="none"
+              defaultValue={settings.cashBufferTarget == null ? "" : moneyToStr(settings.cashBufferTarget)}
+              onBlur={(e) => saveSettings({ cashBufferTarget: moneyStrToNumber(e.target.value) })}
+            />
+          </span>
+        </label>
       </section>
     </div>
   );

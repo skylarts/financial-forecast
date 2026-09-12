@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { DEFAULT_STRESS_PARAMS, type StressKey, type StressParams } from "@/engine/stress";
 
 export type Theme = "dark" | "joy";
 
@@ -27,6 +28,12 @@ interface UiState {
   /** Bumped by the empty first-run state to open the Data menu's file picker; not persisted. */
   restoreRequest: number;
   requestRestore: () => void;
+  /** The stress preset drawn as a second line on the Overview chart, if any. */
+  stressOverlay: StressKey | null;
+  setStressOverlay: (key: StressKey | null) => void;
+  /** How hard each stress preset hits; shared by the chart overlay and the Stress test tab. */
+  stressParams: StressParams;
+  setStressParams: (params: StressParams) => void;
 }
 
 /** UI-only preferences (not part of a financial plan), persisted separately. */
@@ -44,6 +51,10 @@ export const useUiStore = create<UiState>()(
       toggleAccountsExpanded: (key) => set((s) => ({ accountsExpanded: toggleInArray(s.accountsExpanded, key) })),
       restoreRequest: 0,
       requestRestore: () => set((s) => ({ restoreRequest: s.restoreRequest + 1 })),
+      stressOverlay: null,
+      setStressOverlay: (key) => set({ stressOverlay: key }),
+      stressParams: DEFAULT_STRESS_PARAMS,
+      setStressParams: (params) => set({ stressParams: params }),
     }),
     {
       name: "forecast-ui",
@@ -52,7 +63,14 @@ export const useUiStore = create<UiState>()(
         cashFlowTaxesOpen: s.cashFlowTaxesOpen,
         cashFlowExpanded: s.cashFlowExpanded,
         accountsExpanded: s.accountsExpanded,
+        stressOverlay: s.stressOverlay,
+        stressParams: s.stressParams,
       }),
+      // A stress preset saved by an older build may lack a newer parameter.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<UiState>;
+        return { ...current, ...p, stressParams: { ...DEFAULT_STRESS_PARAMS, ...(p.stressParams ?? {}) } };
+      },
     }
   )
 );

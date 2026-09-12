@@ -6,6 +6,8 @@ import { Segmented } from "@/components/ui/controls";
 import type {
   Account,
   ExpenseBaseline,
+  ProjectionResult,
+  Scenario,
   ForecastSettings,
   Granularity,
   Id,
@@ -21,6 +23,7 @@ import { AccountsTable } from "./AccountsTable";
 import { CashFlowTable } from "./CashFlowTable";
 import { TimelineTab } from "./TimelineTab";
 import { MoneyFlowEditor } from "@/components/moneyflow/MoneyFlowEditor";
+import { StressTestTab } from "@/components/stress/StressTestTab";
 
 // Which detail view to render is now driven by the header tab set.
 type Tab = DetailView;
@@ -54,6 +57,8 @@ export function DetailTabs({
   dollarMode,
   scenarioName,
   compare,
+  scenario,
+  projection,
 }: {
   active: Tab;
   accounts: Account[];
@@ -71,6 +76,9 @@ export function DetailTabs({
   dollarMode: DollarMode;
   scenarioName: string;
   compare: CompareTabData | null;
+  /** The active scenario and its projection, for views that re-run the plan (Stress test). */
+  scenario: Scenario;
+  projection: ProjectionResult;
 }) {
   const [viewingCompare, setViewingCompare] = useState(false);
   const showCompare = viewingCompare && compare !== null;
@@ -95,7 +103,7 @@ export function DetailTabs({
       {/* Which scenario's numbers this detail view is showing. Only appears
           when a comparison is active; the view switcher itself is in the
           header now. */}
-      {compare && (
+      {compare && active !== "Stress test" && (
         <div className="mb-3 flex justify-end">
           <Segmented
             ariaLabel="Which scenario to show"
@@ -143,6 +151,7 @@ export function DetailTabs({
       {active === "Cash Flow" && (
         <CashFlowTable periods={viewPeriods} accounts={viewAccounts} dollarMode={dollarMode} granularity={granularity} />
       )}
+      {active === "Stress test" && <StressTestTab scenario={scenario} projection={projection} dollarMode={dollarMode} />}
     </div>
   );
 }

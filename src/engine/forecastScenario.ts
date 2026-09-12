@@ -33,7 +33,9 @@ import { rmdDivisor, rmdStartAgeForBirthYear } from "./rmd";
 import { computeMonthlyPayment, amortizeMonth } from "./amortization";
 import { resolveEvents } from "./resolveEvents";
 import { resolvePrimarySpendingAccountId } from "./moneyFlow";
-import { effectiveOwnerOn, filingStatusForYear } from "./household";
+import { effectiveOwnerOn, filingStatusForYear, survivorsOn } from "./household";
+import { healthcareChargesForMonth } from "./healthcare";
+import { deriveDrainOrder, drainTierOf } from "./strategy";
 import type { EngineAccount, MortgageSpec, Posting } from "./types";
 import type { TaxBracket } from "./taxTables";
 import {
@@ -234,7 +236,38 @@ function diffAccumulator(before: YearAccumulator, after: YearAccumulator): YearA
   return out as unknown as YearAccumulator;
 }
 
-function effectiveAnnualRate(account: EngineAccount, month: string, inflationRatePct: number): number {
+/** Account classes the plan-wide expected return and the stress presets apply to. */
+const INVESTMENT_CLASSES = new Set<EngineAccount["class"]>(["taxable_investment", "tax_deferred", "tax_free", "hsa", "education_529"]);
+
+/**
+ * Knobs a caller can turn without editing the plan -- what the stress tests
+ * are built from (see stress.ts). Both act on investment accounts only.
+ */
+export interface ProjectionOptions {
+  /** Added to every investment account's yearly return (e.g. -0.02 for "two points lower"). */
+  returnAdjustment?: number;
+  /** Investment accounts earn exactly this in one calendar year, whatever they would otherwise have earned. */
+  yearReturnOverride?: { year: number; ratePct: number };
+}
+
+function effectiveAnnualRate(
+  account: EngineAccount,
+  month: string,
+  inflationRatePct: number,
+  planReturnRatePct: number | null,
+  options: ProjectionOptions
+): number {
+  if (INVESTMENT_CLASSES.has(account.class)) {
+    if (options.yearReturnOverride && Number(month.slice(0, 4)) === options.yearReturnOverride.year) {
+      return options.yearReturnOverride.ratePct;
+    }
+    const own = planReturnRatePct ?? scheduledOrBaseRate(account, month, inflationRatePct);
+    return own + (options.returnAdjustment ?? 0);
+  }
+  return scheduledOrBaseRate(account, month, inflationRatePct);
+}
+
+function scheduledOrBaseRate(account: EngineAccount, month: string, inflationRatePct: number): number {
   // A growthRateSchedule entry overrides everything else once it's started --
   // pick the last one (by startDate) that has begun as of this month.
   const overrides = account.growthRateOverrides;
@@ -376,12 +409,17 @@ function bracketTopFor(brackets: TaxBracket[], rate: number): number | null {
  * accuracy -- see `projectScenario` below, which iterates this function to
  * converge the estimates onto the real numbers before returning.
  */
-export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<number, YearTaxRates>): ProjectionResult {
+export function forecastScenario(
+  scenario: Scenario,
+  ratesByYearOverride?: Map<number, YearTaxRates>,
+  options: ProjectionOptions = {}
+): ProjectionResult {
   // A null startDate means "today, live" (see forecastSettingsSchema) --
   // resolved once here so every other read of settings.startDate below can
   // keep treating it as a plain, always-present date.
   const settings = { ...scenario.settings, startDate: scenario.settings.startDate ?? todayISO() };
   const moneyFlow = settings.moneyFlow;
+  const startYear = yearOf(settings.startDate);
   const ratesForYear = (year: number): YearTaxRates => ratesByYearOverride?.get(year) ?? ZERO_TAX_RATES;
   const resolved = resolveEvents(scenario);
   const accounts = resolved.accounts;
@@ -426,7 +464,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       return account && account.category === "asset" && !account.isExcluded ? { account, stop } : null;
     })
     .filter((x): x is { account: EngineAccount; stop: SplitStop } => x !== null);
-  const drainStops = moneyFlow.drainOrder
+  // A preset strategy derives its own order from the account list (so an
+  // account added later is never left unreachable); "custom" reads the
+  // hand-built list exactly as the Routing tab left it.
+  const strategy = settings.withdrawalStrategy;
+  const drainSource = strategy === "custom" ? moneyFlow.drainOrder : deriveDrainOrder(strategy, activeAccounts);
+  const drainStops = drainSource
     .map((stop) => {
       const account = accountById.get(stop.accountId);
       return account && account.category === "asset" && !account.isExcluded ? { account, stop } : null;
@@ -525,6 +568,9 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // RMD proceeds parked on the hub this year (see step 5); whatever is left of
   // them in December is offered to the split order once.
   let rmdHeldThisYear = 0;
+  // The simulation-month index each person last had a salary in (healthcare
+  // model: COBRA runs for a set number of months after that).
+  const lastWorkingMonthIndex = new Map<Id, number>();
   const yearStartBalances = new Map<Id, number>(balances);
 
   // Record one signed contribution to the "Other account activity" line.
@@ -783,12 +829,16 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     federalTaxByComponent: FederalTaxComponent[];
     ordinaryTaxableIncome: number;
     taxableSocialSecurityAmount: number;
+    adjustedGrossIncome: number;
+    acaModifiedAgi: number;
   }
   const NO_EXACT_TAX: ExactTaxFigures = {
     federalTaxTotal: 0,
     federalTaxByComponent: [],
     ordinaryTaxableIncome: 0,
     taxableSocialSecurityAmount: 0,
+    adjustedGrossIncome: 0,
+    acaModifiedAgi: 0,
   };
 
   /**
@@ -1081,7 +1131,9 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // hole faster than the deficit cascade could ever close it.
       const balance = balances.get(account.id) ?? 0;
       if (balance <= 0) continue;
-      const rate = monthlyRateFromAnnual(effectiveAnnualRate(account, month, settings.inflationRatePct));
+      const rate = monthlyRateFromAnnual(
+        effectiveAnnualRate(account, month, settings.inflationRatePct, settings.planReturnRatePct, options)
+      );
       if (!rate) continue;
       const growthAmount = balance * rate;
       balances.set(account.id, (balances.get(account.id) ?? 0) + growthAmount);
@@ -1094,6 +1146,48 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    left on the loan) is sized here, now that this month's balances are
     //    known, and expanded into its two concrete legs.
     const monthPostings: Posting[] = [];
+    // The healthcare model's bills for this month, as ordinary expense
+    // postings. Income-linked pieces (the marketplace credit, IRMAA) read the
+    // prior pass's income estimates, the same way withholding does.
+    if (settings.healthcare.enabled && primarySpendingAccountId) {
+      const alive = survivorsOn(scenario.household.people, month);
+      for (const person of alive) {
+        if (resolved.workingMonths.get(person.id)?.has(yearMonth)) lastWorkingMonthIndex.set(person.id, i);
+      }
+      const rates = ratesForYear(currentYear);
+      const twoYearsAgo = ratesForYear(Math.max(startYear, currentYear - 2));
+      const charges = healthcareChargesForMonth(settings.healthcare, {
+        month,
+        planStartDate: settings.startDate,
+        people: alive,
+        isWorking: (id) => resolved.workingMonths.get(id)?.has(yearMonth) ?? false,
+        monthsSinceWorking: (id) => {
+          const last = lastWorkingMonthIndex.get(id);
+          return last === undefined ? null : i - last;
+        },
+        filingStatus: filingStatusForYear(scenario.household.people, settings.filingStatus, currentYear),
+        acaMagi: rates.acaMagiEstimate ?? 0,
+        agiTwoYearsAgo: twoYearsAgo.agiEstimate ?? 0,
+        inflationRatePct: settings.inflationRatePct,
+      });
+      // Out-of-pocket costs come from a health savings account while it has
+      // money; the no-overdraft rule charges the hub for whatever it lacks.
+      const hsa = settings.healthcare.outOfPocket.payFromHsa
+        ? activeAccounts.find((a) => a.class === "hsa" && hasReachedStartMonth(month, a.effectiveStartDate) && (balances.get(a.id) ?? 0) > 0.005)
+        : undefined;
+      for (const c of charges) {
+        if (c.amount <= 0.005) continue;
+        monthPostings.push({
+          date: month,
+          yearMonth,
+          accountId: c.kind === "out_of_pocket" && hsa ? hsa.id : primarySpendingAccountId,
+          amount: -c.amount,
+          category: "expense",
+          label: c.label,
+          sourceId: c.key,
+        });
+      }
+    }
     for (const p of postingsByMonth.get(yearMonth) ?? []) {
       if (!p.wholeBalance || !p.counterpartyAccountId) {
         monthPostings.push(p);
@@ -1644,11 +1738,31 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    drain stops whose optional date window covers this month
     //    participate -- lets e.g. a brokerage fund a shortfall for a few
     //    years until a later account becomes the active source.
+    //    A cash buffer target raises the trigger from $0 to the target: the
+    //    drain order tops Extra Savings back up to it, so retirement does not
+    //    leave cash at zero between bills.
+    const bufferTargetNominal = settings.cashBufferTarget != null ? settings.cashBufferTarget * inflationFactor : 0;
     if (extraSavingsAccount) {
       const spender = extraSavingsAccount;
-      let shortfall = 0 - (balances.get(spender.id) ?? 0);
-      if (shortfall > 0) {
-        const active = drainStops.filter(({ stop }) => isDrainStopActive(stop, month));
+      let shortfall = bufferTargetNominal - (balances.get(spender.id) ?? 0);
+      if (shortfall > 0.005) {
+        let active = drainStops.filter(({ stop }) => isDrainStopActive(stop, month));
+        if (strategy === "pro_rata") {
+          // Cash stops drain in order as usual; the investment stops share the
+          // rest in proportion to their balances. With the cascade offering
+          // each stop a share of what is LEFT, the share that yields
+          // balance-proportional draws is this stop's balance over the
+          // balances of it and every investment stop after it.
+          const investments = active.filter((x) => drainTierOf(x.account) !== "cash");
+          const bal = investments.map((x) => Math.max(0, balances.get(x.account.id) ?? 0));
+          let remainingSum = bal.reduce((sum, b) => sum + b, 0);
+          const weighted = new Map<Id, number>();
+          investments.forEach((x, idx) => {
+            weighted.set(x.stop.id, remainingSum > 0 ? bal[idx] / remainingSum : 0);
+            remainingSum -= bal[idx];
+          });
+          active = active.map((x) => (weighted.has(x.stop.id) ? { account: x.account, stop: { ...x.stop, pct: weighted.get(x.stop.id)! } } : x));
+        }
         for (const { account: source, stop } of active) {
           if (shortfall <= 0.005) break;
           const floor = effectiveBalanceFloor(source, yearsSinceStart, settings.inflationRatePct);
@@ -1921,11 +2035,25 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // the reserve is offered -- money a split stop deliberately left in
         // the hub stays there, as always.
         if (rmdHeldThisYear > 0.005) {
-          routeThroughSplitOrder(Math.min(rmdHeldThisYear, Math.max(0, balances.get(extraSavingsAccount.id) ?? 0)));
+          const spare = Math.max(0, (balances.get(extraSavingsAccount.id) ?? 0) - bufferTargetNominal);
+          routeThroughSplitOrder(Math.min(rmdHeldThisYear, spare));
         }
       }
 
-      exactTax = { federalTaxTotal, federalTaxByComponent: [...federalTaxByComponent], ordinaryTaxableIncome, taxableSocialSecurityAmount };
+      // The income the healthcare model keys off: AGI for Medicare's
+      // surcharges (two years later), and the marketplace's MAGI, which adds
+      // back the untaxed part of Social Security.
+      const adjustedGrossIncome =
+        grossSalary + grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + taxableSocialSecurityAmount + acc.capitalGainsRealized;
+      const acaModifiedAgi = adjustedGrossIncome + (acc.grossSocialSecurity - taxableSocialSecurityAmount);
+      exactTax = {
+        federalTaxTotal,
+        federalTaxByComponent: [...federalTaxByComponent],
+        ordinaryTaxableIncome,
+        taxableSocialSecurityAmount,
+        adjustedGrossIncome,
+        acaModifiedAgi,
+      };
 
       // --- Everything below reads balances AFTER the settlement ----------
       years.push(
@@ -2044,18 +2172,21 @@ const RATE_CONVERGENCE_TOLERANCE = 0.001;
  * inline. The final pass's result -- already carrying the exact
  * bracket-computed `federalTaxTotal` per year -- is returned as-is.
  */
-export function projectScenario(scenario: Scenario): ProjectionResult {
+export function projectScenario(scenario: Scenario, options: ProjectionOptions = {}): ProjectionResult {
   // Same null-means-today resolution as forecastScenario -- needed here too
   // since startYear/endYear (for the tax-rate map below) are computed
   // before forecastScenario ever runs.
   const settings = { ...scenario.settings, startDate: scenario.settings.startDate ?? todayISO() };
   const startYear = yearOf(settings.startDate);
   const endYear = yearOf(settings.horizonEndDate);
+  // The healthcare model's income-linked pieces read the prior pass's income,
+  // so a plan that models healthcare also iterates until income settles.
+  const incomeMatters = settings.healthcare.enabled;
 
   let ratesByYear = new Map<number, YearTaxRates>();
   for (let y = startYear; y <= endYear; y++) ratesByYear.set(y, SEED_TAX_RATES);
 
-  let result = forecastScenario(scenario, ratesByYear);
+  let result = forecastScenario(scenario, ratesByYear, options);
 
   for (let iteration = 0; iteration < MAX_TAX_CONVERGENCE_ITERATIONS; iteration++) {
     const nextRates = new Map<number, YearTaxRates>();
@@ -2094,17 +2225,27 @@ export function projectScenario(scenario: Scenario): ProjectionResult {
         Math.abs(nextWithholding - prev.ordinaryWithholdingRate),
         Math.abs(nextLtcg - prev.ltcgMarginalRate)
       );
+      const agiEstimate = snapshot.cashFlow.adjustedGrossIncome;
+      const acaMagiEstimate = snapshot.cashFlow.acaModifiedAgi;
+      if (incomeMatters) {
+        // A move of $1,000 in income is far below what changes a premium
+        // tier, but enough to catch a pass that has not settled yet.
+        const incomeDelta = Math.max(Math.abs(agiEstimate - (prev.agiEstimate ?? 0)), Math.abs(acaMagiEstimate - (prev.acaMagiEstimate ?? 0)));
+        if (incomeDelta > 1_000) maxDelta = Math.max(maxDelta, RATE_CONVERGENCE_TOLERANCE);
+      }
       nextRates.set(snapshot.year, {
         ordinaryMarginalRate: nextOrdinary,
         ordinaryWithholdingRate: nextWithholding,
         ltcgMarginalRate: nextLtcg,
         ssTaxableFraction: nextSsFraction,
+        agiEstimate,
+        acaMagiEstimate,
       });
     }
 
     ratesByYear = nextRates;
     if (maxDelta < RATE_CONVERGENCE_TOLERANCE) break;
-    result = forecastScenario(scenario, ratesByYear);
+    result = forecastScenario(scenario, ratesByYear, options);
   }
 
   return result;

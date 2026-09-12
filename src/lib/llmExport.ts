@@ -9,6 +9,7 @@ import type {
   TemporaryAdjustment,
 } from "@/domain";
 import { projectScenario } from "@/engine/forecastScenario";
+import { STRATEGY_DESCRIPTIONS, STRATEGY_LABELS, deriveDrainOrder } from "@/engine/strategy";
 import { todayISO } from "@/engine/dateMath";
 import { formatMoney } from "@/lib/format";
 
@@ -133,6 +134,40 @@ export function buildLlmExport(scenario: Scenario): string {
       s.additionalFlatTaxRatePct === 0 ? " (none — e.g. correct as-is in a no-income-tax state)" : ""
     }`
   );
+  lines.push(
+    `- Expected return: ${
+      s.planReturnRatePct == null
+        ? "each account uses its own growth rate"
+        : `**${fmtPct(s.planReturnRatePct)}/yr nominal for every investment account** (taxable, tax-deferred, Roth, HSA, 529) — each account's own rate and scheduled changes are ignored while this is on; cash and real estate keep their own rates`
+    }`
+  );
+  lines.push(
+    `- Cash buffer: ${
+      s.cashBufferTarget == null
+        ? "none (each month draws exactly what it needs)"
+        : `keep ${formatMoney(s.cashBufferTarget)} (today's dollars) in Extra Savings — the drain order tops it back up whenever spending draws it down`
+    }`
+  );
+  const hc = s.healthcare;
+  if (!hc.enabled) {
+    lines.push("- Healthcare model: off (any healthcare costs are ordinary expenses entered by hand)");
+  } else {
+    const retired =
+      hc.retiredCoverage === "marketplace"
+        ? "a marketplace (ACA) plan"
+        : hc.retiredCoverage === "cobra_then_marketplace"
+          ? `COBRA for ${hc.cobra.months} months at ${formatMoney(hc.cobra.monthlyPremiumPerPerson)}/person/month, then a marketplace plan`
+          : hc.retiredCoverage === "fixed"
+            ? `a retiree plan or other fixed premium of ${formatMoney(hc.fixedMonthlyPremiumPerPerson)}/person/month`
+            : "no premium";
+    lines.push(
+      `- Healthcare model: **on**. Costs grow ${hc.costGrowthRatePct == null ? "with inflation" : `${fmtPct(hc.costGrowthRatePct)}/yr`}. While someone has a salary: ${formatMoney(hc.workingMonthlyPremiumPerPerson)}/person/month out of take-home${hc.spouseCoverageWhileWorking ? " (a working spouse's plan covers everyone under 65)" : ""}. Before 65 once nobody works: ${retired}${
+        hc.retiredCoverage === "marketplace" || hc.retiredCoverage === "cobra_then_marketplace"
+          ? ` — benchmark plan ${formatMoney(hc.marketplace.benchmarkMonthlyPremiumPerPerson)}/person/month today${hc.marketplace.ageRated ? ", rising with age along the federal age curve" : ""}${hc.marketplace.premiumTaxCredit ? `, with the premium tax credit applied against the plan's own income each year (${hc.marketplace.enhancedSubsidies ? "enhanced 2021-2025 schedule, no income cap" : "current law: no credit under the poverty line or above four times it"})` : ", full price (no credit)"}`
+          : ""
+      }. From 65: Medicare — Part B standard premium built in (2026: $202.90/month), Part D ${formatMoney(hc.medicare.partDMonthlyPremium)}/month, supplement ${formatMoney(hc.medicare.supplementMonthlyPremium)}/month${hc.medicare.irmaa ? ", plus IRMAA surcharges when income two years earlier is above the thresholds" : ", no IRMAA"}. Out of pocket: ${formatMoney(hc.outOfPocket.preMedicareAnnualPerPerson)}/person/yr before 65, ${formatMoney(hc.outOfPocket.medicareAnnualPerPerson)}/person/yr on Medicare${hc.outOfPocket.payFromHsa ? ", paid from an HSA while it lasts" : ""}. These post as expenses named "Medicare: …", "Marketplace health insurance", "COBRA: …", "Out-of-pocket medical: …".`
+    );
+  }
 
   // Routing is the single biggest driver of both the tax bill and which
   // accounts survive to the end of the plan, so spell out every stop rather
@@ -189,15 +224,21 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push("");
   lines.push(`### Drain order (what's sold to cover a shortfall)`);
   lines.push(
+    `Withdrawal strategy: **${STRATEGY_LABELS[s.withdrawalStrategy]}** — ${STRATEGY_DESCRIPTIONS[s.withdrawalStrategy]}${
+      s.withdrawalStrategy === "custom" ? "" : " The order below is derived from the accounts by that preset (an account added later joins it automatically); homes, other assets, HSAs and 529s are never drawn."
+    }`
+  );
+  lines.push(
     "Each stop, in list order, is offered either a flat dollar amount or a percentage of what's left after the stops above it (cascading — not a share of the original shortfall), then clamped by its own optional floor; whatever it can't cover spills to the next stop."
   );
   lines.push(
     "This order determines which accounts' gains and ordinary income are realized in which years, so it is the primary lever on the lifetime tax bill."
   );
-  if (mf.drainOrder.length === 0) {
+  const drainOrder = s.withdrawalStrategy === "custom" ? mf.drainOrder : deriveDrainOrder(s.withdrawalStrategy, scenario.accounts);
+  if (drainOrder.length === 0) {
     lines.push("- None configured — an Extra Savings shortfall cannot be covered and the account will simply run negative (raising an insufficient-funds warning).");
   } else {
-    mf.drainOrder.forEach((stop: DrainStop, i) => {
+    drainOrder.forEach((stop: DrainStop, i) => {
       const parts: string[] = [];
       const account = scenario.accounts.find((a) => a.id === stop.accountId);
       if (account) parts.push(`${account.class} / ${account.taxTreatment}`);
@@ -445,7 +486,9 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push("");
   lines.push("- **Household** — each person's birth date, retirement age, and planning end age (the age they are modelled as living to; it sets the plan horizon and drives the survivor rules).");
   lines.push("- **Settings** — plan start/end dates, inflation rate, filing status, whether RMDs are modeled, and the flat state/local tax add-on.");
-  lines.push("- **Routing tab** — the split order (each stop's flat-amount-or-percentage kind, per-period limit, and date window) and the drain order (each stop's kind, per-period max draw, and date window). An account's balance cap and floor live on the account. Reordering the drain order is the highest-leverage tax change available.");
+  lines.push("- **Routing tab** — the withdrawal strategy (a preset, or a custom drain order with each stop's kind, per-period max draw, and date window), the cash buffer, and the split order (each stop's flat-amount-or-percentage kind, per-period limit, and date window). An account's balance cap and floor live on the account. Changing the withdrawal strategy is the highest-leverage tax change available.");
+  lines.push("- **Assumptions › Expected return** — one return for every investment account (switchable; per-account rates apply when it is off). **Assumptions › Healthcare** — the healthcare model's coverage choices, premiums, and out-of-pocket figures.");
+  lines.push("- **Stress test tab** — the plan re-run with lower returns, a bear market at retirement, higher inflation, a Social Security cut, a longer life, or all at once; not saved with the plan.");
   lines.push("- **Accounts** — name, class, tax treatment, owner, starting balance, starting cost basis, growth rate (or a dated growth-rate schedule), RMD flag, early-withdrawal-penalty exemption, an account start date (for a not-yet-existing account), loan terms, and the contribution (amount, frequency, growth, payroll-deducted flag, end date) or a multi-segment contribution schedule.");
   lines.push("- **Income sources** — amount, an optional gross (Box-1-style) amount for bracket placement while working, frequency (or an every-N-years interval), nominal growth rate (a pension's blank = 0, no COLA), owner, deposit account, start/end dates, category, a claiming age for Social Security/pension, a pension's survivor share, and temporary adjustment windows.");
   lines.push("- **Expenses** — amount, frequency (or an every-N-years interval), nominal growth rate, payment account, start/end dates, category, and temporary adjustment windows.");

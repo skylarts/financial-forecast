@@ -331,9 +331,47 @@ Use this for other moves between two of the household's own accounts on a schedu
   },
   "rmdEnabled": boolean,                      // default true
   "filingStatus": "single" | "marriedFilingJointly",   // default "marriedFilingJointly"
-  "additionalFlatTaxRatePct": number, 0..1    // default 0; flat state/local add-on rate
+  "additionalFlatTaxRatePct": number, 0..1,   // default 0; flat state/local add-on rate
+  "withdrawalStrategy": "conventional" | "tax_deferred_first" | "pro_rata" | "custom",
+                                              // optional; absent = "custom" when drainOrder has entries, else "conventional".
+                                              // A preset derives the drain order from the accounts (cash, then taxable, then
+                                              // tax-deferred, then Roth for "conventional"; homes/HSAs/529s never drawn) and
+                                              // ignores moneyFlow.drainOrder; "custom" reads moneyFlow.drainOrder as-is.
+  "cashBufferTarget": number >= 0 | null,     // default null; today's dollars kept in Extra Savings, topped up by the drain order
+  "planReturnRatePct": number | null,         // default null; one nominal return for every investment account while set
+  "healthcare": Healthcare                    // optional; every field has a default (see below)
 }
 \`\`\`
+
+**Healthcare** (the healthcare model; off by default — premiums entered as expenses keep working):
+\`\`\`
+{
+  "enabled": boolean,                                  // default false
+  "costGrowthRatePct": number | null,                  // default 0.05; null = plan inflation
+  "workingMonthlyPremiumPerPerson": number >= 0,       // default 0 (paycheck premiums are usually already net of take-home)
+  "spouseCoverageWhileWorking": boolean,               // default true
+  "retiredCoverage": "marketplace" | "cobra_then_marketplace" | "fixed" | "none",   // default "marketplace"
+  "fixedMonthlyPremiumPerPerson": number >= 0,         // default 600; used by "fixed"
+  "cobra": { "months": integer >= 0, "monthlyPremiumPerPerson": number >= 0 },     // defaults 18, 750
+  "marketplace": {
+    "benchmarkMonthlyPremiumPerPerson": number >= 0,   // default 650; full price today at the person's current age
+    "ageRated": boolean,                               // default true; federal age curve
+    "premiumTaxCredit": boolean,                       // default true; credit from the plan's own income each year
+    "enhancedSubsidies": boolean                       // default false; the 2021-2025 schedule
+  },
+  "medicare": {
+    "partDMonthlyPremium": number >= 0,                // default 45
+    "supplementMonthlyPremium": number >= 0,           // default 150
+    "irmaa": boolean                                   // default true; surcharges from income two years back
+  },
+  "outOfPocket": {
+    "preMedicareAnnualPerPerson": number >= 0,         // default 2000
+    "medicareAnnualPerPerson": number >= 0,            // default 2500
+    "payFromHsa": boolean                              // default true
+  }
+}
+\`\`\`
+All money is today's dollars (per person per month unless the name says otherwise) and grows at \`costGrowthRatePct\`. Part B's standard premium and the IRMAA and premium-credit tables are built in (2026 figures).
 
 **SplitStop** (surplus routing — cascading, each stop offered in list order):
 \`\`\`
