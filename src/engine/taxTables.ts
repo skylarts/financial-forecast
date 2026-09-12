@@ -228,6 +228,15 @@ export interface YearTaxRates {
   ltcgMarginalRate: number;
   /** Estimated fraction of gross Social Security benefits that's taxable this year, for withholding sizing. */
   ssTaxableFraction: number;
+  /**
+   * The prior pass's adjusted gross income for this year (salary + tax-deferred
+   * withdrawals + conversions + pension + taxable Social Security + realized
+   * gains). Medicare's income surcharges read it two years back. Absent on the
+   * seed pass, which the healthcare model treats as zero.
+   */
+  agiEstimate?: number;
+  /** As above, plus the untaxed part of Social Security: the income the marketplace premium credit is measured against. */
+  acaMagiEstimate?: number;
 }
 
 export const ZERO_TAX_RATES: YearTaxRates = {

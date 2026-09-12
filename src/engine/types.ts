@@ -124,4 +124,10 @@ export interface ResolvedSchedule {
   mortgages: MortgageSpec[];
   timeline: TimelineRow[];
   bracketFills: BracketFillRule[];
+  /**
+   * For each person, the months ("YYYY-MM") in which they have a salary
+   * running -- the healthcare model's definition of "working". Empty for a
+   * person with no salary in the plan.
+   */
+  workingMonths: Map<Id, Set<string>>;
 }

@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { DEFAULT_HEALTHCARE_SETTINGS } from "@/domain";
 import type { Scenario, Account } from "@/domain";
 
 /**
@@ -316,20 +317,21 @@ export const mockScenario: Scenario = {
         { id: nanoid(), accountId: emergencyFundId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: 30_000, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
         { id: nanoid(), accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, maxBalance: null, maxBalanceGrowthRatePct: null, startDate: null, endDate: null },
       ],
-      drainOrder: [checkingId, emergencyFundId, brokerageId, alex401kId, jordan401kId, alexRothId].map((accountId) => ({
-        id: nanoid(),
-        accountId,
-        kind: "percent_of_remainder",
-        amount: null,
-        pct: 1,
-        startDate: null,
-        endDate: null,
-        minBalanceGrowthRatePct: null,
-        minBalance: null,
-      })),
+      // The preset below derives the drain order from the accounts, so the
+      // sample keeps none of its own.
+      drainOrder: [],
     },
     rmdEnabled: true,
     filingStatus: "marriedFilingJointly",
     additionalFlatTaxRatePct: 0,
+    // Cash and checking first, then the brokerage, then the 401(k)s, then the
+    // Roth: the conventional order, kept as a preset so a new account joins it.
+    withdrawalStrategy: "conventional",
+    cashBufferTarget: 10_000,
+    planReturnRatePct: null,
+    healthcare: {
+      ...DEFAULT_HEALTHCARE_SETTINGS,
+      enabled: true,
+    },
   },
 };

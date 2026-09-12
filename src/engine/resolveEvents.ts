@@ -1,5 +1,5 @@
 import type { Account, Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
-import { addDays, compareDates, elapsedYears, todayISO } from "./dateMath";
+import { addDays, compareDates, eachMonthStart, elapsedYears, todayISO } from "./dateMath";
 import { deathDateOf, survivorsOn } from "./household";
 import { expandOccurrences } from "./occurrences";
 import { growthAdjustedAmount, todaysDollarsAmount } from "./growth";
@@ -510,6 +510,20 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       return activeMultiplier(s.adjustments ?? [], date) > 0;
     });
   };
+  // The months each person is working, for the healthcare model: a person
+  // with no salary in the plan is never "working" (unlike the contribution
+  // rule above, which keeps a salary-less plan's paycheck deductions running).
+  const workingMonths = new Map<Id, Set<string>>();
+  for (const person of scenario.household.people) {
+    const set = new Set<string>();
+    if (salarySources.length > 0) {
+      for (const m of eachMonthStart(settings.startDate, horizonEnd)) {
+        if (salaryActiveOn(person.id, m)) set.add(m.slice(0, 7));
+      }
+    }
+    workingMonths.set(person.id, set);
+  }
+
   const postContribution = (account: (typeof scenario.accounts)[number], occ: ISODate, amount: number, payrollDeducted: boolean) => {
     if (amount === 0) return;
     if (payrollDeducted && !salaryActiveOn(account.ownerId, occ)) return;
@@ -793,7 +807,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     }
   }
 
-  return { accounts, postings, mortgages, timeline: buildTimeline(scenario), bracketFills };
+  return { accounts, postings, mortgages, timeline: buildTimeline(scenario), bracketFills, workingMonths };
 }
 
 /** How a withdrawal from this account is taxed: the explicit treatment, else inferred from the class. */

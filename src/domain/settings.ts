@@ -165,7 +165,86 @@ export const DEFAULT_MONEY_FLOW: MoneyFlow = {
 export const filingStatusSchema = z.enum(["single", "marriedFilingJointly"]);
 export type FilingStatus = z.infer<typeof filingStatusSchema>;
 
-export const forecastSettingsSchema = z.object({
+/**
+ * Which accounts cover a shortfall, and in what order. The three presets are
+ * derived from the account list at run time (see engine/strategy.ts), so an
+ * account added later is never left unreachable; "custom" means the engine
+ * reads `moneyFlow.drainOrder` exactly as the Routing tab's editor left it.
+ *
+ *  - conventional: cash, then taxable, then tax-deferred, then Roth last.
+ *  - tax_deferred_first: cash, then tax-deferred (fill the low brackets
+ *    before Social Security and RMDs arrive), then taxable, then Roth.
+ *  - pro_rata: cash first, then every investment account in proportion to
+ *    its balance.
+ */
+export const withdrawalStrategySchema = z.enum(["conventional", "tax_deferred_first", "pro_rata", "custom"]);
+export type WithdrawalStrategy = z.infer<typeof withdrawalStrategySchema>;
+
+/**
+ * The healthcare model: what coverage costs at each stage of life, driven by
+ * the household's own income where the real rules are (the marketplace
+ * premium credit, Medicare's income-related surcharges). Every dollar figure
+ * is today's dollars, per person per month unless the name says otherwise,
+ * and grows at `costGrowthRatePct`. See engine/healthcare.ts for the rules
+ * and the tables (2026 figures).
+ *
+ * Off by default: a plan that entered its premiums as ordinary expenses
+ * keeps working exactly as before. Turning it on replaces those entries.
+ */
+export const healthcareSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Yearly growth of every healthcare cost; null = the plan's inflation rate. Medical costs have outrun general inflation for decades, so the default sits above it. */
+  costGrowthRatePct: z.number().nullable().default(0.05),
+  /** What coverage costs out of take-home while someone in the household has a salary. 0 = the paycheck deduction is already reflected in the take-home pay you entered. */
+  workingMonthlyPremiumPerPerson: z.number().nonnegative().default(0),
+  /** A working member's plan covers everyone under 65 (so a retired spouse costs the working premium, not a marketplace one). */
+  spouseCoverageWhileWorking: z.boolean().default(true),
+  /** Coverage for anyone under 65 once nobody in the household is working. */
+  retiredCoverage: z.enum(["marketplace", "cobra_then_marketplace", "fixed", "none"]).default("marketplace"),
+  /** For "fixed": a retiree plan or any other flat premium. */
+  fixedMonthlyPremiumPerPerson: z.number().nonnegative().default(600),
+  cobra: z
+    .object({
+      months: z.number().int().nonnegative().default(18),
+      monthlyPremiumPerPerson: z.number().nonnegative().default(750),
+    })
+    .prefault({}),
+  marketplace: z
+    .object({
+      /** The full, unsubsidized price of the benchmark (second-lowest silver) plan for this person today, at their current age. */
+      benchmarkMonthlyPremiumPerPerson: z.number().nonnegative().default(650),
+      /** Scale the premium with age along the standard federal age curve (a 60-year-old pays about 2.1x a 40-year-old). */
+      ageRated: z.boolean().default(true),
+      /** Apply the premium tax credit: the household's cost is capped at a share of its income when income is between one and four times the poverty line. */
+      premiumTaxCredit: z.boolean().default(true),
+      /** Model the 2021-2025 enhanced credits (no income cap, 8.5% ceiling) instead of the schedule in current law. */
+      enhancedSubsidies: z.boolean().default(false),
+    })
+    .prefault({}),
+  medicare: z
+    .object({
+      /** Part D (drug) plan premium, before any income surcharge. */
+      partDMonthlyPremium: z.number().nonnegative().default(45),
+      /** A Medigap supplement or Medicare Advantage premium. */
+      supplementMonthlyPremium: z.number().nonnegative().default(150),
+      /** Apply IRMAA: the Part B and Part D surcharges driven by the household's income two years earlier. */
+      irmaa: z.boolean().default(true),
+    })
+    .prefault({}),
+  outOfPocket: z
+    .object({
+      /** Deductibles, copays, dental, vision -- per person per year, before Medicare. */
+      preMedicareAnnualPerPerson: z.number().nonnegative().default(2_000),
+      /** Same, on Medicare. */
+      medicareAnnualPerPerson: z.number().nonnegative().default(2_500),
+      /** Pay out-of-pocket costs from a health savings account while it has a balance. */
+      payFromHsa: z.boolean().default(true),
+    })
+    .prefault({}),
+});
+export type HealthcareSettings = z.infer<typeof healthcareSettingsSchema>;
+
+const forecastSettingsObjectSchema = z.object({
   /**
    * null = every account's starting balance is treated as of TODAY, live --
    * recomputed on every load rather than frozen at whatever date the plan
@@ -191,5 +270,34 @@ export const forecastSettingsSchema = z.object({
    * as-is for a no-income-tax state like Texas.
    */
   additionalFlatTaxRatePct: z.number().min(0).max(1).default(0),
+  /**
+   * Which accounts cover a shortfall, and in what order. Absent on plans
+   * saved before it existed: those keep a hand-built drain order as
+   * "custom", and a plan with no drain order at all gets "conventional" --
+   * the safety net for a scratch scenario that used to run dry silently.
+   */
+  withdrawalStrategy: withdrawalStrategySchema.optional(),
+  /**
+   * Cash to keep on hand in Extra Savings (today's dollars, grown by
+   * inflation). The withdrawal routing tops it back up whenever spending
+   * draws it down, so retirement does not leave cash sitting at $0 between
+   * bills. null = no buffer (draw exactly what each month needs).
+   */
+  cashBufferTarget: z.number().nonnegative().nullable().default(null),
+  /**
+   * One expected return for every investment account (taxable, tax-deferred,
+   * Roth, HSA, 529). While set, each account's own growth rate and scheduled
+   * changes are ignored; null = off, every account uses its own rate. Cash
+   * and real estate never follow it.
+   */
+  planReturnRatePct: z.number().nullable().default(null),
+  healthcare: healthcareSettingsSchema.prefault({}),
 });
+
+export const forecastSettingsSchema = forecastSettingsObjectSchema.transform((s) => ({
+  ...s,
+  withdrawalStrategy: s.withdrawalStrategy ?? (s.moneyFlow.drainOrder.length > 0 ? ("custom" as const) : ("conventional" as const)),
+}));
 export type ForecastSettings = z.infer<typeof forecastSettingsSchema>;
+/** The default healthcare block, for code that builds a settings object by hand. */
+export const DEFAULT_HEALTHCARE_SETTINGS: HealthcareSettings = healthcareSettingsSchema.parse({});
