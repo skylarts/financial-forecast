@@ -36,7 +36,11 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
         break;
       }
       case "sell_home": {
-        description = `Sell ${accountName(event.realEstateAccountId)} for a net $${event.netProceeds.toLocaleString()}`;
+        // In estimate mode the engine ignores netProceeds, so the row must not quote it.
+        description =
+          event.sellingCostsPct != null
+            ? `Sell ${accountName(event.realEstateAccountId)} (proceeds estimated after ${Math.round(event.sellingCostsPct * 100)}% selling costs and the mortgage payoff)`
+            : `Sell ${accountName(event.realEstateAccountId)} for a net $${event.netProceeds.toLocaleString()}`;
         break;
       }
       case "have_a_kid": {

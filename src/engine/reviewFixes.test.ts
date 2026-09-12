@@ -79,13 +79,12 @@ describe("review C2 -- year-end tax true-up settles withholding onto the exact b
   it("the household's actual cash tax equals the exact bracket bill (settlement refunds over-withholding)", () => {
     const result = projectScenario(retireeDrawdownScenario());
     const y = result.years[0];
-    // Withholding (marginal rate on every dollar) minus the refund must land
-    // exactly on the bracket-computed bill.
+    // Withholding minus the true-up must land exactly on the bracket-computed bill.
     expect(y.cashFlow.withdrawalTaxes - y.cashFlow.taxSettlement).toBeCloseTo(y.cashFlow.federalTaxTotal, 2);
-    // And the over-withholding was material -- the refund is real money.
-    expect(y.cashFlow.taxSettlement).toBeGreaterThan(1_000);
-    // The refund lands back in the hub, visible in the ledger.
-    expect(result.ledger.some((e) => e.kind === "tax_settlement")).toBe(true);
+    // Withholding is sized at the effective rate, so the true-up is small
+    // relative to the bill (it used to refund thousands every year).
+    expect(Math.abs(y.cashFlow.taxSettlement)).toBeLessThan(y.cashFlow.federalTaxTotal * 0.15 + 50);
+    expect(y.cashFlow.federalTaxTotal).toBeGreaterThan(1_000);
   });
 
   it("the reconcile identity holds exactly with the new settlement & withholding fields", () => {
@@ -411,7 +410,12 @@ describe("December tax refund is routed through the split order, not stranded in
     const scenario = refundScenario();
     const hub = scenario.accounts.find((a) => a.isExtraSavings)!;
     const brokerage = scenario.accounts.find((a) => a.name === "Brokerage")!;
-    const result = projectScenario(scenario);
+    // Force a real over-withholding: the converged rate would be close to the
+    // bill, so run one pass with a deliberately high withholding rate.
+    const result = forecastScenario(
+      scenario,
+      new Map([[2026, { ordinaryMarginalRate: 0.12, ordinaryWithholdingRate: 0.35, ltcgMarginalRate: 0.15, ssTaxableFraction: 0.5 }]])
+    );
     const y = result.years[0];
 
     // The refund is real money, not a rounding artifact.

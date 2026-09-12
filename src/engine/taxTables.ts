@@ -61,14 +61,17 @@ export const TAX_TABLES_2026 = {
     marriedFilingJointly: 1_650,
   },
   /**
-   * Temporary OBBBA "senior deduction" (tax years 2025-2028), per person
-   * age 65+, on top of the §63(f) bump above. Phases out 6 cents per dollar
-   * of income over the threshold.
+   * Temporary OBBBA "senior deduction" (tax years 2025-2028 only), per
+   * person age 65+, on top of the §63(f) bump above. Phases out 6 cents per
+   * dollar of income over the threshold. A fixed statutory amount: neither
+   * it nor its threshold is inflation-indexed.
    */
   seniorDeduction: {
     perPerson: 6_000,
     phaseOutStart: { single: 75_000, marriedFilingJointly: 150_000 },
     phaseOutRate: 0.06,
+    firstYear: 2025,
+    lastYear: 2028,
   },
   /**
    * Provisional-income thresholds for Social Security taxability. NOT
@@ -193,10 +196,10 @@ export function standardDeductionForYear(
   const base = TAX_TABLES_2026.standardDeduction[filingStatus] * factor;
   const age65Bump = seniors * TAX_TABLES_2026.age65AdditionalDeduction[filingStatus] * factor;
 
-  const { perPerson, phaseOutStart, phaseOutRate } = TAX_TABLES_2026.seniorDeduction;
-  const phaseStart = phaseOutStart[filingStatus] * factor;
-  const excess = Math.max(0, otherOrdinaryIncomeForPhaseOut - phaseStart);
-  const perPersonAfterPhaseOut = Math.max(0, perPerson * factor - excess * phaseOutRate);
+  const { perPerson, phaseOutStart, phaseOutRate, firstYear, lastYear } = TAX_TABLES_2026.seniorDeduction;
+  if (year < firstYear || year > lastYear) return base + age65Bump;
+  const excess = Math.max(0, otherOrdinaryIncomeForPhaseOut - phaseOutStart[filingStatus]);
+  const perPersonAfterPhaseOut = Math.max(0, perPerson - excess * phaseOutRate);
   const seniorDeduction = seniors * perPersonAfterPhaseOut;
 
   return base + age65Bump + seniorDeduction;
@@ -210,14 +213,33 @@ export function standardDeductionForYear(
  * exact bracket calculation, computed after the fact from realized income.
  */
 export interface YearTaxRates {
-  /** Marginal ordinary-income rate -- applied to tax-deferred withdrawals and SS/pension withholding. */
+  /** Marginal ordinary-income rate -- where the next dollar of ordinary income lands. */
   ordinaryMarginalRate: number;
+  /**
+   * The rate withholding is sized at for tax-deferred distributions,
+   * conversions, pension, and Social Security: the prior pass's exact
+   * ordinary tax on those sources divided by their gross. Withholding at the
+   * marginal rate on every dollar over-drew the IRA by thousands a year and
+   * then swept the December refund into the brokerage; the effective rate
+   * lands the true-up near zero.
+   */
+  ordinaryWithholdingRate: number;
   /** Marginal LTCG rate -- applied to the realized-gain portion of taxable-account withdrawals. */
   ltcgMarginalRate: number;
   /** Estimated fraction of gross Social Security benefits that's taxable this year, for withholding sizing. */
   ssTaxableFraction: number;
 }
 
-export const ZERO_TAX_RATES: YearTaxRates = { ordinaryMarginalRate: 0, ltcgMarginalRate: 0, ssTaxableFraction: 0 };
+export const ZERO_TAX_RATES: YearTaxRates = {
+  ordinaryMarginalRate: 0,
+  ordinaryWithholdingRate: 0,
+  ltcgMarginalRate: 0,
+  ssTaxableFraction: 0,
+};
 
-export const SEED_TAX_RATES: YearTaxRates = { ordinaryMarginalRate: 0.12, ltcgMarginalRate: 0.15, ssTaxableFraction: 0.5 };
+export const SEED_TAX_RATES: YearTaxRates = {
+  ordinaryMarginalRate: 0.12,
+  ordinaryWithholdingRate: 0.12,
+  ltcgMarginalRate: 0.15,
+  ssTaxableFraction: 0.5,
+};

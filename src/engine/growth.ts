@@ -44,16 +44,22 @@ export function todaysDollarsAmount(
   ownGrowthRatePct: number,
   stepOwnGrowthAnnually = false
 ): number {
+  // An item that started before the plan did is entered in today's dollars
+  // like everything else: today IS its reference point. Without this clamp a
+  // past start date gave a negative exponent and the amount was deflated (a
+  // pension in pay since 2015 showed 27% low), and with a live "today" start
+  // date it drifted lower every day.
+  const effectiveStart = itemStartDate < planStartDate ? planStartDate : itemStartDate;
   const nominalAtStart = growthAdjustedAmount(
     baseAmount,
-    elapsedYears(planStartDate, itemStartDate),
+    elapsedYears(planStartDate, effectiveStart),
     inflationRatePct
   );
-  const sinceStart = elapsedYears(itemStartDate, occurrenceDate);
+  const sinceStart = Math.max(0, elapsedYears(effectiveStart, occurrenceDate));
   // Stepped growth (Social Security COLA) applies once per CALENDAR year --
   // benefits adjust each January, not on the benefit's own start anniversary.
   const ownYears = stepOwnGrowthAnnually
-    ? Math.max(0, Number(occurrenceDate.slice(0, 4)) - Number(itemStartDate.slice(0, 4)))
+    ? Math.max(0, Number(occurrenceDate.slice(0, 4)) - Number(effectiveStart.slice(0, 4)))
     : sinceStart;
   return growthAdjustedAmount(nominalAtStart, ownYears, ownGrowthRatePct);
 }
