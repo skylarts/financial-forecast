@@ -587,7 +587,21 @@ export function PositionDetail({
                           </td>
                         )}
                         <td className={`${CELL} text-right text-dim`}>{shares(lot.quantity)}</td>
-                        <td className={`${CELL} text-right text-dim`}>{money(lot.costBasis)}</td>
+                        <td
+                          className={`${CELL} text-right text-dim`}
+                          title={
+                            lot.basisMethod === "average" && lot.averagePerShare !== undefined
+                              ? `Average cost: ${price(lot.averagePerShare)} a share across every share held in the account.`
+                              : undefined
+                          }
+                        >
+                          {lot.basisMethod === "average" && (
+                            <span className="mr-1 rounded-sm border border-border px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-dim-2">
+                              Avg
+                            </span>
+                          )}
+                          {money(lot.costBasis)}
+                        </td>
                         <td className={`${CELL} text-right text-dim`}>{money(lot.proceeds)}</td>
                         <td className={`${CELL} text-right ${toneFor(lot.gain)}`}>{money(lot.gain)}</td>
                         <td className={`${CELL} text-right text-dim`}>{lotTermLabel(lot)}</td>

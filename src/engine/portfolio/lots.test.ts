@@ -569,3 +569,120 @@ describe("holdingTerm", () => {
     expect(holdingTerm("2024-01-10", "2025-01-11")).toBe("long");
   });
 });
+
+describe("average cost", () => {
+  const AVG = { averageCost: new Set(["SWPPX"]) };
+  const fund = (partial: Partial<Transaction> & { type: TransactionType; date: string }) =>
+    tx({ symbol: "SWPPX", ...partial });
+
+  it("books a sale at the average basis of every share held, not the oldest lot's", () => {
+    const { closedLots, openLots } = buildLotLedger(
+      [
+        fund({ type: "buy", date: "2025-01-10", quantity: 10, price: 10 }),
+        fund({ type: "buy", date: "2025-02-10", quantity: 10, price: 20 }),
+        fund({ type: "sell", date: "2025-03-10", quantity: 5, price: 30 }),
+      ],
+      AVG,
+    );
+    expect(closedLots).toHaveLength(1);
+    expect(closedLots[0].costBasis).toBeCloseTo(75, 6);
+    expect(closedLots[0].averagePerShare).toBeCloseTo(15, 6);
+    expect(closedLots[0].basisMethod).toBe("average");
+    // The oldest lot still supplied the shares, for the holding period.
+    expect(closedLots[0].acquiredDate).toBe("2025-01-10");
+    // What remains carries the average: 15 shares at $15.
+    expect(openLots.reduce((s, l) => s + l.costBasis, 0)).toBeCloseTo(225, 6);
+    expect(openLots.every((l) => Math.abs(l.costBasis / l.quantity - 15) < 1e-9)).toBe(true);
+  });
+
+  it("moves the average with a later purchase", () => {
+    const { closedLots } = buildLotLedger(
+      [
+        fund({ type: "buy", date: "2025-01-10", quantity: 10, price: 10 }),
+        fund({ type: "buy", date: "2025-02-10", quantity: 10, price: 20 }),
+        fund({ type: "sell", date: "2025-03-10", quantity: 5, price: 30 }),
+        fund({ type: "buy", date: "2025-04-10", quantity: 10, price: 30 }),
+        fund({ type: "sell", date: "2025-05-10", quantity: 10, price: 30 }),
+      ],
+      AVG,
+    );
+    // ($225 + $300) / 25 shares = $21 a share. The sale draws across two
+    // lots, so it is two closed lots that together carry $210.
+    const second = closedLots.filter((l) => l.disposedDate === "2025-05-10");
+    expect(second.every((l) => Math.abs((l.averagePerShare ?? 0) - 21) < 1e-6)).toBe(true);
+    expect(second.reduce((s, l) => s + l.costBasis, 0)).toBeCloseTo(210, 6);
+  });
+
+  it("lets a reinvested dividend join the pool at its own price", () => {
+    const { closedLots } = buildLotLedger(
+      [
+        fund({ type: "buy", date: "2025-01-10", quantity: 10, price: 10 }),
+        fund({ type: "reinvest", date: "2025-02-10", quantity: 2, price: 16 }),
+        fund({ type: "sell", date: "2025-03-10", quantity: 6, price: 20 }),
+      ],
+      AVG,
+    );
+    // ($100 + $32) / 12 = $11 a share.
+    expect(closedLots.reduce((s, l) => s + l.costBasis, 0)).toBeCloseTo(66, 6);
+  });
+
+  it("keeps the holding period on the oldest shares", () => {
+    const { closedLots } = buildLotLedger(
+      [
+        fund({ type: "buy", date: "2024-01-10", quantity: 10, price: 10 }),
+        fund({ type: "buy", date: "2025-03-01", quantity: 10, price: 20 }),
+        fund({ type: "sell", date: "2025-06-01", quantity: 5, price: 30 }),
+      ],
+      AVG,
+    );
+    expect(closedLots[0].term).toBe("long");
+  });
+
+  it("leaves a fund on lots exactly as it was", () => {
+    const rows = [
+      fund({ type: "buy", date: "2025-01-10", quantity: 10, price: 10 }),
+      fund({ type: "buy", date: "2025-02-10", quantity: 10, price: 20 }),
+      fund({ type: "sell", date: "2025-03-10", quantity: 5, price: 30 }),
+    ];
+    const plain = buildLotLedger(rows);
+    expect(plain.closedLots[0].costBasis).toBeCloseTo(50, 6);
+    expect(plain.closedLots[0].basisMethod).toBeUndefined();
+    // A different method is a different ledger, not the cached one.
+    const averaged = buildLotLedger(rows, AVG);
+    expect(averaged.closedLots[0].costBasis).toBeCloseTo(75, 6);
+    expect(buildLotLedger(rows)).toBe(plain);
+    expect(buildLotLedger(rows, { averageCost: new Set(["SWPPX"]) })).toBe(averaged);
+  });
+
+  it("never averages a short position or another symbol", () => {
+    const { closedLots } = buildLotLedger(
+      [
+        fund({ type: "short_sell", date: "2025-01-10", quantity: 10, price: 10 }),
+        fund({ type: "short_sell", date: "2025-02-10", quantity: 10, price: 20 }),
+        fund({ type: "buy_to_cover", date: "2025-03-10", quantity: 5, price: 5 }),
+        tx({ symbol: "VTI", type: "buy", date: "2025-01-10", quantity: 10, price: 10 }),
+        tx({ symbol: "VTI", type: "buy", date: "2025-02-10", quantity: 10, price: 20 }),
+        tx({ symbol: "VTI", type: "sell", date: "2025-03-10", quantity: 5, price: 30 }),
+      ],
+      AVG,
+    );
+    const short = closedLots.find((l) => l.symbol === "SWPPX")!;
+    const vti = closedLots.find((l) => l.symbol === "VTI")!;
+    expect(short.basisMethod).toBeUndefined();
+    expect(short.costBasis).toBeCloseTo(50, 6);
+    expect(vti.basisMethod).toBeUndefined();
+    expect(vti.costBasis).toBeCloseTo(50, 6);
+  });
+
+  it("averages each account on its own", () => {
+    const { closedLots } = buildLotLedger(
+      [
+        fund({ type: "buy", date: "2025-01-10", quantity: 10, price: 10, accountId: "a" }),
+        fund({ type: "buy", date: "2025-01-10", quantity: 10, price: 30, accountId: "b" }),
+        fund({ type: "sell", date: "2025-03-10", quantity: 5, price: 30, accountId: "a" }),
+      ],
+      AVG,
+    );
+    expect(closedLots[0].averagePerShare).toBeCloseTo(10, 6);
+  });
+});
