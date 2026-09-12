@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Granularity, Id } from "@/domain";
 import type { DollarMode } from "@/lib/format";
 import { Chip, Segmented } from "@/components/ui/controls";
+import { SyncChip } from "@/components/layout/SyncChip";
 
 const PRESETS = [5, 10, 20, 40] as const;
 
@@ -58,7 +59,6 @@ export function ViewBar({
   compareOptions,
   compareScenarioId,
   onCompareChange,
-  savedToBrowser,
 }: {
   minYear: number;
   maxYear: number;
@@ -79,7 +79,6 @@ export function ViewBar({
   compareOptions: { id: Id; name: string }[];
   compareScenarioId: Id | null;
   onCompareChange: (id: Id | null) => void;
-  savedToBrowser: boolean;
 }) {
   const years = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
   const isFullRange = rangeStart === minYear && rangeEnd === maxYear;
@@ -226,9 +225,7 @@ export function ViewBar({
       </div>
 
       <div className="scroll-strip -mx-3 flex w-full flex-nowrap items-center gap-2 px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0">
-        {savedToBrowser && (
-          <span className="hidden text-[11.5px] text-dim-2 sm:inline">Saved to this browser</span>
-        )}
+        <SyncChip />
         <Segmented
           ariaLabel="Show figures in future or today's dollars"
           options={DOLLAR_OPTIONS}

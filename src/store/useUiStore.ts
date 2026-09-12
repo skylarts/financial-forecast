@@ -24,6 +24,9 @@ interface UiState {
   toggleCashFlowExpanded: (key: string) => void;
   accountsExpanded: string[];
   toggleAccountsExpanded: (key: string) => void;
+  /** Bumped by the empty first-run state to open the Data menu's file picker; not persisted. */
+  restoreRequest: number;
+  requestRestore: () => void;
 }
 
 /** UI-only preferences (not part of a financial plan), persisted separately. */
@@ -39,7 +42,17 @@ export const useUiStore = create<UiState>()(
       toggleCashFlowExpanded: (key) => set((s) => ({ cashFlowExpanded: toggleInArray(s.cashFlowExpanded, key) })),
       accountsExpanded: [],
       toggleAccountsExpanded: (key) => set((s) => ({ accountsExpanded: toggleInArray(s.accountsExpanded, key) })),
+      restoreRequest: 0,
+      requestRestore: () => set((s) => ({ restoreRequest: s.restoreRequest + 1 })),
     }),
-    { name: "forecast-ui" }
+    {
+      name: "forecast-ui",
+      partialize: (s) => ({
+        theme: s.theme,
+        cashFlowTaxesOpen: s.cashFlowTaxesOpen,
+        cashFlowExpanded: s.cashFlowExpanded,
+        accountsExpanded: s.accountsExpanded,
+      }),
+    }
   )
 );

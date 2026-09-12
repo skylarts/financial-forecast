@@ -17,17 +17,14 @@ const QUOTES = [
 
 /**
  * A softly-rotating inspirational line, shown only in joy mode. Picks a random
- * starting quote on mount (so it varies per visit) and gently cross-fades to a
- * new one every 12s. Random selection happens in an effect to avoid an SSR
- * hydration mismatch.
+ * starting quote (so it varies per visit) and gently cross-fades to a new one
+ * every 12s. The page that renders it is client-only (it waits for the saved
+ * plan to hydrate), so the random pick can be the initial state without an
+ * SSR mismatch.
  */
 export function JoyQuote() {
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const [visible, setVisible] = useState(true);
-
-  useEffect(() => {
-    setIndex(Math.floor(Math.random() * QUOTES.length));
-  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {

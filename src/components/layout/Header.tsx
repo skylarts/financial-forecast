@@ -13,6 +13,7 @@ import { NavMenuButton } from "@/components/layout/SideNav";
 import { AccountTopMenuItem, SignOutMenuItem } from "@/components/auth/LoginButton";
 import { Btn } from "@/components/ui/controls";
 import { VIEWS, type View } from "@/lib/views";
+import { useUiStore as useUiStoreRestore } from "@/store/useUiStore";
 
 type CreateMode = "duplicate" | "scratch";
 
@@ -209,6 +210,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
 function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const restoreRequest = useUiStoreRestore((s) => s.restoreRequest);
 
   useEffect(() => {
     if (!open) return;
@@ -248,7 +250,7 @@ function OverflowMenu({ onOpenWizard }: { onOpenWizard: () => void }) {
             </button>
           </div>
           <div className="border-t border-border px-1 pt-1">
-            <BackupControls />
+            <BackupControls restoreRequest={restoreRequest} />
           </div>
           <div className="border-t border-border pt-1">
             <SignOutMenuItem onClose={() => setOpen(false)} />

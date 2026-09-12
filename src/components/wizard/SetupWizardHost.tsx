@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { usePlanStore, hadExistingPlanOnLoad } from "@/store/usePlanStore";
+import { usePlanStore, planHasContent } from "@/store/usePlanStore";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { useWizardStore } from "@/store/useWizardStore";
 import { hasCompletedOnboarding, markOnboardingCompleted } from "@/lib/onboarding";
@@ -31,13 +31,14 @@ export function SetupWizardHost({ cloudSyncReady }: { cloudSyncReady: boolean })
     decided.current = true;
 
     if (hasCompletedOnboarding()) return;
-    if (hadExistingPlanOnLoad()) {
-      // Existing user from before this feature shipped -- grandfather them
-      // in silently rather than surprising a returning user with a wizard.
+    if (planHasContent(usePlanStore.getState().plan)) {
+      // A plan already exists (an earlier build, another device, a restored
+      // file): never surprise a returning user with the guide.
       markOnboardingCompleted();
       return;
     }
-    openWizard();
+    // The empty first-run state offers the guide as a button; auto-opening
+    // it on top would show two invitations at once.
   }, [hasHydrated, authLoading, cloudSyncReady, openWizard]);
 
   const handleClose = () => {

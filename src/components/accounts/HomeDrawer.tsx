@@ -356,7 +356,7 @@ export function HomeDrawer({
             <CheckboxInput reg={register("replaceHousingExpenses")} label="Replace existing housing expenses" />
             {watch("replaceHousingExpenses") && (
               <p className="-mt-2 pl-6 text-xs text-dim">
-                Any expense categorized as "Housing" (e.g. rent) stops the day before this purchase closes.
+                Any expense categorized as &ldquo;Housing&rdquo; (e.g. rent) stops the day before this purchase closes.
               </p>
             )}
           </>
@@ -400,7 +400,7 @@ export function HomeDrawer({
                 </div>
               )}
             </div>
-            <p className="mt-2 text-[11px] text-dim">Today's dollars. Tax, insurance &amp; maintenance grow with the home's value.</p>
+            <p className="mt-2 text-[11px] text-dim">Today&rsquo;s dollars. Tax, insurance &amp; maintenance grow with the home&rsquo;s value.</p>
           </div>
         )}
 
