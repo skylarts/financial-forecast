@@ -21,7 +21,8 @@ import {
   type PricePoint,
 } from "@/engine/portfolio/performance";
 import { classifySymbol } from "@/engine/portfolio/metrics";
-import { money, percent, shortDate, toneFor } from "@/lib/portfolio/format";
+import { maxDrawdown, netFlows, volatility, MIN_VOLATILITY_POINTS } from "@/engine/portfolio/riskStats";
+import { money, percent, shortDate, signedMoney, toneFor } from "@/lib/portfolio/format";
 import { usePriceHistories } from "@/lib/portfolio/usePriceHistories";
 import { Segmented } from "@/components/ui/controls";
 import {
@@ -359,10 +360,14 @@ export function PerformancePanel({
 
   const BASE = 10_000;
 
+  /** The series from the first day there was something to measure. */
+  const windowPoints = useMemo(
+    () => series.points.filter((p) => p.date >= displayFrom),
+    [series.points, displayFrom],
+  );
   const rows = useMemo<ChartRow[]>(() => {
     const byDate = new Map<string, ChartRow>();
-    for (const point of series.points) {
-      if (point.date < displayFrom) continue;
+    for (const point of windowPoints) {
       byDate.set(point.date, { date: point.date, portfolio: point.index * BASE });
     }
     for (const benchmark of benchmarkSeries) {
@@ -375,7 +380,45 @@ export function PerformancePanel({
       }
     }
     return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
-  }, [series.points, benchmarkSeries, displayFrom]);
+  }, [windowPoints, benchmarkSeries]);
+
+  /**
+   * The risk and context figures for the window on screen. Drawdown and
+   * volatility run over the same indexed points the chart draws, and over
+   * each benchmark's own, so the two read against each other.
+   */
+  const context = useMemo(() => {
+    const flows = netFlows(windowPoints);
+    // Securities carried in or out that the feed could not price count as
+    // zero flow in the series, so the contributions figure understates by
+    // whatever they were worth. Say so rather than let the number look exact.
+    const unpricedTransfers = scopedTransactions.filter(
+      (tx) =>
+        tx.date >= displayFrom &&
+        tx.date <= to &&
+        (tx.type === "transfer_in" || tx.type === "transfer_out") &&
+        tx.symbol !== null &&
+        !histories.has(normalizeSymbol(tx.symbol)),
+    ).length;
+    return {
+      drawdown: maxDrawdown(windowPoints),
+      volatility: volatility(windowPoints),
+      flows,
+      unpricedTransfers,
+      benchmarks: benchmarkSeries.map((b) => {
+        const total = indexedReturn(b.points);
+        const years = spanDays(b.points) / DAYS_PER_YEAR;
+        return {
+          symbol: b.symbol,
+          total,
+          // The same rule as the portfolio's tile: nothing to annualize under a year.
+          annualized: total === null || years <= 1 ? null : Math.pow(1 + total, 1 / years) - 1,
+          drawdown: maxDrawdown(b.points),
+          volatility: volatility(b.points),
+        };
+      }),
+    };
+  }, [windowPoints, benchmarkSeries, scopedTransactions, histories, displayFrom, to]);
 
   /**
    * One series spanning every window the table can possibly need -- from the
@@ -555,45 +598,71 @@ export function PerformancePanel({
         )}
       </div>
 
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-lg border border-border bg-panel px-4 py-3">
-          <div className="text-[10.5px] uppercase tracking-wide text-dim-2">Your return</div>
-          <div className={`mt-1 text-[19px] font-semibold tabular-nums ${toneFor(portfolioReturn ?? 0)}`}>
-            {percent(portfolioReturn)}
-          </div>
-        </div>
-        <div
-          className="rounded-lg border border-border bg-panel px-4 py-3"
-          title={
+      {/* Five tiles, one row on a wide screen. The benchmarks' own figures
+          sit under each in small grey, so the comparison is read inside the
+          tile rather than off a separate one -- "vs SPY -4.9 pts" was a
+          tile that said less than a line under the figure it compared. */}
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <ContextTile
+          label="Your return"
+          value={percent(portfolioReturn)}
+          tone={toneFor(portfolioReturn ?? 0)}
+          hint="Time-weighted return over this window: what a dollar invested at the start grew to, with deposits and withdrawals taken out."
+          sub={context.benchmarks.map((b) => {
+            const gap = portfolioReturn !== null && b.total !== null ? portfolioReturn - b.total : null;
+            return `${b.symbol} ${percent(b.total)}${gap === null ? "" : ` · ${gap > 0 ? "+" : ""}${(gap * 100).toFixed(1)} pts`}`;
+          })}
+        />
+        <ContextTile
+          label="Annualized"
+          value={percent(portfolioAnnualized)}
+          tone={portfolioAnnualized === null ? "text-dim-2" : toneFor(portfolioAnnualized)}
+          hint={
             shortWindow
               ? "Compounded to a yearly rate. Blank for windows of a year or less, where it would only repeat the return."
               : "Compounded to a yearly rate."
           }
-        >
-          <div className="text-[10.5px] uppercase tracking-wide text-dim-2">Annualized</div>
-          <div
-            className={`mt-1 text-[19px] font-semibold tabular-nums ${
-              portfolioAnnualized === null ? "text-dim-2" : toneFor(portfolioAnnualized)
-            }`}
-          >
-            {percent(portfolioAnnualized)}
-          </div>
-        </div>
-        {benchmarkSeries.slice(0, 2).map((benchmark) => {
-          const benchmarkReturn = indexedReturn(benchmark.points);
-          const gap =
-            portfolioReturn !== null && benchmarkReturn !== null ? portfolioReturn - benchmarkReturn : null;
-          return (
-            <div key={benchmark.symbol} className="rounded-lg border border-border bg-panel px-4 py-3">
-              <div className="text-[10.5px] uppercase tracking-wide text-dim-2">
-                vs {benchmark.symbol}
-              </div>
-              <div className={`mt-1 text-[19px] font-semibold tabular-nums ${toneFor(gap ?? 0)}`}>
-                {gap === null ? "—" : `${gap > 0 ? "+" : ""}${(gap * 100).toFixed(1)} pts`}
-              </div>
-            </div>
-          );
-        })}
+          sub={context.benchmarks.map((b) => `${b.symbol} ${percent(b.annualized)}`)}
+        />
+        <ContextTile
+          label="Max drawdown"
+          value={context.drawdown ? percent(context.drawdown.depth) : "—"}
+          tone={context.drawdown ? "text-negative" : "text-dim-2"}
+          hint={
+            context.drawdown
+              ? `Peak ${shortDate(context.drawdown.peak)} to trough ${shortDate(context.drawdown.trough)}, ${
+                  context.drawdown.recovered ? `recovered ${shortDate(context.drawdown.recovered)}` : "not yet recovered"
+                }. The deepest fall from any high within this window.`
+              : "The index never fell from a high in this window."
+          }
+          sub={context.benchmarks.map((b) => `${b.symbol} ${b.drawdown ? percent(b.drawdown.depth) : "—"}`)}
+        />
+        <ContextTile
+          label="Volatility"
+          value={context.volatility === null ? "—" : percent(context.volatility).replace("+", "")}
+          tone={context.volatility === null ? "text-dim-2" : "text-foreground"}
+          hint={
+            context.volatility === null
+              ? `Needs at least ${MIN_VOLATILITY_POINTS} trading days; a shorter window annualized is noise.`
+              : "Annualized standard deviation of daily returns over this window. Higher is a rougher ride."
+          }
+          sub={context.benchmarks.map(
+            (b) => `${b.symbol} ${b.volatility === null ? "—" : percent(b.volatility).replace("+", "")}`,
+          )}
+        />
+        <ContextTile
+          label="Net contributions"
+          value={signedMoney(context.flows.net)}
+          tone={toneFor(context.flows.net)}
+          hint={
+            `${money(context.flows.in)} put in, ${money(context.flows.out)} taken out, in this window. ` +
+            "Time-weighted returns ignore this; the money-weighted figure on the summary card does not, which is the gap between them." +
+            (context.unpricedTransfers > 0
+              ? ` ${context.unpricedTransfers} securit${context.unpricedTransfers === 1 ? "y" : "ies"} transferred in or out could not be priced by the feed and ${context.unpricedTransfers === 1 ? "is" : "are"} not counted.`
+              : "")
+          }
+          sub={[`${money(context.flows.in)} in · ${money(context.flows.out)} out`]}
+        />
       </div>
 
       {failed ? (
@@ -806,6 +875,35 @@ export function PerformancePanel({
             </p>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One of the three context tiles: a headline figure, a hover that says what
+ * it means, and a dim line under it for the benchmarks' own figures so the
+ * portfolio's number reads against something.
+ */
+function ContextTile({
+  label,
+  value,
+  tone,
+  hint,
+  sub,
+}: {
+  label: string;
+  value: string;
+  tone: string;
+  hint: string;
+  sub: readonly string[];
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-panel px-4 py-3" title={hint}>
+      <div className="text-[10.5px] uppercase tracking-wide text-dim-2">{label}</div>
+      <div className={`mt-1 text-[19px] font-semibold tabular-nums ${tone}`}>{value}</div>
+      {sub.length > 0 && (
+        <div className="mt-0.5 truncate text-[11px] tabular-nums text-dim-2">{sub.join(" · ")}</div>
       )}
     </div>
   );
