@@ -131,7 +131,12 @@ export function FilterMenu<K extends string>({
           // runs past the screen -- and `overflow-x: clip` on the page would
           // silently cut the half that hangs over -- so there it goes `fixed`
           // and spans the viewport instead, keeping only its vertical spot.
-          className="absolute left-0 z-20 mt-1 w-72 overflow-hidden rounded-md border border-border bg-panel shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:w-auto"
+          //
+          // z-30, above the tables' frozen-column header and totals cells
+          // (FROZEN_STICKY, z-20 in frozenColumn.tsx) -- those sit in a later
+          // stacking context in the DOM, so an equal z-index there used to
+          // paint on top of this panel instead of under it.
+          className="absolute left-0 z-30 mt-1 w-72 overflow-hidden rounded-md border border-border bg-panel shadow-lg max-sm:fixed max-sm:inset-x-3 max-sm:w-auto"
         >
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
             <span className="text-[10.5px] font-semibold uppercase tracking-wide text-dim-2">
