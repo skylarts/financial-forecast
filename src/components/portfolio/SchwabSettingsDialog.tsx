@@ -1,6 +1,7 @@
 "use client";
 
 import { useSchwabStatus } from "@/lib/portfolio/useSchwabStatus";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { SchwabAppSettings } from "./SchwabAppSettings";
 import { useModalDialog } from "@/components/ui/useModalDialog";
 
@@ -16,6 +17,7 @@ export function SchwabSettingsDialog({ onClose }: { onClose: () => void }) {
   const { status, reload } = useSchwabStatus();
 
   const box = useModalDialog<HTMLDivElement>(onClose);
+  const { signInWithGoogle } = useAuth();
 
   const days = status?.daysRemaining ?? null;
   const stalled = status?.connected && status.reachable === false;
@@ -23,7 +25,7 @@ export function SchwabSettingsDialog({ onClose }: { onClose: () => void }) {
   const summary = !status
     ? "Checking the connection…"
     : status.signInRequired
-      ? "Sign in to this app first — a brokerage connection has to belong to an account."
+      ? "You're not signed in to this app yet. Connecting Schwab is a two-step thing: first sign in here with Google, so your Schwab connection has an account of your own to be stored under; then sign in to Schwab from this dialog."
       : stalled
         ? "Signed in, but Schwab is not answering right now. That is usually a temporary limit on their side and clears on its own; prices are on the public feed until it does."
         : status.connected
@@ -61,6 +63,27 @@ export function SchwabSettingsDialog({ onClose }: { onClose: () => void }) {
 
         <div className="space-y-3 overflow-y-auto px-5 py-4 text-[12.5px]">
           <p className="text-dim">{summary}</p>
+
+          {/* The one thing this dialog can do for someone signed out: the
+              step they are missing, as a button, rather than a sentence
+              pointing at a menu somewhere else. */}
+          {status?.signInRequired && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => void signInWithGoogle()}
+                className="inline-block rounded border border-border px-2.5 py-1 text-[12px] text-foreground hover:border-accent"
+              >
+                Sign in with Google
+              </button>
+              <p className="text-[11.5px] text-dim-2">
+                This is the app&apos;s own sign-in, not Schwab&apos;s — the same one behind the ⋯ menu.
+                Once you&apos;re in, reopen this dialog and the Connect Schwab button appears here.
+                Nothing about your Schwab login is entered into this app; Schwab&apos;s own page
+                handles that.
+              </p>
+            </div>
+          )}
 
           {status && !status.signInRequired && (
             <a
