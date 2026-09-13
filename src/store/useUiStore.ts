@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { DEFAULT_STRESS_PARAMS, type StressKey, type StressParams } from "@/engine/stress";
+import { DEFAULT_STRESS_PARAMS, STRESS_PRESETS, type StressKey, type StressParams } from "@/engine/stress";
 
 export type Theme = "dark" | "joy";
 
@@ -66,10 +66,24 @@ export const useUiStore = create<UiState>()(
         stressOverlay: s.stressOverlay,
         stressParams: s.stressParams,
       }),
-      // A stress preset saved by an older build may lack a newer parameter.
+      /**
+       * A saved copy of the stress parameters may be missing one a newer
+       * build added, or still carry one a newer build dropped. Rebuild it
+       * from the current defaults, keeping only keys that still exist --
+       * otherwise a retired parameter lingers in the object forever and
+       * "Reset to defaults" never looks satisfied.
+       */
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<UiState>;
-        return { ...current, ...p, stressParams: { ...DEFAULT_STRESS_PARAMS, ...(p.stressParams ?? {}) } };
+        const saved = (p.stressParams ?? {}) as Partial<StressParams>;
+        const stressParams = { ...DEFAULT_STRESS_PARAMS };
+        for (const key of Object.keys(stressParams) as (keyof StressParams)[]) {
+          const value = saved[key];
+          if (typeof value === "number" && Number.isFinite(value)) stressParams[key] = value;
+        }
+        // A preset that no longer exists can't be drawn on the chart.
+        const overlay = p.stressOverlay && STRESS_PRESETS.some((x) => x.key === p.stressOverlay) ? p.stressOverlay : null;
+        return { ...current, ...p, stressOverlay: overlay, stressParams };
       },
     }
   )
