@@ -12,7 +12,12 @@ import { OverviewBento } from "@/components/kpi/OverviewBento";
 import { DetailTabs } from "@/components/tables/DetailTabs";
 import { WarningsBanner } from "@/components/layout/WarningsBanner";
 import { StalePlanBanner } from "@/components/layout/StalePlanBanner";
-import { usePlanStore } from "@/store/usePlanStore";
+import { RecoveryBanner } from "@/components/layout/RecoveryBanner";
+import { Notices } from "@/components/layout/Notices";
+import { EmptyForecast } from "@/components/layout/EmptyForecast";
+import { usePlanStore, planHasContent } from "@/store/usePlanStore";
+import { useWizardStore } from "@/store/useWizardStore";
+import { useAuth } from "@/components/auth/AuthProvider";
 import { useProjection, useCompareProjection } from "@/store/useProjection";
 import { useCloudSync } from "@/store/useCloudSync";
 import { useUiStore } from "@/store/useUiStore";
@@ -41,8 +46,12 @@ function HomeContent() {
   const scenario = usePlanStore((state) => state.activeScenario());
   const projection = useProjection(scenario);
   const isJoy = useUiStore((s) => s.theme) === "joy";
-  const lastSavedAt = usePlanStore((s) => s.lastSavedAt);
   const [view, setView] = useState<View>("Overview");
+  const plan = usePlanStore((s) => s.plan);
+  const hasContent = planHasContent(plan);
+  const openWizard = useWizardStore((s) => s.openWizard);
+  const loadSamplePlan = usePlanStore((s) => s.loadSamplePlan);
+  const requestRestore = useUiStore((s) => s.requestRestore);
 
   const allScenarios = usePlanStore((s) => s.plan.scenarios);
   const compareScenarioId = usePlanStore((s) => s.compareScenarioId);
@@ -146,18 +155,22 @@ function HomeContent() {
         compareOptions={compareOptions}
         compareScenarioId={compareScenarioId}
         onCompareChange={setCompareScenarioId}
-        savedToBrowser={lastSavedAt > 0}
       />
 
       {/* Banners sit above whichever view is showing -- a stale plan or an
           insufficient-funds warning is worth seeing regardless of which tab
           you happen to be on. */}
       <div className="flex flex-col gap-3 px-3 sm:px-6 pt-4 empty:hidden">
-        <StalePlanBanner scenario={scenario} />
-        <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />
+        <RecoveryBanner />
+        {hasContent && <StalePlanBanner scenario={scenario} />}
+        {hasContent && <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />}
       </div>
 
-      {view === "Overview" ? (
+      {!hasContent ? (
+        <main className="flex w-full flex-1 flex-col">
+          <EmptyForecast onSetUp={openWizard} onRestore={requestRestore} onLoadSample={loadSamplePlan} />
+        </main>
+      ) : view === "Overview" ? (
         <main className="flex w-full flex-1 flex-col gap-3 px-3 sm:px-6 py-4">
           {isJoy && <JoyQuote />}
           <OverviewBento
@@ -241,6 +254,7 @@ function HomeContent() {
         </main>
       )}
       <Footer />
+      <Notices />
     </div>
   );
 }
@@ -248,10 +262,13 @@ function HomeContent() {
 export default function Home() {
   const hasHydrated = usePlanStore((s) => s.hasHydrated);
   const { cloudSyncReady } = useCloudSync();
+  const { loading: authLoading } = useAuth();
   // Next.js SSRs with the default plan; localStorage is only readable
   // client-side, so avoid rendering (and flashing default data) until the
-  // real persisted plan has loaded.
-  if (!hasHydrated) {
+  // real persisted plan has loaded. A signed-in user also waits for the
+  // cloud read to settle, so an edit made in the first seconds can never be
+  // overwritten by the copy that then arrives.
+  if (!hasHydrated || authLoading || !cloudSyncReady) {
     return (
       <div className="flex min-h-screen flex-1 items-center justify-center text-sm text-dim">
         Loading your plan…

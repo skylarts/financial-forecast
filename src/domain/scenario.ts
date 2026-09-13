@@ -91,7 +91,7 @@ export const scenarioSchema = z
     id: idSchema,
     name: z.string().min(1),
     description: z.string().optional(),
-    /** Provenance only -- never consulted at calculation time. See DESIGN.md Ambiguity #1. */
+    /** Provenance only -- never consulted at calculation time. */
     createdFromScenarioId: idSchema.optional(),
     household: householdSchema,
     accounts: z.array(accountSchema),
@@ -117,5 +117,11 @@ export const planSchema = z.object({
   id: idSchema,
   scenarios: z.array(scenarioSchema).min(1),
   activeScenarioId: idSchema,
+  /**
+   * The on-disk shape this plan was last saved in. Absent on plans saved
+   * before it existed; `normalizePlan` (src/lib/planIO.ts) stamps the current
+   * value on every load so migrations can be keyed off it going forward.
+   */
+  schemaVersion: z.number().int().positive().optional(),
 });
 export type Plan = z.infer<typeof planSchema>;

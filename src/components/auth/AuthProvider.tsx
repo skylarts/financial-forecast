@@ -16,15 +16,12 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  // With no Supabase configured there is nothing to wait for: the app is
+  // fully usable locally, just without a sign-in option.
+  const [loading, setLoading] = useState(isSupabaseConfigured);
 
   useEffect(() => {
-    // Supabase isn't configured yet -- keep the app fully usable locally,
-    // just without a sign-in option.
-    if (!isSupabaseConfigured) {
-      setLoading(false);
-      return;
-    }
+    if (!isSupabaseConfigured) return;
 
     const supabase = createClient();
 

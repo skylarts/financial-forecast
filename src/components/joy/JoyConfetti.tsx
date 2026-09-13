@@ -49,9 +49,14 @@ export function JoyConfetti({ fire }: { fire: boolean }) {
       width: 7 + Math.random() * 7,
       height: 9 + Math.random() * 9,
     }));
-    setPieces(items);
-    const t = setTimeout(() => setPieces(null), 7000);
-    return () => clearTimeout(t);
+    // Both updates happen from timers, not synchronously inside the effect:
+    // the burst is a side effect of a prop edge, not derived render state.
+    const start = setTimeout(() => setPieces(items), 0);
+    const stop = setTimeout(() => setPieces(null), 7000);
+    return () => {
+      clearTimeout(start);
+      clearTimeout(stop);
+    };
   }, [fire]);
 
   if (!pieces) return null;
