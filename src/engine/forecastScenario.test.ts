@@ -1455,9 +1455,11 @@ describe("forecastScenario -- withdrawal taxes", () => {
     const iraWithdrawal = year.cashFlow.withdrawalsByAccount.find((w) => w.id === ira.id)!;
 
     // $90k reaches spending net of tax (the deficit cascade sizes withdrawals
-    // to net exactly the shortfall, regardless of the rate estimate).
-    expect(year.cashFlow.withdrawalsToCashNet).toBeCloseTo(90_000, -2);
-    expect(iraWithdrawal.net).toBeCloseTo(90_000, -2);
+    // to net exactly the shortfall, regardless of the rate estimate), plus
+    // whatever December's true-up payment had to be drawn on top.
+    const trueUpPaid = Math.max(0, -year.cashFlow.taxSettlement);
+    expect(year.cashFlow.withdrawalsToCashNet).toBeCloseTo(90_000 + trueUpPaid, -2);
+    expect(iraWithdrawal.net).toBeCloseTo(90_000 + trueUpPaid, -2);
     // $90k taxable income minus the $32,200 MFJ standard deduction lands in
     // the 12% bracket -- real tax is a few thousand dollars, nowhere near
     // the old flat-22%-of-gross approximation (~$20k+).
