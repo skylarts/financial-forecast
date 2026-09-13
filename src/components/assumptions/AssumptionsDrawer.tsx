@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import type { ForecastSettings, HealthcareSettings, Person, Scenario } from "@/domain";
-import { personSchema, forecastSettingsSchema } from "@/domain";
-import { ageOn, birthdayAtAge } from "@/engine/dateMath";
+import { personSchema, forecastSettingsSchema, countAnchorsToPerson } from "@/domain";
+import { ageOn } from "@/engine/dateMath";
 import { HEALTHCARE_TABLES_2026, isHealthcareItemId } from "@/engine/healthcare";
 import { Drawer } from "@/components/ui/Drawer";
 import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput, inputClass } from "@/components/ui/formFields";
@@ -30,6 +30,9 @@ function personIssue(draft: Person): string | null {
 function PersonRow({ person }: { person: Person }) {
   const updatePerson = usePlanStore((s) => s.updatePerson);
   const removePerson = usePlanStore((s) => s.removePerson);
+  // Dates elsewhere in the plan that were LINKED to this retirement, and so
+  // move with it. Saying how many turns a silent ripple into a visible one.
+  const linkedCount = usePlanStore((s) => countAnchorsToPerson(s.activeScenario(), person.id));
   const [draft, setDraft] = useState(person);
   const [issue, setIssue] = useState<string | null>(null);
 
@@ -41,31 +44,15 @@ function PersonRow({ person }: { person: Person }) {
       return;
     }
     setIssue(null);
-    const retirementAgeChanged = result.data.retirementAge !== person.retirementAge;
     const birthDateChanged = result.data.birthDate !== person.birthDate;
     const planningEndChanged = result.data.planningEndAge !== person.planningEndAge || birthDateChanged;
+    // The retirement age and birth date are only meaningful through what they
+    // derive: `updatePerson` itself moves this person's Retire event and every
+    // date linked to it, so that no longer depends on the edit having been
+    // made in this particular drawer. The horizon is this form's own to keep.
     updatePerson(person.id, result.data);
-
-    // These ages are only meaningful through what they derive -- keep the
-    // derived things in sync so editing them here actually changes the plan:
-    const { activeScenario, updateSettings, updateEvent } = usePlanStore.getState();
+    const { activeScenario, updateSettings } = usePlanStore.getState();
     const scenario = activeScenario();
-    if (retirementAgeChanged || birthDateChanged) {
-      // Move this person's Retire event(s) to their birthday at the new age.
-      // A corrected birth date moves it too: a new person starts with a
-      // placeholder date, and fixing it used to leave retirement anchored to
-      // the placeholder.
-      for (const e of scenario.events) {
-        if (e.type !== "retire" || e.personId !== person.id) continue;
-        const age = e.retirementAge ?? result.data.retirementAge;
-        const updated = {
-          ...e,
-          retirementAge: retirementAgeChanged ? result.data.retirementAge : age,
-          startDate: birthdayAtAge(result.data.birthDate, retirementAgeChanged ? result.data.retirementAge : age),
-        };
-        updateEvent(e.id, updated as Omit<typeof e, "id">);
-      }
-    }
     if (planningEndChanged) {
       // The horizon is derived from the longest planning-end age.
       const horizonYear = horizonYearFromPeople(scenario.household.people);
@@ -96,7 +83,7 @@ function PersonRow({ person }: { person: Person }) {
       <label className="flex flex-col gap-1 text-xs text-dim">
         <span className="inline-flex items-center gap-1">
           Retirement age
-          <InfoTooltip text="Changing this moves this person's Retire event (which is what actually stops their salary and contributions) to their birthday at the new age." />
+          <InfoTooltip text="Changing this moves this person's Retire event (which is what actually stops their salary and contributions) to their birthday at the new age, and every date linked to that retirement with it." />
         </span>
         <input
           className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
@@ -105,6 +92,11 @@ function PersonRow({ person }: { person: Person }) {
           onChange={(e) => setDraft({ ...draft, retirementAge: Number(e.target.value) })}
           onBlur={save}
         />
+        {linkedCount > 0 && (
+          <span className="text-[11px] text-accent">
+            {linkedCount} linked {linkedCount === 1 ? "date moves" : "dates move"} with this
+          </span>
+        )}
       </label>
       <label className="flex flex-col gap-1 text-xs text-dim">
         <span className="inline-flex items-center gap-1">

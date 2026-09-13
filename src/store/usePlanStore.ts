@@ -15,6 +15,8 @@ import { mockScenario } from "@/lib/mockScenario";
 import { makeBlankScenario } from "@/lib/blankScenario";
 import { normalizePlan, normalizeScenario, planHasContent, PLAN_SCHEMA_VERSION, type NormalizeOk } from "@/lib/planIO";
 import { isShrinkingChange, keepBrokenCopy, keepPlanCopy } from "@/lib/planRecovery";
+import { resolveAnchoredDates } from "@/domain/anchor";
+import { birthdayAtAge } from "@/engine/dateMath";
 
 /**
  * A brand-new browser starts with one empty scenario, not the fictional
@@ -141,12 +143,19 @@ function commit(set: Setter, updater: (plan: Plan) => Plan, opts?: { undoLabel?:
   });
 }
 
+/**
+ * Every scenario edit passes through here, which is why the anchored-date pass
+ * runs here too: a change to a person's retirement age and a change to the
+ * pension that follows it are different mutations, and only a single shared
+ * chokepoint keeps the two in step whichever one the user made. (Parsed
+ * scenarios get the same pass from scenarioSchema's own transform.)
+ */
 function withActiveScenario(set: Setter, updater: (scenario: Scenario) => Scenario, opts?: { undoLabel?: string }) {
   commit(
     set,
     (plan) => ({
       ...plan,
-      scenarios: plan.scenarios.map((s) => (s.id === plan.activeScenarioId ? updater(s) : s)),
+      scenarios: plan.scenarios.map((s) => (s.id === plan.activeScenarioId ? resolveAnchoredDates(updater(s)) : s)),
     }),
     opts
   );
@@ -229,11 +238,32 @@ export const usePlanStore = create<PlanState>()(
           household: { people: [...s.household.people, { ...person, id: nanoid() }] },
         })),
 
+      /**
+       * A person's retirement age is only meaningful through what it derives,
+       * so changing it derives them here rather than in whichever form made
+       * the edit: their Retire event moves to their birthday at the new age
+       * (that event, not the profile age, is what actually stops a salary and
+       * its payroll contributions), and `withActiveScenario` then moves every
+       * date linked to that retirement. A corrected birth date moves it too --
+       * a new person starts with a placeholder date, and fixing it used to
+       * leave retirement anchored to the placeholder.
+       */
       updatePerson: (id, person) =>
-        withActiveScenario(set, (s) => ({
-          ...s,
-          household: { people: s.household.people.map((p) => (p.id === id ? { ...person, id } : p)) },
-        })),
+        withActiveScenario(set, (s) => {
+          const previous = s.household.people.find((p) => p.id === id);
+          const people = s.household.people.map((p) => (p.id === id ? { ...person, id } : p));
+          const ageChanged = !!previous && previous.retirementAge !== person.retirementAge;
+          const birthChanged = !!previous && previous.birthDate !== person.birthDate;
+          if (!ageChanged && !birthChanged) return { ...s, household: { people } };
+          const events = s.events.map((e) => {
+            if (e.type !== "retire" || e.personId !== id) return e;
+            // An event carrying its own age override keeps it unless the
+            // profile age itself is what just changed.
+            const age = ageChanged ? person.retirementAge : e.retirementAge ?? person.retirementAge;
+            return { ...e, retirementAge: age, startDate: birthdayAtAge(person.birthDate, age) };
+          });
+          return { ...s, household: { people }, events };
+        }),
 
       removePerson: (id) => {
         const scenario = get().activeScenario();

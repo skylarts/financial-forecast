@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import type { Account, EventType, Person, RecurrenceFrequency, ScenarioEvent, TemporaryAdjustment } from "@/domain";
+import type { Account, DateAnchor, EventType, Person, RecurrenceFrequency, ScenarioEvent, TemporaryAdjustment } from "@/domain";
 import {
   retireEventSchema,
   sellHomeEventSchema,
@@ -14,6 +14,7 @@ import {
 import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
 import {
+  ANCHOR_HINT,
   DrawerFooter,
   ErrorBanner,
   Field,
@@ -28,6 +29,7 @@ import {
 } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
+import { AnchoredDateInput } from "@/components/ui/AnchoredDate";
 import { AdjustmentsEditor, adjustmentsIssue } from "@/components/ui/AdjustmentsEditor";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
@@ -209,6 +211,9 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
   }
 }
 
+/** The event types whose form offers an end date -- the only ones an end link can apply to. */
+const HAS_END_DATE = new Set<TemplateType | null>(["roth_conversion", "custom_transfer"]);
+
 /** An option label that says who owns the account when two share a name. */
 function accountOptionLabel(a: Account, people: Person[]): string {
   if (!a.ownerId) return a.name;
@@ -254,7 +259,16 @@ export function EventDrawer({
   const [adjustmentsKey, setAdjustmentsKey] = useState(() =>
     JSON.stringify(event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : [])
   );
-  const dirty = isDirty || JSON.stringify(retirementExpenseAdjustments) !== adjustmentsKey;
+  // The date links live outside react-hook-form (like the adjustments above):
+  // they are structured values that write into the registered date fields.
+  const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(event?.startAnchor ?? null);
+  const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(event?.endAnchor ?? null);
+  const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([event?.startAnchor ?? null, event?.endAnchor ?? null]));
+  const scenarioEvents = usePlanStore((s) => s.activeScenario().events);
+  const dirty =
+    isDirty ||
+    JSON.stringify(retirementExpenseAdjustments) !== adjustmentsKey ||
+    JSON.stringify([startAnchor, endAnchor]) !== anchorsKey;
 
   useEffect(() => {
     setSelectedType(event?.type ?? null);
@@ -262,6 +276,9 @@ export function EventDrawer({
     const adj = event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : [];
     setRetirementExpenseAdjustments(adj);
     setAdjustmentsKey(JSON.stringify(adj));
+    setStartAnchor(event?.startAnchor ?? null);
+    setEndAnchor(event?.endAnchor ?? null);
+    setAnchorsKey(JSON.stringify([event?.startAnchor ?? null, event?.endAnchor ?? null]));
     setError(null);
   }, [event, open, reset]);
 
@@ -367,6 +384,10 @@ export function EventDrawer({
       startDate: v.startDate,
       isExcluded: v.isExcluded,
       notes: v.notes.trim() || undefined,
+      // A retire event IS the milestone other dates follow, so it never
+      // follows one itself -- that would be circular.
+      startAnchor: selectedType === "retire" ? null : startAnchor,
+      endAnchor: HAS_END_DATE.has(selectedType) ? endAnchor : null,
     };
     let candidate: unknown;
     let schema: { safeParse: (x: unknown) => { success: boolean; data?: unknown; error?: { issues: { message: string }[] } } };
@@ -530,8 +551,23 @@ export function EventDrawer({
             </>
           )}
 
-          <Field label={selectedType === "roth_conversion" && conversionFrequency === "annual" ? "First Year (date)" : "Date"}>
-            <TextInput reg={register("startDate", { required: true })} type="date" />
+          <Field
+            label={selectedType === "roth_conversion" && conversionFrequency === "annual" ? "First Year (date)" : "Date"}
+            hint={selectedType === "retire" ? undefined : ANCHOR_HINT}
+          >
+            {selectedType === "retire" ? (
+              <TextInput reg={register("startDate", { required: true })} type="date" />
+            ) : (
+              <AnchoredDateInput
+                reg={register("startDate", { required: true })}
+                anchor={startAnchor}
+                onAnchorChange={setStartAnchor}
+                onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
+                people={people}
+                events={scenarioEvents}
+                kind="start"
+              />
+            )}
           </Field>
 
           {selectedType === "retire" && (
@@ -676,8 +712,19 @@ export function EventDrawer({
                   />
                 </Field>
                 {conversionFrequency === "annual" && (
-                  <Field label="Last Year (optional)" hint="Leave blank to keep converting through the end of the plan.">
-                    <TextInput reg={register("endDate")} type="date" />
+                  <Field
+                    label="Last Year (optional)"
+                    hint="Leave blank to keep converting through the end of the plan. Linked to a retirement, the window closes the day before it (e.g. convert until Social Security starts)."
+                  >
+                    <AnchoredDateInput
+                      reg={register("endDate")}
+                      anchor={endAnchor}
+                      onAnchorChange={setEndAnchor}
+                      onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
+                      people={people}
+                      events={scenarioEvents}
+                      kind="end"
+                    />
                   </Field>
                 )}
               </FieldRow>
@@ -768,8 +815,19 @@ export function EventDrawer({
                   <TextInput reg={register("transferIntervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
                 </Field>
               </FieldRow>
-              <Field label="End Date (optional)" hint="Leave blank to continue to the end of the plan.">
-                <TextInput reg={register("endDate")} type="date" />
+              <Field
+                label="End Date (optional)"
+                hint="Leave blank to continue to the end of the plan. Linked to a retirement, the last transfer lands the day before it."
+              >
+                <AnchoredDateInput
+                  reg={register("endDate")}
+                  anchor={endAnchor}
+                  onAnchorChange={setEndAnchor}
+                  onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
+                  people={people}
+                  events={scenarioEvents}
+                  kind="end"
+                />
               </Field>
               <Field label="Annual Growth Rate" hint={`Percent per year, applied once the transfer starts. Blank = matches inflation (${inflationPctLabel}%).`}>
                 <PercentInput reg={register("transferGrowthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />

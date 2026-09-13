@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
+import type { DateAnchor, IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { incomeSourceSchema } from "@/domain";
 import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
 import {
+  ANCHOR_HINT,
   AdvancedDisclosure,
   DrawerFooter,
   ErrorBanner,
@@ -26,6 +27,7 @@ import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumbe
 import { accountOptions, ownerOptions } from "@/lib/people";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor, adjustmentsIssue } from "@/components/ui/AdjustmentsEditor";
+import { AnchoredDateInput } from "@/components/ui/AnchoredDate";
 
 const CATEGORY_OPTIONS: { value: IncomeCategory; label: string }[] = [
   { value: "salary", label: "Salary" },
@@ -36,6 +38,7 @@ const CATEGORY_OPTIONS: { value: IncomeCategory; label: string }[] = [
 ];
 
 const REQUIRED_LABELS = { name: "a name", amount: "an amount", startDate: "a start date" };
+
 
 interface FormValues {
   name: string;
@@ -101,6 +104,13 @@ export function IncomeDrawer({
   const [error, setError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(income?.adjustments ?? []);
   const [adjustmentsKey, setAdjustmentsKey] = useState(() => JSON.stringify(income?.adjustments ?? []));
+  // The two date links live outside react-hook-form (like `adjustments`): they
+  // are structured values, and the date inputs they drive are already
+  // registered fields that they write into.
+  const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(income?.startAnchor ?? null);
+  const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(income?.endAnchor ?? null);
+  const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([income?.startAnchor ?? null, income?.endAnchor ?? null]));
+  const events = usePlanStore((s) => s.activeScenario().events);
   const [advancedOpen, setAdvancedOpen] = useState(
     !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.grossAmount != null)
   );
@@ -124,7 +134,7 @@ export function IncomeDrawer({
   const endDate = watch("endDate");
   const isOneTime = frequency === "one_time";
   const isBenefit = category === "social_security" || category === "pension";
-  const dirty = isDirty || JSON.stringify(adjustments) !== adjustmentsKey;
+  const dirty = isDirty || JSON.stringify(adjustments) !== adjustmentsKey || JSON.stringify([startAnchor, endAnchor]) !== anchorsKey;
 
   // Re-sync the form whenever the drawer opens on a different income item --
   // without this, a reused drawer instance shows the previous item's values.
@@ -132,6 +142,9 @@ export function IncomeDrawer({
     reset(toFormValues(income));
     setAdjustments(income?.adjustments ?? []);
     setAdjustmentsKey(JSON.stringify(income?.adjustments ?? []));
+    setStartAnchor(income?.startAnchor ?? null);
+    setEndAnchor(income?.endAnchor ?? null);
+    setAnchorsKey(JSON.stringify([income?.startAnchor ?? null, income?.endAnchor ?? null]));
     setError(null);
     setAdvancedOpen(
       !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.grossAmount != null)
@@ -140,6 +153,9 @@ export function IncomeDrawer({
 
   /** The start date for a claiming age: the owner's birthday at that age. */
   const syncStartDateFromAge = (ageStr: string, ownerIdNow: string) => {
+    // A linked start date is owned by the link: a claiming age must not
+    // quietly overwrite it (the two would disagree on the next save).
+    if (startAnchor) return;
     const age = Number(ageStr);
     const owner = people.find((p) => p.id === ownerIdNow) ?? people[0];
     if (owner && Number.isFinite(age) && age > 0) {
@@ -178,6 +194,9 @@ export function IncomeDrawer({
       frequency: values.frequency,
       startDate: values.startDate,
       endDate: values.frequency === "one_time" ? null : values.endDate || null,
+      startAnchor,
+      // A one-time item has no end date, so it can have no end link either.
+      endAnchor: values.frequency === "one_time" ? null : endAnchor,
       // A pension left blank has NO cost-of-living raise (most public and
       // private pensions have none); every other category's blank means
       // "keep pace with inflation".
@@ -303,16 +322,46 @@ export function IncomeDrawer({
                 </FieldRow>
               ))}
             {isOneTime ? (
-              <Field label="Date">
-                <TextInput reg={register("startDate", { required: true })} type="date" />
+              <Field label="Date" hint={ANCHOR_HINT}>
+                <AnchoredDateInput
+                  reg={register("startDate", { required: true })}
+                  anchor={startAnchor}
+                  onAnchorChange={setStartAnchor}
+                  onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
+                  people={people}
+                  events={events}
+                  kind="start"
+                  defaultPersonId={ownerId}
+                />
               </Field>
             ) : (
               <FieldRow>
-                <Field label="Start Date">
-                  <TextInput reg={register("startDate", { required: true })} type="date" />
+                <Field label="Start Date" hint={ANCHOR_HINT}>
+                  <AnchoredDateInput
+                    reg={register("startDate", { required: true })}
+                    anchor={startAnchor}
+                    onAnchorChange={setStartAnchor}
+                    onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
+                    people={people}
+                    events={events}
+                    kind="start"
+                    defaultPersonId={ownerId}
+                  />
                 </Field>
-                <Field label="End Date" hint="Optional -- leave blank to continue indefinitely (a salary stops at its owner's Retire event).">
-                  <TextInput reg={register("endDate")} type="date" />
+                <Field
+                  label="End Date"
+                  hint="Optional -- leave blank to continue indefinitely (a salary stops at its owner's Retire event). Link it to a retirement and the last payment lands the day before."
+                >
+                  <AnchoredDateInput
+                    reg={register("endDate")}
+                    anchor={endAnchor}
+                    onAnchorChange={setEndAnchor}
+                    onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
+                    people={people}
+                    events={events}
+                    kind="end"
+                    defaultPersonId={ownerId}
+                  />
                 </Field>
               </FieldRow>
             )}

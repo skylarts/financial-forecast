@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, TimelineRow } from "@/domain";
+import type { Account, DateAnchor, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, TimelineRow } from "@/domain";
+import { AnchorChip } from "@/components/ui/AnchoredDate";
 import { formatMoney } from "@/lib/format";
 import { EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES, freqLabel } from "@/lib/timelineFormat";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
@@ -27,6 +28,8 @@ interface Row {
   name: string;
   detail: string;
   excluded: boolean;
+  /** Retirement links on this item's dates -- shown as chips so a derived date reads as derived. */
+  anchors?: (DateAnchor | null | undefined)[];
   open: () => void;
 }
 
@@ -80,6 +83,7 @@ export function TimelineTab({
       name: inc.name,
       detail: `${formatMoney(inc.amount)}${freqLabel(inc.frequency, inc.intervalYears)} · ${ownerName(inc.ownerId)}`,
       excluded: inc.isExcluded ?? false,
+      anchors: [inc.startAnchor, inc.endAnchor],
       open: guard(() => setIncomeDrawer({ open: true, item: inc })),
     });
     for (const adj of inc.adjustments ?? []) {
@@ -105,6 +109,7 @@ export function TimelineTab({
       name: exp.name,
       detail: `${formatMoney(exp.amount)}${freqLabel(exp.frequency, exp.intervalYears)}`,
       excluded: exp.isExcluded ?? false,
+      anchors: [exp.startAnchor, exp.endAnchor],
       open: guard(() => setExpenseDrawer({ open: true, item: exp })),
     });
     for (const adj of exp.adjustments ?? []) {
@@ -131,6 +136,7 @@ export function TimelineTab({
       name: ev.name,
       detail: t?.description ?? "",
       excluded: ev.isExcluded ?? false,
+      anchors: [ev.startAnchor, ev.endAnchor],
       open: guard(() => setEventDrawer({ open: true, item: ev })),
     });
   }
@@ -195,6 +201,11 @@ export function TimelineTab({
                   <span className="font-medium">{row.name}</span>
                   {row.detail && <span className="text-dim"> — {row.detail}</span>}
                   {row.excluded && <span className="ml-2 text-[11px] text-dim">(excluded)</span>}
+                  {row.anchors?.filter((a): a is DateAnchor => !!a).map((a, i) => (
+                    <span key={i} className="ml-1.5 inline-block">
+                      <AnchorChip anchor={a} people={people} />
+                    </span>
+                  ))}
                 </td>
               </tr>
             ))}

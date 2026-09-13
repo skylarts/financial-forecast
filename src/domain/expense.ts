@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { idSchema, isoDateSchema, recurrenceFrequencySchema } from "./common";
 import { temporaryAdjustmentSchema } from "./adjustment";
+import { dateAnchorFields } from "./anchor";
 
 export const expenseCategorySchema = z.enum([
   "housing",
@@ -20,6 +21,7 @@ export const expenseBaselineSchema = z.object({
   frequency: recurrenceFrequencySchema,
   startDate: isoDateSchema,
   endDate: isoDateSchema.nullable(),
+  ...dateAnchorFields,
   /** Nominal (actual) annual growth rate -- already includes inflation.
    *  0 = flat in nominal terms; null/omitted = match the plan's inflation rate. */
   growthRatePct: z.number().nullable().default(null),

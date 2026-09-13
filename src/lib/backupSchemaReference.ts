@@ -153,6 +153,8 @@ Every scenario must contain exactly one account with \`"isExtraSavings": true\` 
   "startDate": "YYYY-MM-DD",
   "endDate": "YYYY-MM-DD" | null,   // null = continues to plan horizon
   "growthRatePct": number | null,   // null = track plan inflation
+  "startAnchor": DateAnchor | null,  // optional; when set, startDate is RECOMPUTED from it on every load and edit
+  "endAnchor": DateAnchor | null,    // optional; when set, endDate is recomputed as the DAY BEFORE the anchor point
   "intervalYears": integer > 0,     // optional; repeat every N years instead of "frequency" (e.g. a bonus every 3 years)
   "depositAccountId": string | null, // null = deposits automatically to Extra Savings
   "category": IncomeCategory,        // see enum below
@@ -178,6 +180,8 @@ A pension's \`growthRatePct\` of \`null\` means **0** (no cost-of-living raise),
   "startDate": "YYYY-MM-DD",
   "endDate": "YYYY-MM-DD" | null,
   "growthRatePct": number | null,
+  "startAnchor": DateAnchor | null,  // optional; when set, startDate is RECOMPUTED from it on every load and edit
+  "endAnchor": DateAnchor | null,    // optional; when set, endDate is recomputed as the DAY BEFORE the anchor point
   "intervalYears": integer > 0,      // optional; e.g. a car replaced every 7 years
   "paymentAccountId": string | null, // null = pays automatically from Extra Savings
   "category": ExpenseCategory,       // see enum below
@@ -187,6 +191,19 @@ A pension's \`growthRatePct\` of \`null\` means **0** (no cost-of-living raise),
 \`\`\`
 
 **ExpenseCategory enum:** \`"housing"\`, \`"transportation"\`, \`"food"\`, \`"healthcare"\`, \`"childcare"\`, \`"discretionary"\`, \`"other"\`.
+
+## DateAnchor
+
+A date that FOLLOWS someone's retirement instead of being typed in. Available on any IncomeSource, ExpenseBaseline, or event (except \`retire\`, which is the milestone itself). When an anchor is present the corresponding \`startDate\`/\`endDate\` is **derived**: the app recomputes it on every load and every edit, so a hand-written date beside an anchor is ignored (write the anchor's own answer there, or omit the anchor).
+\`\`\`
+{
+  "personId": string,           // whose retirement this follows
+  "point": "retirement",        // the only milestone so far
+  "offsetMonths": integer       // signed: -24 = two years before, 0 = the day itself, 120 = ten years after
+}
+\`\`\`
+
+The retirement date itself is the person's earliest non-excluded \`retire\` event, or -- when they have none -- their birthday at \`Household.retirementAge\`. An \`endAnchor\` resolves to the day BEFORE that date, because \`endDate\` is inclusive ("ends when I retire" = the last payment is before retirement day).
 
 ## Frequency enum
 
@@ -214,6 +231,8 @@ Every event shares these base fields, plus a \`"type\"\`-specific set below:
   "name": string,
   "startDate": "YYYY-MM-DD",
   "endDate": "YYYY-MM-DD" | null,   // optional; for temporary effects — omitted/null = permanent
+  "startAnchor": DateAnchor | null,  // optional; when set, startDate is RECOMPUTED from it on every load and edit
+  "endAnchor": DateAnchor | null,    // optional; when set, endDate is recomputed as the DAY BEFORE the anchor point
   "notes": string,                  // optional
   "isExcluded": boolean,            // optional
   "type": EventType                 // one of the seven below — determines which extra fields apply

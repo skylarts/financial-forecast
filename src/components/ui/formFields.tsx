@@ -137,6 +137,13 @@ export function ErrorBanner({ message }: { message: string | null }) {
   );
 }
 
+/**
+ * Said the same way on every date field that can follow a retirement -- see
+ * AnchoredDate.tsx and src/domain/anchor.ts.
+ */
+export const ANCHOR_HINT =
+  "Link this to someone's retirement and it moves whenever their retirement age does, instead of having to be re-typed. A pension that starts the day you retire should be linked, not dated.";
+
 /** The one frequency list every recurring thing in the app offers. */
 export const FREQUENCY_OPTIONS: { value: RecurrenceFrequency; label: string }[] = [
   { value: "monthly", label: "Monthly" },
