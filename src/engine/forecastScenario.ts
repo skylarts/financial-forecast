@@ -1742,8 +1742,13 @@ export function forecastScenario(
     //    A cash buffer target raises the trigger from $0 to the target: the
     //    drain order tops Extra Savings back up to it, so retirement does not
     //    leave cash at zero between bills.
+    //    Runs once here and, in December, once more after the year-end tax
+    //    true-up (step 8) -- a true-up PAYMENT is a bill like any other and
+    //    has to be funded from the drain order too, or the hub closes every
+    //    year showing exactly that unpaid bill as a negative balance.
     const bufferTargetNominal = settings.cashBufferTarget != null ? settings.cashBufferTarget * inflationFactor : 0;
-    if (extraSavingsAccount) {
+    const coverHubDeficit = () => {
+      if (!extraSavingsAccount) return;
       const spender = extraSavingsAccount;
       let shortfall = bufferTargetNominal - (balances.get(spender.id) ?? 0);
       if (shortfall > 0.005) {
@@ -1783,7 +1788,8 @@ export function forecastScenario(
           shortfall -= drawn;
         }
       }
-    }
+    };
+    coverHubDeficit();
 
     // 6b. Floating-point tidy-up. A draw sized to empty an account exactly
     //     (available / (1 + tax rate), with the tax then charged back at the
@@ -1909,89 +1915,105 @@ export function forecastScenario(
       // through the split order, and only then are rollforwards, net worth,
       // and the hub delta measured -- so every ending figure already includes
       // both the settlement and its routing.
-      const withdrawalsByAccount = withdrawalItems(acc);
+      // The exact bill as a function of the year's accumulator. Called more
+      // than once in December: a true-up PAYMENT funded from the drain order
+      // is itself taxable income for this same year, so the bill is recomputed
+      // after each such draw until withheld and owed agree.
+      const computeExactBill = () => {
+        const withdrawalsByAccount = withdrawalItems(acc);
 
-      // Exact federal tax for the year, from real 2026 brackets on the year's
-      // actually-realized income -- independent of however approximate the
-      // rate used to size withholding during the monthly loop above was.
-      const grossOrdinaryWithdrawals = withdrawalsByAccount
-        .filter((w) => w.taxTreatment === "tax_deferred")
-        .reduce((s, w) => s + w.gross, 0);
-      // Any gross salary opted in via IncomeSource.grossAmount (0 otherwise,
-      // the historical behavior) -- included in the SS-taxability test and
-      // bracket placement below, but never itself taxed by this engine.
-      const grossSalary = acc.grossSalary;
-      // Provisional income for Social Security counts every other income
-      // item on the return, capital gains included; leaving gains out made a
-      // brokerage-funded retirement report $0 of taxable benefits.
-      const taxableSocialSecurityAmount = taxableSocialSecurity(
-        acc.grossSocialSecurity,
-        grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + grossSalary + acc.capitalGainsRealized,
-        filingStatus
-      );
-      // Denominator for the component split below -- deliberately excludes
-      // salary, since federalOrdinaryTax (computed further down) is already
-      // the INCREMENTAL tax due to just these sources, stacked on top of
-      // salary's own bracket position.
-      const grossOrdinaryIncome =
-        grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + taxableSocialSecurityAmount;
-      const standardDeduction = standardDeductionForYear(
-        scenario.household.people,
-        filingStatus,
-        currentYear,
-        settings.inflationRatePct,
-        grossOrdinaryIncome + grossSalary + acc.capitalGainsRealized
-      );
-      // ordinaryTaxableIncome is the FULL taxable base (salary + withdrawals
-      // + pension + taxable SS) -- this is what capital gains and other
-      // ordinary income genuinely stack on top of in the real tax code, and
-      // what the next iteration's estimated withholding rate should reflect
-      // (see projectScenario's convergence loop, which reads this field).
-      const ordinaryTaxableIncome = Math.max(0, grossOrdinaryIncome + grossSalary - standardDeduction);
-      // salaryTaxableIncome is salary's own slice of that base (deduction
-      // applied to salary first) -- subtracted below so salary's own tax,
-      // already assumed paid via take-home withholding, is never charged
-      // again by this engine; only the INCREMENT due to withdrawals/pension/
-      // SS/capital-gains is.
-      const salaryTaxableIncome = Math.max(0, grossSalary - standardDeduction);
-      const federalOrdinaryTax =
-        progressiveTax(ordinaryTaxableIncome, ordinaryBrackets) - progressiveTax(salaryTaxableIncome, ordinaryBrackets);
-      const { tax: federalLtcgTax } = stackedLtcgTax(ordinaryTaxableIncome, acc.capitalGainsRealized, ltcgBrackets);
-      // The flat add-on (state/local, or anything else not modeled) applies
-      // to the same incremental (non-salary) base as federalOrdinaryTax; 0 by
-      // default (e.g. correct as-is in a no-income-tax state).
-      const additionalTax =
-        (ordinaryTaxableIncome - salaryTaxableIncome + acc.capitalGainsRealized) * settings.additionalFlatTaxRatePct;
-      // The 10% early-withdrawal penalty is a flat excise on the withdrawn
-      // amount, not bracket-dependent -- the amount charged during the
-      // monthly loop IS the exact figure, so it joins the exact bill as-is.
-      const federalTaxTotal = federalOrdinaryTax + federalLtcgTax + additionalTax + acc.earlyWithdrawalPenalties;
+        // Exact federal tax for the year, from real 2026 brackets on the year's
+        // actually-realized income -- independent of however approximate the
+        // rate used to size withholding during the monthly loop above was.
+        const grossOrdinaryWithdrawals = withdrawalsByAccount
+          .filter((w) => w.taxTreatment === "tax_deferred")
+          .reduce((s, w) => s + w.gross, 0);
+        // Any gross salary opted in via IncomeSource.grossAmount (0 otherwise,
+        // the historical behavior) -- included in the SS-taxability test and
+        // bracket placement below, but never itself taxed by this engine.
+        const grossSalary = acc.grossSalary;
+        // Provisional income for Social Security counts every other income
+        // item on the return, capital gains included; leaving gains out made a
+        // brokerage-funded retirement report $0 of taxable benefits.
+        const taxableSocialSecurityAmount = taxableSocialSecurity(
+          acc.grossSocialSecurity,
+          grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + grossSalary + acc.capitalGainsRealized,
+          filingStatus
+        );
+        // Denominator for the component split below -- deliberately excludes
+        // salary, since federalOrdinaryTax (computed further down) is already
+        // the INCREMENTAL tax due to just these sources, stacked on top of
+        // salary's own bracket position.
+        const grossOrdinaryIncome =
+          grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + taxableSocialSecurityAmount;
+        const standardDeduction = standardDeductionForYear(
+          scenario.household.people,
+          filingStatus,
+          currentYear,
+          settings.inflationRatePct,
+          grossOrdinaryIncome + grossSalary + acc.capitalGainsRealized
+        );
+        // ordinaryTaxableIncome is the FULL taxable base (salary + withdrawals
+        // + pension + taxable SS) -- this is what capital gains and other
+        // ordinary income genuinely stack on top of in the real tax code, and
+        // what the next iteration's estimated withholding rate should reflect
+        // (see projectScenario's convergence loop, which reads this field).
+        const ordinaryTaxableIncome = Math.max(0, grossOrdinaryIncome + grossSalary - standardDeduction);
+        // salaryTaxableIncome is salary's own slice of that base (deduction
+        // applied to salary first) -- subtracted below so salary's own tax,
+        // already assumed paid via take-home withholding, is never charged
+        // again by this engine; only the INCREMENT due to withdrawals/pension/
+        // SS/capital-gains is.
+        const salaryTaxableIncome = Math.max(0, grossSalary - standardDeduction);
+        const federalOrdinaryTax =
+          progressiveTax(ordinaryTaxableIncome, ordinaryBrackets) - progressiveTax(salaryTaxableIncome, ordinaryBrackets);
+        const { tax: federalLtcgTax } = stackedLtcgTax(ordinaryTaxableIncome, acc.capitalGainsRealized, ltcgBrackets);
+        // The flat add-on (state/local, or anything else not modeled) applies
+        // to the same incremental (non-salary) base as federalOrdinaryTax; 0 by
+        // default (e.g. correct as-is in a no-income-tax state).
+        const additionalTax =
+          (ordinaryTaxableIncome - salaryTaxableIncome + acc.capitalGainsRealized) * settings.additionalFlatTaxRatePct;
+        // The 10% early-withdrawal penalty is a flat excise on the withdrawn
+        // amount, not bracket-dependent -- the amount charged during the
+        // monthly loop IS the exact figure, so it joins the exact bill as-is.
+        const federalTaxTotal = federalOrdinaryTax + federalLtcgTax + additionalTax + acc.earlyWithdrawalPenalties;
 
-      // Allocate the ordinary-income tax pro-rata across its gross sources so
-      // the breakdown ties out exactly to federalTaxTotal, however the year's
-      // ordinary tax happens to be split across withdrawals/pension/SS.
-      const [taxDeferredTax, conversionTax, pensionTax, taxableSocialSecurityTax] =
-        grossOrdinaryIncome > 0
-          ? [
-              federalOrdinaryTax * (grossOrdinaryWithdrawals / grossOrdinaryIncome),
-              federalOrdinaryTax * (acc.rothConversions / grossOrdinaryIncome),
-              federalOrdinaryTax * (acc.grossPension / grossOrdinaryIncome),
-              federalOrdinaryTax * (taxableSocialSecurityAmount / grossOrdinaryIncome),
-            ]
-          : [0, 0, 0, 0];
-      const capitalGainsTax = federalLtcgTax;
-      const stateLocalAddOn = additionalTax;
-      const federalTaxByComponent = (
-        [
-          { key: "tax_deferred", label: "Tax on tax-deferred withdrawals & RMDs", amount: taxDeferredTax },
-          { key: "roth_conversion", label: "Tax on Roth conversions", amount: conversionTax },
-          { key: "pension", label: "Tax on pension income", amount: pensionTax },
-          { key: "taxable_social_security", label: "Tax on taxable Social Security", amount: taxableSocialSecurityTax },
-          { key: "capital_gains", label: "Capital gains tax", amount: capitalGainsTax },
-          { key: "early_withdrawal_penalty", label: "Early-withdrawal penalty (10%, pre-59½)", amount: acc.earlyWithdrawalPenalties },
-          { key: "state_local", label: "State/local add-on", amount: stateLocalAddOn },
-        ] as const
-      ).filter((c) => c.amount > 0.005);
+        // Allocate the ordinary-income tax pro-rata across its gross sources so
+        // the breakdown ties out exactly to federalTaxTotal, however the year's
+        // ordinary tax happens to be split across withdrawals/pension/SS.
+        const [taxDeferredTax, conversionTax, pensionTax, taxableSocialSecurityTax] =
+          grossOrdinaryIncome > 0
+            ? [
+                federalOrdinaryTax * (grossOrdinaryWithdrawals / grossOrdinaryIncome),
+                federalOrdinaryTax * (acc.rothConversions / grossOrdinaryIncome),
+                federalOrdinaryTax * (acc.grossPension / grossOrdinaryIncome),
+                federalOrdinaryTax * (taxableSocialSecurityAmount / grossOrdinaryIncome),
+              ]
+            : [0, 0, 0, 0];
+        const capitalGainsTax = federalLtcgTax;
+        const stateLocalAddOn = additionalTax;
+        const federalTaxByComponent = (
+          [
+            { key: "tax_deferred", label: "Tax on tax-deferred withdrawals & RMDs", amount: taxDeferredTax },
+            { key: "roth_conversion", label: "Tax on Roth conversions", amount: conversionTax },
+            { key: "pension", label: "Tax on pension income", amount: pensionTax },
+            { key: "taxable_social_security", label: "Tax on taxable Social Security", amount: taxableSocialSecurityTax },
+            { key: "capital_gains", label: "Capital gains tax", amount: capitalGainsTax },
+            { key: "early_withdrawal_penalty", label: "Early-withdrawal penalty (10%, pre-59½)", amount: acc.earlyWithdrawalPenalties },
+            { key: "state_local", label: "State/local add-on", amount: stateLocalAddOn },
+          ] as const
+        ).filter((c) => c.amount > 0.005);
+        return {
+          withdrawalsByAccount,
+          grossOrdinaryWithdrawals,
+          grossSalary,
+          taxableSocialSecurityAmount,
+          ordinaryTaxableIncome,
+          federalTaxTotal,
+          federalTaxByComponent,
+        };
+      };
+      let bill = computeExactBill();
 
       // --- Year-end tax true-up -----------------------------------------
       // The monthly loop withheld ESTIMATED tax (marginal rate on every
@@ -2000,34 +2022,87 @@ export function forecastScenario(
       // equals federalTaxTotal exactly: refund over-withholding to the hub,
       // charge any shortfall from it. Skipped when no rate table was
       // supplied (raw untaxed engine runs, e.g. most unit tests).
+      //
+      // A refund is surplus cash like any other, so it is routed through the
+      // fill order now. Step 5 already ran for December and the fresh-surplus
+      // rule means no later month will ever re-offer it -- without this it
+      // sits in the hub as idle cash indefinitely, which reads as "Extra
+      // Savings mysteriously accumulating a balance". Clamped to the hub's
+      // actual balance so a reserve deliberately left unclaimed in an earlier
+      // month is never swept along with it.
+      //
+      // A payment is the mirror image: step 6 already ran for December before
+      // the bill was known, so it is funded from the drain order now, exactly
+      // as any other December bill would have been. Left unfunded, the hub
+      // closed every year showing precisely that unpaid bill as a negative
+      // balance. The draw is itself taxable income for this same year, so
+      // the bill is recomputed and the remaining difference settled again
+      // until withheld and owed agree to the cent -- a tax-on-the-tax series
+      // that shrinks by the marginal rate each round.
+      let settledTotal = 0;
       if (ratesByYearOverride !== undefined && extraSavingsAccount) {
-        const settlement = acc.taxesPaid - federalTaxTotal;
-        if (Math.abs(settlement) > 0.005) {
-          const hubId = extraSavingsAccount.id;
-          balances.set(hubId, (balances.get(hubId) ?? 0) + settlement);
-          const hubBucket = acc.rollforward.get(hubId)!;
-          if (settlement >= 0) hubBucket.deposits += settlement;
-          else hubBucket.withdrawals += -settlement;
-          acc.taxSettlement = settlement;
+        const hubId = extraSavingsAccount.id;
+        const hubBucket = acc.rollforward.get(hubId)!;
+        // Every round's draws land in the ledger; they are folded into one
+        // entry per source below so the year reads "settlement, then the draw
+        // that paid it" instead of a tail of ever-smaller draws.
+        const ledgerMark = ledger.length;
+        const taxBefore = new Map(acc.withdrawalTaxByAccount);
+        for (let round = 0; round < 20; round++) {
+          const delta = acc.taxesPaid - bill.federalTaxTotal - settledTotal;
+          if (Math.abs(delta) <= 0.005) break;
+          balances.set(hubId, (balances.get(hubId) ?? 0) + delta);
+          if (delta >= 0) hubBucket.deposits += delta;
+          else hubBucket.withdrawals += -delta;
+          settledTotal += delta;
+          if (delta > 0) routeThroughSplitOrder(Math.min(delta, balances.get(hubId) ?? 0));
+          else coverHubDeficit();
+          bill = computeExactBill();
+        }
+        if (Math.abs(settledTotal) > 0.005) {
+          acc.taxSettlement = settledTotal;
+          const rounds = ledger.splice(ledgerMark);
           ledger.push({
             date: month,
             kind: "tax_settlement",
             accountId: hubId,
-            amount: settlement,
+            amount: settledTotal,
             note:
-              settlement >= 0
-                ? `Tax true-up refund (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`
-                : `Tax true-up payment (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(federalTaxTotal)})`,
+              settledTotal >= 0
+                ? `Tax true-up refund (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(bill.federalTaxTotal)})`
+                : `Tax true-up payment (withheld ${Math.round(acc.taxesPaid)} vs actual bill ${Math.round(bill.federalTaxTotal)})`,
           });
-          // A refund is surplus cash like any other, so route it through the
-          // fill order now. Step 5 already ran for December and the
-          // fresh-surplus rule means no later month will ever re-offer it --
-          // without this it sits in the hub as idle cash indefinitely, which
-          // reads as "Extra Savings mysteriously accumulating a balance".
-          // Clamped to the hub's actual balance so a reserve deliberately
-          // left unclaimed in an earlier month is never swept along with it.
-          if (settlement > 0) {
-            routeThroughSplitOrder(Math.min(settlement, balances.get(hubId) ?? 0));
+          const mergedDraws = new Map<Id, number>();
+          for (const entry of rounds) {
+            if (entry.kind !== "deficit_withdrawal") {
+              ledger.push(entry);
+              continue;
+            }
+            mergedDraws.set(entry.accountId, (mergedDraws.get(entry.accountId) ?? 0) + entry.amount);
+          }
+          for (const [sourceId, amount] of mergedDraws) {
+            if (amount <= 0.005) continue;
+            const tax = (acc.withdrawalTaxByAccount.get(sourceId) ?? 0) - (taxBefore.get(sourceId) ?? 0);
+            ledger.push({
+              date: month,
+              kind: "deficit_withdrawal",
+              accountId: sourceId,
+              toAccountId: hubId,
+              amount,
+              note: tax > 0.005 ? `Paying the tax true-up (+ ${Math.round(tax)} tax)` : `Paying the tax true-up`,
+            });
+          }
+          // The drain order could not fund the payment: a real shortfall,
+          // and step 7 has already run this month, so say so here.
+          const key = `${currentYear}:${hubId}`;
+          if (settledTotal < 0 && (balances.get(hubId) ?? 0) < -0.005 && !warnedThisYear.has(key)) {
+            warnedThisYear.add(key);
+            warnings.push({
+              year: currentYear,
+              kind: "insufficient_funds",
+              accountId: hubId,
+              message: `${extraSavingsAccount.name} runs negative starting ${month}.`,
+            });
           }
         }
         // Whatever the RMD reserve (held back from the monthly split, see step
@@ -2036,11 +2111,18 @@ export function forecastScenario(
         // the reserve is offered -- money a split stop deliberately left in
         // the hub stays there, as always.
         if (rmdHeldThisYear > 0.005) {
-          const spare = Math.max(0, (balances.get(extraSavingsAccount.id) ?? 0) - bufferTargetNominal);
+          const spare = Math.max(0, (balances.get(hubId) ?? 0) - bufferTargetNominal);
           routeThroughSplitOrder(Math.min(rmdHeldThisYear, spare));
         }
       }
-
+      const {
+        grossOrdinaryWithdrawals,
+        grossSalary,
+        taxableSocialSecurityAmount,
+        ordinaryTaxableIncome,
+        federalTaxTotal,
+        federalTaxByComponent,
+      } = bill;
       // The income the healthcare model keys off: AGI for Medicare's
       // surcharges (two years later), and the marketplace's MAGI, which adds
       // back the untaxed part of Social Security.
