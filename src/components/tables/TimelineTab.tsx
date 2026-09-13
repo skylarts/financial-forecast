@@ -25,6 +25,8 @@ const LEDGER_KIND_LABELS: Record<LedgerEvent["kind"], string> = {
   cap_overflow: "Cap overflow",
   tax_settlement: "Tax true-up",
   home_sale: "Home sale",
+  roth_conversion: "Roth conversion",
+  rollover: "Rollover",
   shortfall_spill: "Account emptied",
 };
 

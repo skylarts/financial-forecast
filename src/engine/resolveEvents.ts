@@ -1,10 +1,10 @@
-import type { Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
+import type { Account, Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
 import { addDays, compareDates, elapsedYears, todayISO } from "./dateMath";
 import { expandOccurrences } from "./occurrences";
 import { growthAdjustedAmount, todaysDollarsAmount } from "./growth";
 import { buildTimeline } from "./timeline";
 import { resolvePrimarySpendingAccountId } from "./moneyFlow";
-import type { EngineAccount, MortgageSpec, Posting, ResolvedSchedule } from "./types";
+import type { EngineAccount, MortgageSpec, Posting, ResolvedSchedule, TransferKind } from "./types";
 
 /** The earlier of two optional dates; null only when both are null. */
 function earliestDate(a: ISODate | null, b: ISODate | null): ISODate | null {
@@ -31,6 +31,35 @@ function activeMultiplier(windows: TemporaryAdjustment[], onDate: ISODate): numb
  * = its starting balance, referenceDate = plan start). Shared here so both
  * call sites price them identically off the home's own growth rate.
  */
+/**
+ * A home's value at `to`, grown from `base` at `referenceDate`: the base rate
+ * until the first scheduled override starts, then each override's rate from
+ * its own start. Mirrors what the monthly loop does with the same schedule,
+ * so the costs priced off the value track the value on the chart.
+ */
+export function homeValueAt(
+  base: number,
+  referenceDate: ISODate,
+  to: ISODate,
+  baseRate: number,
+  overrides: { startDate: ISODate; growthRatePct: number }[] | undefined
+): number {
+  let value = base;
+  let cursor = referenceDate;
+  let rate = baseRate;
+  for (const o of overrides ?? []) {
+    if (compareDates(o.startDate, cursor) <= 0) {
+      rate = o.growthRatePct;
+      continue;
+    }
+    if (compareDates(o.startDate, to) >= 0) break;
+    value = growthAdjustedAmount(value, elapsedYears(cursor, o.startDate), rate);
+    cursor = o.startDate;
+    rate = o.growthRatePct;
+  }
+  return growthAdjustedAmount(value, Math.max(0, elapsedYears(cursor, to)), rate);
+}
+
 function pushOwnershipCosts(
   pushPosting: (p: Posting) => void,
   horizonEnd: ISODate,
@@ -38,6 +67,7 @@ function pushOwnershipCosts(
     rates: { rate: number | undefined; label: string; key: string }[];
     baseValue: number;
     growthRate: number;
+    growthOverrides?: { startDate: ISODate; growthRatePct: number }[];
     referenceDate: ISODate;
     startDate: ISODate;
     /** null = runs through the end of the plan (or horizonEnd, whichever is sooner). */
@@ -57,7 +87,7 @@ function pushOwnershipCosts(
   const sourceId = `${input.sourceIdPrefix}:ownership_costs`;
   const label = `Home ownership costs${input.nameSuffix}`;
   for (const occ of occurrences) {
-    const homeValue = growthAdjustedAmount(input.baseValue, elapsedYears(input.referenceDate, occ), input.growthRate);
+    const homeValue = homeValueAt(input.baseValue, input.referenceDate, occ, input.growthRate, input.growthOverrides);
     for (const { rate } of active) {
       const amount = (homeValue * (rate ?? 0)) / 12;
       if (amount === 0) continue;
@@ -239,6 +269,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       ],
       baseValue: account.startingBalance,
       growthRate: account.propertyGrowthRatePct ?? account.growthRatePct ?? settings.inflationRatePct,
+      growthOverrides: growthRateOverrides.get(account.id),
       referenceDate: costsStartDate,
       startDate: costsStartDate,
       endDate: costsEndDate,
@@ -259,7 +290,9 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       retirementByPerson.set(event.personId, event.startDate);
     }
     for (const src of scenario.incomeSources) {
-      if (src.ownerId === event.personId && src.category === "salary") {
+      // Only a salary already running at retirement is trimmed; part-time or
+      // consulting income that starts AFTER retirement is left alone.
+      if (src.ownerId === event.personId && src.category === "salary" && compareDates(src.startDate, event.startDate) < 0) {
         const trimmedEnd = addDays(event.startDate, -1);
         const existing = incomeEndOverrides.get(src.id);
         if (!existing || compareDates(trimmedEnd, existing) < 0) {
@@ -370,8 +403,28 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // deducted ones don't, since take-home income was entered net of them. This is
   // independent of tax treatment (a Roth 401k is payroll-deducted but after-tax).
   const contributionSpendingAccountId = primarySpendingAccountId;
+
+  // A paycheck deduction needs a paycheck. Where the plan has salary sources,
+  // a payroll-deducted contribution posts only in months the owner (or, for a
+  // joint account, anyone) has a salary that is running and not paused by a
+  // zero-multiplier window -- so it stops with the salary's own end date, a
+  // career break, or the retire event, whichever comes first. A plan with no
+  // salary entries at all keeps the old behavior so nothing silently stops.
+  const salarySources = scenario.incomeSources.filter((s) => s.category === "salary" && !s.isExcluded);
+  const salaryActiveOn = (ownerId: Id | null, date: ISODate): boolean => {
+    if (salarySources.length === 0) return true;
+    return salarySources.some((s) => {
+      // A joint salary (no owner) is everyone's paycheck.
+      if (ownerId && s.ownerId && s.ownerId !== ownerId) return false;
+      if (compareDates(date, s.startDate) < 0) return false;
+      const end = incomeEndOverrides.get(s.id) ?? s.endDate;
+      if (end && compareDates(date, end) > 0) return false;
+      return activeMultiplier(s.adjustments ?? [], date) > 0;
+    });
+  };
   const postContribution = (account: (typeof scenario.accounts)[number], occ: ISODate, amount: number, payrollDeducted: boolean) => {
     if (amount === 0) return;
+    if (payrollDeducted && !salaryActiveOn(account.ownerId, occ)) return;
     pushPosting({
       date: occ,
       yearMonth: occ.slice(0, 7),
@@ -553,19 +606,23 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     } else if (event.type === "retire" && event.retirementExpense) {
       const exp = event.retirementExpense;
       const windows = exp.adjustments ?? [];
-      const occurrences = expandOccurrences(event.startDate, exp.endDate ?? null, "annual", horizonEnd);
+      // An annual figure spent through the year, so it posts monthly: a single
+      // December lump made the drain order over-draw the IRA for that year and
+      // sweep the excess into the brokerage.
+      const occurrences = expandOccurrences(event.startDate, exp.endDate ?? null, "monthly", horizonEnd);
       for (const occ of occurrences) {
         // Entered in today's dollars; inflates from plan start to the
         // retirement date (this expense's own "start"), then grows at its
         // own rate from there -- same two-stage pattern as a regular Expense.
-        const base = todaysDollarsAmount(
-          exp.amount,
-          settings.startDate,
-          event.startDate,
-          occ,
-          settings.inflationRatePct,
-          exp.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
-        );
+        const base =
+          todaysDollarsAmount(
+            exp.amount,
+            settings.startDate,
+            event.startDate,
+            occ,
+            settings.inflationRatePct,
+            exp.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
+          ) / 12;
         const amount = base * activeMultiplier(windows, occ);
         if (amount === 0) continue;
         const accountId = exp.paymentAccountId ?? primarySpendingAccountId;
@@ -582,6 +639,10 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       }
     } else if (event.type === "custom_transfer") {
       const occurrences = expandOccurrences(event.startDate, event.endDate ?? null, event.frequency, horizonEnd, event.intervalYears);
+      const transferKind = transferKindFor(
+        scenario.accounts.find((a) => a.id === event.fromAccountId),
+        scenario.accounts.find((a) => a.id === event.toAccountId)
+      );
       for (const occ of occurrences) {
         // Entered in today's dollars; inflates from plan start to this
         // transfer's own start, then grows at its own rate (0 = flat) from there.
@@ -601,6 +662,8 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           category: "transfer",
           label: event.name,
           sourceId: `${event.id}:from`,
+          transferKind,
+          counterpartyAccountId: event.toAccountId,
         });
         pushPosting({
           date: occ,
@@ -610,10 +673,38 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
           category: "transfer",
           label: event.name,
           sourceId: `${event.id}:to`,
+          transferKind,
+          counterpartyAccountId: event.fromAccountId,
         });
       }
     }
   }
 
   return { accounts, postings, mortgages, timeline: buildTimeline(scenario) };
+}
+
+/** How a withdrawal from this account is taxed: the explicit treatment, else inferred from the class. */
+export function treatmentOf(account: Pick<Account, "taxTreatment" | "class"> | undefined): "taxable" | "tax_deferred" | "tax_free" | "n/a" {
+  if (!account) return "n/a";
+  if (account.taxTreatment !== "n/a") return account.taxTreatment;
+  switch (account.class) {
+    case "taxable_investment":
+      return "taxable";
+    case "tax_deferred":
+      return "tax_deferred";
+    case "tax_free":
+      return "tax_free";
+    default:
+      return "n/a";
+  }
+}
+
+/** See TransferKind. Decided once per event from the two accounts' treatments. */
+export function transferKindFor(from: Account | undefined, to: Account | undefined): TransferKind {
+  if (to && to.category === "liability") return "payoff";
+  const fromT = treatmentOf(from);
+  const toT = treatmentOf(to);
+  if (fromT === "tax_deferred" && toT === "tax_deferred") return "rollover";
+  if (fromT === "tax_deferred" && toT === "tax_free") return "conversion";
+  return "plain";
 }

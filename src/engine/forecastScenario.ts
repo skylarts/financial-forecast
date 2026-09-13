@@ -114,6 +114,8 @@ interface YearAccumulator {
   grossSocialSecurity: number;
   /** Gross (pre-tax) pension income received this year -- fully ordinary-taxable, no partial-inclusion rule. */
   grossPension: number;
+  /** Amount converted from tax-deferred to tax-free accounts this year: ordinary income, never penalized. */
+  rothConversions: number;
   /**
    * Gross (Box-1-style) salary this year, from income sources that opted in
    * via IncomeSource.grossAmount -- 0 for any source that didn't. Used only
@@ -150,6 +152,7 @@ function freshAccumulator(accountIds: Id[]): YearAccumulator {
     capitalGainsRealized: 0,
     grossSocialSecurity: 0,
     grossPension: 0,
+    rothConversions: 0,
     grossSalary: 0,
   };
 }
@@ -236,7 +239,9 @@ function effectiveAnnualRate(account: EngineAccount, month: string, inflationRat
   if (overrides?.length) {
     let active: number | undefined;
     for (const o of overrides) {
-      if (compareDates(o.startDate, month) > 0) break;
+      // The loop's cursor is always the 1st; an override dated mid-month
+      // starts that month, not the next.
+      if (o.startDate.slice(0, 7) > month.slice(0, 7)) break;
       active = o.growthRatePct;
     }
     if (active !== undefined) return active;
@@ -251,15 +256,17 @@ function effectiveAnnualRate(account: EngineAccount, month: string, inflationRat
 
 /** Whether a drain stop's optional date window covers this month (both bounds inclusive; null = unbounded). */
 function isDrainStopActive(stop: DrainStop, month: ISODate): boolean {
-  if (stop.startDate && compareDates(month, stop.startDate) < 0) return false;
-  if (stop.endDate && compareDates(month, stop.endDate) > 0) return false;
+  // Windows are compared by calendar month: the cursor is always the 1st,
+  // and a window that opens on the 15th opens that month, not the next.
+  if (stop.startDate && month.slice(0, 7) < stop.startDate.slice(0, 7)) return false;
+  if (stop.endDate && month.slice(0, 7) > stop.endDate.slice(0, 7)) return false;
   return true;
 }
 
 /** Mirrors isDrainStopActive: whether a split stop's optional date window covers this month. */
 function isSplitStopActive(stop: SplitStop, month: ISODate): boolean {
-  if (stop.startDate && compareDates(month, stop.startDate) < 0) return false;
-  if (stop.endDate && compareDates(month, stop.endDate) > 0) return false;
+  if (stop.startDate && month.slice(0, 7) < stop.startDate.slice(0, 7)) return false;
+  if (stop.endDate && month.slice(0, 7) > stop.endDate.slice(0, 7)) return false;
   return true;
 }
 
@@ -505,6 +512,9 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   // age-dependent checks like the pre-59½ early-withdrawal penalty.
   let currentMonth: ISODate = settings.startDate;
   let acc = freshAccumulator(accountIds);
+  // RMD proceeds parked on the hub this year (see step 5); whatever is left of
+  // them in December is offered to the split order once.
+  let rmdHeldThisYear = 0;
   const yearStartBalances = new Map<Id, number>(balances);
 
   // Record one signed contribution to the "Other account activity" line.
@@ -548,7 +558,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
   const estimatedWithdrawalRate = (account: EngineAccount): number => {
     const treatment = effectiveTaxTreatment(account);
     const rates = ratesForYear(currentYear);
-    if (treatment === "tax_deferred") return rates.ordinaryMarginalRate + earlyWithdrawalPenaltyRate(account);
+    if (treatment === "tax_deferred") {
+      // gross = net × (1 + w) / (1 − p): ordinary withholding on the net, and
+      // the 10% penalty on the whole gross distribution (see realizeWithdrawalTax).
+      const p = earlyWithdrawalPenaltyRate(account);
+      return (1 + rates.ordinaryWithholdingRate) / (1 - p) - 1;
+    }
     if (treatment === "taxable") {
       const bal = balances.get(account.id) ?? 0;
       const bas = basis.get(account.id) ?? 0;
@@ -577,14 +592,16 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     const rates = ratesForYear(currentYear);
     let tax = 0;
     if (treatment === "tax_deferred") {
-      tax = amount * rates.ordinaryMarginalRate;
+      tax = amount * rates.ordinaryWithholdingRate;
       // 10% early-withdrawal penalty before the owner turns 59½ -- charged
       // at the source like the ordinary-income withholding, counted in the
       // exact year-end bill (see federalTaxByComponent), and surfaced as a
       // once-per-year warning so it never silently drains a retire-early plan.
+      // The penalty is 10% of the GROSS distribution (net + withholding +
+      // the penalty itself), not of the net amount that reached cash.
       const penaltyRate = earlyWithdrawalPenaltyRate(src);
       if (penaltyRate > 0) {
-        const penalty = amount * penaltyRate;
+        const penalty = ((amount + tax) * penaltyRate) / (1 - penaltyRate);
         tax += penalty;
         acc.earlyWithdrawalPenalties += penalty;
         const warnKey = `${currentYear}:penalty:${src.id}`;
@@ -889,6 +906,8 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       withdrawalsByAccount: withdrawalItems(periodAcc),
       capitalGainsRealized: periodAcc.capitalGainsRealized,
       grossSocialSecurity: periodAcc.grossSocialSecurity,
+      grossPension: periodAcc.grossPension,
+      rothConversions: periodAcc.rothConversions,
       ...exactTax,
     };
 
@@ -933,6 +952,11 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     // surplus split (step 5) can size itself off exactly this month's FRESH
     // inflow to Extra Savings -- see step 5 for why that distinction matters.
     const extraSavingsMonthStart = extraSavingsAccount ? balances.get(extraSavingsAccount.id) ?? 0 : 0;
+    // RMD proceeds that landed on the hub this month. They are held there as
+    // the year's spending reserve rather than swept into the split targets:
+    // sweeping them meant the IRA was drawn a second time for the rest of the
+    // year, roughly doubling the year's taxable distributions.
+    let rmdToHubThisMonth = 0;
 
     // 0. Home sales: a sell_home event tags the real_estate account being
     //    sold (and its linked mortgage, if any) with soldDate -- the balance
@@ -949,7 +973,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     //    BEFORE any balance is zeroed, from the actual simulated equity:
     //    home value × (1 − selling costs) − remaining linked mortgage.
     for (const account of accounts) {
-      if (!account.saleInfo || !account.soldDate || compareDates(month, account.soldDate) < 0) continue;
+      if (!account.saleInfo || !account.soldDate || month.slice(0, 7) < account.soldDate.slice(0, 7)) continue;
       const homeValue = balances.get(account.id) ?? 0;
       if (homeValue === 0) continue; // already sold in an earlier month
       const mortgageBalance = account.linkedLiabilityId ? balances.get(account.linkedLiabilityId) ?? 0 : 0;
@@ -982,6 +1006,8 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
           if (applied >= 0) targetBucket.deposits += applied;
           else targetBucket.withdrawals += -applied;
         }
+        // Sale proceeds landing in a brokerage are new money, not gain.
+        creditBasisIfTaxable(targetId, applied);
         // Asset-for-asset swap (home equity -> cash): reconcile like any
         // other transfer leg landing on the hub directly.
         if (hubIds.has(targetId)) {
@@ -999,7 +1025,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       }
     }
     for (const account of accounts) {
-      if (!account.soldDate || compareDates(month, account.soldDate) < 0) continue;
+      if (!account.soldDate || month.slice(0, 7) < account.soldDate.slice(0, 7)) continue;
       const remaining = balances.get(account.id) ?? 0;
       if (remaining === 0) continue;
       balances.set(account.id, 0);
@@ -1055,7 +1081,24 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
 
     // 2. Scheduled cashflows for this month. (resolveEvents already omits
     //    postings targeting an excluded account; this check is a cheap backstop.)
-    for (const posting of postingsByMonth.get(yearMonth) ?? []) {
+    for (const rawPosting of postingsByMonth.get(yearMonth) ?? []) {
+      // A posting aimed at an account that no longer exists (possible only in
+      // a hand-edited file that dodged the loader's repair) is charged to the
+      // hub and said out loud, rather than debited into a phantom balance.
+      let posting = rawPosting;
+      if (!accountById.has(posting.accountId)) {
+        if (!primarySpendingAccountId) continue;
+        const warnKey = `${currentYear}:missing:${posting.accountId}`;
+        if (!warnedThisYear.has(warnKey)) {
+          warnedThisYear.add(warnKey);
+          warnings.push({
+            year: currentYear,
+            kind: "routing_conflict",
+            message: `${posting.label} points at an account that no longer exists; it was charged to Extra Savings instead.`,
+          });
+        }
+        posting = { ...posting, accountId: primarySpendingAccountId };
+      }
       const targetAccount = accountById.get(posting.accountId);
       if (targetAccount?.isExcluded) continue;
       if (!hasReachedStartMonth(month, targetAccount?.effectiveStartDate ?? month)) continue;
@@ -1070,7 +1113,13 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // (0 for an inflow). Usually the full request; less when the account
       // ran dry and the no-overdraft rule capped it.
       let outflowApplied = posting.amount < 0 ? -posting.amount : 0;
-      if (posting.amount > 0 && targetAccount && targetAccount.category === "liability") {
+      if (posting.amount < 0 && targetAccount && targetAccount.category === "liability") {
+        // Money taken FROM a liability is borrowing: the amount owed grows.
+        // (It used to fall through to the generic branch and shrink the debt.)
+        balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) + -posting.amount);
+        if (bucket) bucket.deposits += -posting.amount;
+        outflowApplied = 0;
+      } else if (posting.amount > 0 && targetAccount && targetAccount.category === "liability") {
         const owed = balances.get(posting.accountId) ?? 0;
         const applied = Math.min(posting.amount, owed);
         balances.set(posting.accountId, owed - applied);
@@ -1131,6 +1180,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
           if (posting.amount >= 0) bucket.deposits += posting.amount;
           else bucket.withdrawals += -posting.amount;
         }
+        // Money arriving in a brokerage by transfer, direct deposit, or sale
+        // proceeds is new money: it must not later be taxed as pure gain.
+        // (Contributions credit basis in their own branch below.)
+        if (posting.amount > 0 && posting.category !== "contribution_in") {
+          creditBasisIfTaxable(posting.accountId, posting.amount);
+        }
       }
       if (posting.category === "income") {
         acc.totalIncome += posting.amount;
@@ -1176,7 +1231,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
           const taxableFraction = incomeSrc.category === "social_security" ? rates.ssTaxableFraction : 1;
           if (incomeSrc.category === "social_security") acc.grossSocialSecurity += posting.amount;
           else acc.grossPension += posting.amount;
-          const withheld = posting.amount * taxableFraction * rates.ordinaryMarginalRate;
+          const withheld = posting.amount * taxableFraction * rates.ordinaryWithholdingRate;
           if (withheld > 0.005) {
             balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) - withheld);
             const withheldBucket = acc.rollforward.get(posting.accountId);
@@ -1220,8 +1275,39 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // outflows from a non-hub asset account are captured as withdrawals below.
 
       // Any outflow from a taxable / tax-deferred account (a transfer out, or an
-      // expense paid straight from it) is a sale that realizes tax.
-      if (outflowApplied > 0) {
+      // expense paid straight from it) is a sale that realizes tax -- except
+      // the two transfer kinds the tax code treats differently: a rollover
+      // between two tax-deferred accounts is not an event at all, and a Roth
+      // conversion is ordinary income with no penalty, its tax paid from cash.
+      if (outflowApplied > 0 && posting.category === "transfer" && posting.transferKind === "rollover") {
+        ledger.push({
+          date: posting.date,
+          kind: "rollover",
+          accountId: posting.accountId,
+          toAccountId: posting.counterpartyAccountId,
+          amount: outflowApplied,
+          note: `${posting.label}: rollover, not a taxable event`,
+        });
+      } else if (outflowApplied > 0 && posting.category === "transfer" && posting.transferKind === "conversion") {
+        const converted = outflowApplied;
+        acc.rothConversions += converted;
+        const rates = ratesForYear(currentYear);
+        const tax = converted * rates.ordinaryWithholdingRate;
+        if (tax > 0.005 && primarySpendingAccountId) {
+          balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) - tax);
+          acc.rollforward.get(primarySpendingAccountId)!.withdrawals += tax;
+          acc.taxesPaid += tax;
+          if (hubIds.has(primarySpendingAccountId)) acc.incomeWithheldFromHub += tax;
+        }
+        ledger.push({
+          date: posting.date,
+          kind: "roth_conversion",
+          accountId: posting.accountId,
+          toAccountId: posting.counterpartyAccountId,
+          amount: converted,
+          note: tax > 0.005 ? `${posting.label}: Roth conversion (est. tax ${Math.round(tax)} paid from cash)` : `${posting.label}: Roth conversion`,
+        });
+      } else if (outflowApplied > 0) {
         const outAmount = outflowApplied;
         const tax = realizeWithdrawalTax(posting.accountId, outAmount);
         // Money leaving a NON-hub asset account (a savings/investment) counts
@@ -1243,12 +1329,17 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       if (account.isExcluded) continue;
       if (account.class !== "mortgage" && account.class !== "loan" && account.class !== "credit_card") continue;
       if (!hasReachedStartMonth(month, account.effectiveStartDate)) continue;
-      if (month.slice(0, 7) === account.effectiveStartDate.slice(0, 7)) continue; // originates this month, first payment next month
-      const currentBalance = balances.get(account.id) ?? 0;
-      if (currentBalance <= 0) continue; // already paid off -- no more payments due
       const mortgage = mortgageByAccountId.get(account.id);
       const payment = mortgagePayments.get(account.id);
       if (!mortgage || !payment) continue;
+      // A loan that originates this month makes its first payment next month.
+      // An already-running loan (origination before the plan start) pays in
+      // the plan's first month like any other -- it used to be skipped, which
+      // left year one a payment short.
+      const originationMonth = (mortgage.loanTerms.originationDate ?? account.effectiveStartDate).slice(0, 7);
+      if (month.slice(0, 7) === originationMonth) continue;
+      const currentBalance = balances.get(account.id) ?? 0;
+      if (currentBalance <= 0) continue; // already paid off -- no more payments due
       // A buy_home event's "replace existing housing expenses" retires an
       // already-owned home's mortgage -- no further payments after that date.
       // The remaining balance simply stops amortizing (no sale/payoff is
@@ -1343,6 +1434,10 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         if (primarySpendingAccountId && primarySpendingAccountId !== account.id) {
           balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) + rmdAmount);
           acc.rollforward.get(primarySpendingAccountId)!.deposits += rmdAmount;
+          if (hubIds.has(primarySpendingAccountId)) {
+            rmdToHubThisMonth += rmdAmount;
+            rmdHeldThisYear += rmdAmount;
+          }
         }
         // Tax on the forced distribution, realized at the source like any other
         // withdrawal from the account.
@@ -1424,7 +1519,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       return amount - remaining;
     };
     if (extraSavingsAccount) {
-      routeThroughSplitOrder((balances.get(extraSavingsAccount.id) ?? 0) - extraSavingsMonthStart);
+      routeThroughSplitOrder((balances.get(extraSavingsAccount.id) ?? 0) - extraSavingsMonthStart - rmdToHubThisMonth);
     }
 
     // 5b. Cap overflow. The split above only catches money entering a target
@@ -1579,22 +1674,26 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // the historical behavior) -- included in the SS-taxability test and
       // bracket placement below, but never itself taxed by this engine.
       const grossSalary = acc.grossSalary;
+      // Provisional income for Social Security counts every other income
+      // item on the return, capital gains included; leaving gains out made a
+      // brokerage-funded retirement report $0 of taxable benefits.
       const taxableSocialSecurityAmount = taxableSocialSecurity(
         acc.grossSocialSecurity,
-        grossOrdinaryWithdrawals + acc.grossPension + grossSalary,
+        grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + grossSalary + acc.capitalGainsRealized,
         settings.filingStatus
       );
-      // Denominator for the tax_deferred/pension/SS component split below --
-      // deliberately excludes salary, since federalOrdinaryTax (computed
-      // further down) is already the INCREMENTAL tax due to just these three
-      // sources, stacked on top of salary's own bracket position.
-      const grossOrdinaryIncome = grossOrdinaryWithdrawals + acc.grossPension + taxableSocialSecurityAmount;
+      // Denominator for the component split below -- deliberately excludes
+      // salary, since federalOrdinaryTax (computed further down) is already
+      // the INCREMENTAL tax due to just these sources, stacked on top of
+      // salary's own bracket position.
+      const grossOrdinaryIncome =
+        grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + taxableSocialSecurityAmount;
       const standardDeduction = standardDeductionForYear(
         scenario.household.people,
         settings.filingStatus,
         currentYear,
         settings.inflationRatePct,
-        grossOrdinaryIncome + grossSalary
+        grossOrdinaryIncome + grossSalary + acc.capitalGainsRealized
       );
       // ordinaryTaxableIncome is the FULL taxable base (salary + withdrawals
       // + pension + taxable SS) -- this is what capital gains and other
@@ -1629,19 +1728,21 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // Allocate the ordinary-income tax pro-rata across its gross sources so
       // the breakdown ties out exactly to federalTaxTotal, however the year's
       // ordinary tax happens to be split across withdrawals/pension/SS.
-      const [taxDeferredTax, pensionTax, taxableSocialSecurityTax] =
+      const [taxDeferredTax, conversionTax, pensionTax, taxableSocialSecurityTax] =
         grossOrdinaryIncome > 0
           ? [
               federalOrdinaryTax * (grossOrdinaryWithdrawals / grossOrdinaryIncome),
+              federalOrdinaryTax * (acc.rothConversions / grossOrdinaryIncome),
               federalOrdinaryTax * (acc.grossPension / grossOrdinaryIncome),
               federalOrdinaryTax * (taxableSocialSecurityAmount / grossOrdinaryIncome),
             ]
-          : [0, 0, 0];
+          : [0, 0, 0, 0];
       const capitalGainsTax = federalLtcgTax;
       const stateLocalAddOn = additionalTax;
       const federalTaxByComponent = (
         [
           { key: "tax_deferred", label: "Tax on tax-deferred withdrawals & RMDs", amount: taxDeferredTax },
+          { key: "roth_conversion", label: "Tax on Roth conversions", amount: conversionTax },
           { key: "pension", label: "Tax on pension income", amount: pensionTax },
           { key: "taxable_social_security", label: "Tax on taxable Social Security", amount: taxableSocialSecurityTax },
           { key: "capital_gains", label: "Capital gains tax", amount: capitalGainsTax },
@@ -1686,6 +1787,14 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
           if (settlement > 0) {
             routeThroughSplitOrder(Math.min(settlement, balances.get(hubId) ?? 0));
           }
+        }
+        // Whatever the RMD reserve (held back from the monthly split, see step
+        // 5) did not fund this year is ordinary surplus now: offer it to the
+        // split order once, at year end, so it does not sit as idle cash. Only
+        // the reserve is offered -- money a split stop deliberately left in
+        // the hub stays there, as always.
+        if (rmdHeldThisYear > 0.005) {
+          routeThroughSplitOrder(Math.min(rmdHeldThisYear, Math.max(0, balances.get(extraSavingsAccount.id) ?? 0)));
         }
       }
 
@@ -1733,6 +1842,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       for (const [id, balance] of balances) yearStartBalances.set(id, balance);
       if (nextMonth) currentYear = yearOf(nextMonth);
       acc = freshAccumulator(accountIds);
+      rmdHeldThisYear = 0;
     }
   }
 
@@ -1837,14 +1947,28 @@ export function projectScenario(scenario: Scenario): ProjectionResult {
         snapshot.cashFlow.grossSocialSecurity > 0
           ? snapshot.cashFlow.taxableSocialSecurityAmount / snapshot.cashFlow.grossSocialSecurity
           : prev.ssTaxableFraction;
+      // The effective rate on this year's ordinary sources, from the exact
+      // bill: what withholding should have been sized at.
+      const ordinaryKeys = new Set(["tax_deferred", "roth_conversion", "pension", "taxable_social_security"]);
+      const ordinaryTax = snapshot.cashFlow.federalTaxByComponent
+        .filter((c) => ordinaryKeys.has(c.key))
+        .reduce((s, c) => s + c.amount, 0);
+      const ordinaryGross =
+        snapshot.cashFlow.withdrawalsByAccount.filter((w) => w.taxTreatment === "tax_deferred").reduce((s, w) => s + w.gross, 0) +
+        snapshot.cashFlow.rothConversions +
+        snapshot.cashFlow.grossPension +
+        snapshot.cashFlow.taxableSocialSecurityAmount;
+      const nextWithholding = ordinaryGross > 1 ? Math.min(0.5, Math.max(0, ordinaryTax / ordinaryGross)) : nextOrdinary;
 
       maxDelta = Math.max(
         maxDelta,
         Math.abs(nextOrdinary - prev.ordinaryMarginalRate),
+        Math.abs(nextWithholding - prev.ordinaryWithholdingRate),
         Math.abs(nextLtcg - prev.ltcgMarginalRate)
       );
       nextRates.set(snapshot.year, {
         ordinaryMarginalRate: nextOrdinary,
+        ordinaryWithholdingRate: nextWithholding,
         ltcgMarginalRate: nextLtcg,
         ssTaxableFraction: nextSsFraction,
       });

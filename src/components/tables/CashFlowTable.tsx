@@ -21,9 +21,11 @@ import { useUiStore } from "@/store/useUiStore";
 // tax-deferred/pension/SS split shifts from year to year).
 const FEDERAL_TAX_COMPONENT_ORDER: FederalTaxComponentKey[] = [
   "tax_deferred",
+  "roth_conversion",
   "pension",
   "taxable_social_security",
   "capital_gains",
+  "early_withdrawal_penalty",
   "state_local",
 ];
 

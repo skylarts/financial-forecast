@@ -75,6 +75,7 @@ export interface WithdrawalLineItem {
 
 export type FederalTaxComponentKey =
   | "tax_deferred"
+  | "roth_conversion"
   | "pension"
   | "taxable_social_security"
   | "capital_gains"
@@ -184,8 +185,12 @@ export interface CashFlowPeriodRow {
   ordinaryTaxableIncome: number;
   /** Realized long-term capital gains from taxable-account withdrawals this year (gain-over-basis portion only). */
   capitalGainsRealized: number;
+  /** Amount converted from tax-deferred to tax-free accounts this year: ordinary income, never penalized. */
+  rothConversions: number;
   /** Gross (pre-tax) Social Security benefits received this year. */
   grossSocialSecurity: number;
+  /** Gross (pre-tax) pension income received this year. */
+  grossPension: number;
   /** The taxable portion of grossSocialSecurity, per the IRS provisional-income rule. */
   taxableSocialSecurityAmount: number;
 }
@@ -224,6 +229,10 @@ export interface LedgerEvent {
     | "cap_overflow"
     | "tax_settlement"
     | "home_sale"
+    /** A transfer from a tax-deferred account to a tax-free one, taxed as ordinary income with no penalty. */
+    | "roth_conversion"
+    /** A transfer between two tax-deferred accounts: not a taxable event. */
+    | "rollover"
     /** A bill aimed at one account exceeded its balance: the account was left at
      *  exactly $0 and the remainder charged to the hub for the drain order to
      *  cover. `accountId` is the hub the money came from, `toAccountId` the

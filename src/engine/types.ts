@@ -36,6 +36,19 @@ export type PostingCategory =
   /** Matching draw from the spending account for an after-tax contribution. */
   | "contribution_out";
 
+/**
+ * What a transfer between two accounts is, tax-wise, decided from the two
+ * accounts' treatments when the posting is built:
+ *  - "rollover"   tax-deferred to tax-deferred: not a taxable event.
+ *  - "conversion" tax-deferred to tax-free (a Roth conversion): ordinary
+ *                 income in the year it happens, never the 10% penalty, tax
+ *                 paid from the spending hub rather than withheld from the IRA.
+ *  - "payoff"     into a liability: pays the debt down.
+ *  - "plain"      anything else: an outflow from a taxable or tax-deferred
+ *                 account is a sale or distribution and is taxed as one.
+ */
+export type TransferKind = "rollover" | "conversion" | "payoff" | "plain";
+
 export interface Posting {
   /** Exact day, used for warnings. */
   date: ISODate;
@@ -62,6 +75,10 @@ export interface Posting {
    * forecastScenario.ts); never posted to any account balance.
    */
   grossAmount?: number;
+  /** Present on both legs of a custom transfer. See TransferKind. */
+  transferKind?: TransferKind;
+  /** The other account of a transfer leg. */
+  counterpartyAccountId?: Id;
 }
 
 export interface MortgageSpec {
