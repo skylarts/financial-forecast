@@ -180,10 +180,13 @@ function StressMenu({
   options,
   value,
   onChange,
+  onOpenTab,
 }: {
   options: { key: StressKey; label: string }[];
   value: StressKey | null;
   onChange: (key: StressKey | null) => void;
+  /** Opens the Stress test tab, where every preset runs side by side and the severity is editable. */
+  onOpenTab?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -234,9 +237,25 @@ function StressMenu({
                 onChange(null);
                 setOpen(false);
               }}
-              className="mt-1 block w-full rounded border-t border-border px-3 py-2 pt-2 text-left text-sm text-dim hover:bg-accent/15"
+              className="mt-1 block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15"
             >
               Clear
+            </button>
+          )}
+          {/* This menu draws one preset over the plan; the tab runs them all
+              together and is where the severity of each is set. */}
+          {onOpenTab && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onOpenTab();
+              }}
+              className="mt-1 flex w-full items-center justify-between gap-2 rounded border-t border-border px-3 py-2 pt-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
+            >
+              <span>Compare all, set severity</span>
+              <span aria-hidden>→</span>
             </button>
           )}
         </div>
@@ -334,6 +353,7 @@ export function NetWorthChart({
   stressOptions,
   stressKey,
   onStressChange,
+  onOpenStressTab,
   stressScenario,
 }: {
   accounts: Account[];
@@ -361,6 +381,8 @@ export function NetWorthChart({
   stressOptions: { key: StressKey; label: string }[];
   stressKey: StressKey | null;
   onStressChange: (key: StressKey | null) => void;
+  /** Switches to the Stress test tab from the chart's own menu. */
+  onOpenStressTab?: () => void;
   stressScenario: StressOverlayData | null;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
@@ -873,7 +895,9 @@ export function NetWorthChart({
                 onChange={onDollarModeChange}
               />
             )}
-            {viewMode === "net_worth" && <StressMenu options={stressOptions} value={stressKey} onChange={onStressChange} />}
+            {viewMode === "net_worth" && (
+              <StressMenu options={stressOptions} value={stressKey} onChange={onStressChange} onOpenTab={onOpenStressTab} />
+            )}
             <button
               type="button"
               onClick={() => setIsFullscreen((v) => !v)}
@@ -905,6 +929,10 @@ export function NetWorthChart({
         <ResponsiveContainer width="100%" height={isFullscreen ? "100%" : 320}>
           <ComposedChart data={data} margin={{ top: chartTopMargin, right: isJoy ? 24 : 8, left: 8, bottom: 4 }}>
             <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
+            {/* Zero is the line that matters -- net worth crossing it, and in
+                "By Account" the divide between what is owned and what is owed.
+                Solid and brighter, so it doesn't read as one more gridline. */}
+            <ReferenceLine y={0} stroke={theme.axis} strokeWidth={1.5} strokeOpacity={0.9} />
             <XAxis dataKey="year" stroke={theme.axis} tick={renderYearTick} height={people.length > 0 ? 34 : 30} />
             <YAxis stroke={theme.axis} tick={{ fontSize: 12 }} tickFormatter={(v) => formatMoney(v)} width={80} />
             <Tooltip

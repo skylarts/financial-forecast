@@ -260,12 +260,12 @@ describe("stress presets", () => {
     expect(applyStress(scenario, "lower_returns").options.returnAdjustment).toBe(-0.02);
     expect(applyStress(scenario, "bear_at_retirement").options.yearReturnOverride).toEqual({ year: 2040, ratePct: -0.3 });
     expect(applyStress(scenario, "higher_inflation").scenario.settings.inflationRatePct).toBeCloseTo(0.01, 6);
-    const cut = applyStress(scenario, "social_security_cut").scenario;
-    expect(cut.incomeSources[0].adjustments?.[0]).toMatchObject({ startDate: "2034-01-01", multiplier: 0.77 });
     const longer = applyStress(scenario, "live_longer").scenario;
     expect(longer.household.people[0].planningEndAge).toBe(100);
     expect(longer.settings.horizonEndDate).toBe("2055-12-31");
-    expect(scenario.incomeSources[0].adjustments).toBeUndefined();
+    // The base plan is never mutated by building a preset from it.
+    expect(scenario.household.people[0].planningEndAge).toBe(95);
+    expect(scenario.settings.inflationRatePct).toBe(0);
   });
 
   it("lower returns end lower than the base plan", () => {

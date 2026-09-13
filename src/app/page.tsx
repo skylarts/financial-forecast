@@ -225,6 +225,7 @@ function HomeContent() {
                 stressOptions={STRESS_PRESETS.map((p) => ({ key: p.key, label: p.label }))}
                 stressKey={stressOverlay}
                 onStressChange={setStressOverlay}
+                onOpenStressTab={() => setView("Stress test")}
                 stressScenario={stressRun ? { label: stressRun.label, description: stressRun.description, years: stressYears } : null}
                 compareScenario={
                   hasCompare

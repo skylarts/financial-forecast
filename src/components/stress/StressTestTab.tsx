@@ -19,7 +19,6 @@ const STRESS_COLORS: Record<StressKey, string> = {
   lower_returns: "#c9a063",
   bear_at_retirement: "#db7a6e",
   higher_inflation: "#9c8cd6",
-  social_security_cut: "#4fa8c9",
   live_longer: "#d98bb0",
   all_at_once: "#e8555a",
 };
@@ -283,14 +282,6 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
             step={0.5}
             onCommit={(n) => set({ inflationDelta: n / 100 })}
           />
-          <NumberField
-            label="Social Security: benefit cut"
-            hint="The share of every benefit lost from the year below on. The trustees project a cut of about a fifth when the trust fund runs out."
-            value={Math.round(params.socialSecurityCut * 100)}
-            unit="%"
-            onCommit={(n) => set({ socialSecurityCut: Math.max(0, Math.min(100, n)) / 100 })}
-          />
-          <NumberField label="Social Security: cut starts in" value={params.socialSecurityCutYear} unit="yr" onCommit={(n) => set({ socialSecurityCutYear: Math.round(n) })} />
           <NumberField
             label="Live longer: extra years"
             hint="Added to everyone's planning end age."
