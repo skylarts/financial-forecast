@@ -406,3 +406,31 @@ table {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Print / save as PDF. The page prints the view that is showing: the header
+   strip, the control bar, overlays and drawers are chrome, not content, and
+   the tables are let out of their scroll boxes so every year prints.
+   --------------------------------------------------------------------------- */
+@media print {
+  header,
+  [role="dialog"],
+  .fixed {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+    color: #111;
+  }
+  main {
+    padding: 0;
+  }
+  .max-h-\[85vh\] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .overflow-auto,
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+}

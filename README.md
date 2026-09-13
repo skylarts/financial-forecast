@@ -5,6 +5,22 @@ Two tools in one Next.js app, sharing sign-in, theme, and UI:
 - **Forecast** (`/`) projects a household's finances year by year: accounts, income, expenses, one-off events, a home purchase, taxes, required minimum distributions, and a drain order for retirement withdrawals. It answers "will this plan hold" and shows where the money flows each year.
 - **Portfolio** (`/portfolio`) tracks the real accounts behind that plan: holdings, tax lots, cash, realized and unrealized gains, dividends, and time-weighted performance against a benchmark. A linked portfolio account can push its live market value into the forecast's starting balance, so the two tools stop drifting apart.
 
+## How the forecast works
+
+**One deterministic simulation.** The engine (`src/engine/forecastScenario.ts`) walks the plan month by month: growth, every income and expense posting, contributions, mortgage payments, required minimum distributions, the surplus split, and the withdrawal cascade that covers a shortfall in Extra Savings, the one mandatory spending account. It runs the whole horizon a few times so each year's withholding is sized at the rate the year's own income implies, then reports the exact federal bill from the 2026 IRS tables indexed forward. Always debug with `projectScenario`; the single-pass `forecastScenario` skips tax when it is given no rate map.
+
+**Every amount is today's dollars.** Inputs are entered in today's money; the engine inflates them from the plan start and the views deflate the results back when "Today's $" is selected. A blank growth rate means "keep pace with inflation", except a pension's, which means no raise.
+
+**What the plan knows about people.** A person's planning-end age is the age they are modelled as living to: their salary stops, a pension continues at its survivor share, the survivor keeps the larger Social Security check, their accounts pass to the survivor for the 59½ and RMD rules, and a married household files single from the next year. Roth conversions (a set amount, or "fill to the top of a bracket" each December), rollovers and loan payoffs are their own events.
+
+**Withdrawal strategy.** A preset (taxable first, tax-deferred first, or a bit of everything) derives the drain order from the accounts, so a new account is never left unreachable; "Custom" reads the hand-built order. A cash buffer target keeps Extra Savings topped up in retirement. One expected return can stand in for every investment account's own rate.
+
+**Healthcare** is modelled by stage when switched on: an employer plan while a salary runs, then a marketplace plan with the premium tax credit computed from the plan's own income each year (federal age curve, current-law or enhanced schedule), COBRA or a retiree plan, then Medicare with Part B, Part D, a supplement and IRMAA from income two years back. The 2026 tables live in one block in `src/engine/healthcare.ts`.
+
+**Stress tests** are the same plan re-run under one bad assumption: lower returns, a bear market in the retirement year, higher inflation, a Social Security cut, a longer life, or all at once, with adjustable severity. They are deterministic, so a row answers "what if" exactly.
+
+**Saving.** The plan autosaves to the browser and, when signed in, to the household's cloud row, under the same four rules as the portfolio (below): a failed pull never pushes, an empty plan never overwrites a full one, and a dated copy is kept before any replacement or delete. The Data menu offers a backup, a restore, the kept copies, a CSV of the projection, a print view, and a Markdown export written for an AI assistant.
+
 ## Running it
 
 ```bash

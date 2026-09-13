@@ -7,6 +7,8 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { buildLlmExport } from "@/lib/llmExport";
 import { BACKUP_SCHEMA_REFERENCE } from "@/lib/backupSchemaReference";
 import { unwrapPlanEnvelope } from "@/lib/planIO";
+import { projectionToCsv } from "@/lib/forecastCsv";
+import { projectScenarioCached } from "@/store/useProjection";
 import { RecoverDialog } from "./RecoverDialog";
 
 // Chromium browsers (Chrome, Edge, Comet, ...) expose this for a native
@@ -99,6 +101,21 @@ export function BackupControls({ restoreRequest }: { restoreRequest?: number } =
     setMenuOpen(false);
   };
 
+  const handleCsvExport = () => {
+    if (!activeScenario) return;
+    const csv = projectionToCsv(projectScenarioCached(activeScenario), activeScenario.household.people);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    downloadTextFile(csv, `forecast-projection-${stamp}.csv`, "text/csv");
+    notify("Projection downloaded as a spreadsheet.", { ttlMs: 5000 });
+    setMenuOpen(false);
+  };
+
+  const handlePrint = () => {
+    setMenuOpen(false);
+    // Let the menu close before the print dialog freezes the page.
+    window.setTimeout(() => window.print(), 50);
+  };
+
   const handleSchemaExport = () => {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     downloadTextFile(BACKUP_SCHEMA_REFERENCE, `forecast-backup-schema-${stamp}.md`, "text/markdown");
@@ -182,6 +199,18 @@ export function BackupControls({ restoreRequest }: { restoreRequest?: number } =
             className={itemClass}
           >
             ↺ Recover a copy…
+          </button>
+          <div className="my-1 border-t border-border" />
+          <button
+            type="button"
+            onClick={handleCsvExport}
+            title="Every year of the current scenario's projection as a CSV: net worth, income, expenses, tax, withdrawals, and each account's balance"
+            className={itemClass}
+          >
+            📊 Export the projection (CSV)
+          </button>
+          <button type="button" onClick={handlePrint} title="Print the current view, or save it as a PDF from the print dialog" className={itemClass}>
+            🖨 Print this view
           </button>
           <div className="my-1 border-t border-border" />
           <button
