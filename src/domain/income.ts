@@ -47,5 +47,18 @@ export const incomeSourceSchema = z.object({
   adjustments: z.array(temporaryAdjustmentSchema).optional(),
   /** Visible and editable, but the engine skips it entirely (no postings). */
   isExcluded: z.boolean().optional(),
+  /**
+   * Social Security / pension only: the age the benefit is claimed at. The
+   * engine reads `startDate` (the owner's birthday at this age); this is
+   * kept so the form can show the age that produced the date.
+   */
+  claimAge: z.number().positive().optional(),
+  /**
+   * Pension only: the share of the benefit that continues to a surviving
+   * household member after the owner's modelled death (0..1). Omitted or 0
+   * = the pension stops at death. Social Security has its own rule: the
+   * survivor keeps whichever of the two benefits is larger.
+   */
+  survivorPct: z.number().min(0).max(1).optional(),
 });
 export type IncomeSource = z.infer<typeof incomeSourceSchema>;

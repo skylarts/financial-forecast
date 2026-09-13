@@ -6,6 +6,10 @@ export const accountClassSchema = z.enum([
   "taxable_investment",
   "tax_deferred",
   "tax_free",
+  /** Health savings account: pre-tax payroll contributions, tax-free withdrawals (assumed spent on medical). */
+  "hsa",
+  /** 529 education plan: after-tax contributions, tax-free withdrawals (assumed spent on education). */
+  "education_529",
   "real_estate",
   "other_asset",
   "credit_card",

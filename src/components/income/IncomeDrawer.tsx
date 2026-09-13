@@ -6,7 +6,7 @@ import type { IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account
 import { incomeSourceSchema } from "@/domain";
 import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, FieldRow, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, inputClass } from "@/components/ui/formFields";
+import { Field, FieldRow, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
@@ -44,6 +44,10 @@ interface FormValues {
   /** Blank until the user picks one -- everything below is hidden until then. */
   category: IncomeCategory | "";
   isExcluded: boolean;
+  /** Social Security / pension: the age the benefit starts (fills the start date). */
+  claimAge: string;
+  /** Pension: percent string, the share that continues to a survivor. */
+  survivorPct: string;
 }
 
 function toFormValues(income?: IncomeSource): FormValues {
@@ -60,6 +64,8 @@ function toFormValues(income?: IncomeSource): FormValues {
     depositAccountId: income?.depositAccountId ?? "",
     category: income?.category ?? "",
     isExcluded: income?.isExcluded ?? false,
+    claimAge: income?.claimAge != null ? String(income.claimAge) : "",
+    survivorPct: income?.survivorPct != null ? fractionToPercentStr(income.survivorPct) : "",
   };
 }
 
@@ -81,9 +87,6 @@ export function IncomeDrawer({
   const removeIncomeSource = usePlanStore((s) => s.removeIncomeSource);
   const [error, setError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(income?.adjustments ?? []);
-  // Not persisted -- there's no claimingAge field on IncomeSource, this is
-  // purely a convenience that fills in Start Date from the owner's birthday.
-  const [claimingAge, setClaimingAge] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(
     !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
   );
@@ -103,7 +106,6 @@ export function IncomeDrawer({
   useEffect(() => {
     reset(toFormValues(income));
     setAdjustments(income?.adjustments ?? []);
-    setClaimingAge("");
     setError(null);
     setAdvancedOpen(
       !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true)
@@ -124,6 +126,8 @@ export function IncomeDrawer({
       setError("Select a category.");
       return;
     }
+    const isBenefit = values.category === "social_security" || values.category === "pension";
+    const growth = percentStrToFraction(values.growthRatePct);
     const candidate = {
       name: values.name.trim(),
       ownerId: values.ownerId || null,
@@ -132,12 +136,18 @@ export function IncomeDrawer({
       frequency: values.frequency,
       startDate: values.startDate,
       endDate: values.frequency === "one_time" ? null : values.endDate || null,
-      growthRatePct: percentStrToFraction(values.growthRatePct),
-      intervalYears: values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
+      // A pension left blank has NO cost-of-living raise (most public and
+      // private pensions have none); every other category's blank means
+      // "keep pace with inflation".
+      growthRatePct: values.category === "pension" && growth === null ? 0 : growth,
+      // A one-time item is one-time: never carry a hidden repeat interval.
+      intervalYears: values.frequency !== "one_time" && values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       depositAccountId: values.depositAccountId === "" ? null : values.depositAccountId,
       category: values.category,
       adjustments,
       isExcluded: values.isExcluded,
+      claimAge: isBenefit && values.claimAge.trim() !== "" ? Number(values.claimAge) : undefined,
+      survivorPct: values.category === "pension" ? percentStrToFraction(values.survivorPct) ?? undefined : undefined,
     };
 
     const result = incomeSourceSchema.omit({ id: true }).safeParse(candidate);
@@ -194,18 +204,26 @@ export function IncomeDrawer({
             <MoneyInput reg={register("grossAmount")} placeholder="e.g. 9,200" />
           </Field>
         )}
-        {category === "social_security" && (
-          <Field label="Claiming Age (optional)" hint="Typing an age fills the date below with the owner's birthday at that age -- adjust the exact date freely afterward.">
-            <input
-              className={inputClass}
-              value={claimingAge}
-              onChange={(e) => {
-                setClaimingAge(e.target.value);
-                syncStartDateFromAge(e.target.value);
-              }}
+        {(category === "social_security" || category === "pension") && (
+          <Field
+            label={category === "social_security" ? "Claiming Age" : "Age the pension starts"}
+            hint="Typing an age fills the start date below with the owner's birthday at that age -- adjust the exact date freely afterward. Enter the benefit amount you would get at this age."
+          >
+            <TextInput
+              reg={register("claimAge", {
+                onChange: (e: React.ChangeEvent<HTMLInputElement>) => syncStartDateFromAge(e.target.value),
+              })}
               type="number"
-              placeholder="e.g. 67"
+              placeholder={category === "social_security" ? "e.g. 67" : "e.g. 52"}
             />
+          </Field>
+        )}
+        {category === "pension" && (
+          <Field
+            label="Survivor benefit"
+            hint="The share of this pension that continues to a surviving household member after the owner's modelled death (the person's planning-end age in Assumptions). 0 or blank = it stops. Social Security needs no entry: the survivor keeps the larger of the two benefits."
+          >
+            <PercentInput reg={register("survivorPct")} placeholder="e.g. 50" />
           </Field>
         )}
         {/* These two are alternatives, not independent settings -- the second
@@ -258,10 +276,15 @@ export function IncomeDrawer({
             hint={
               category === "social_security"
                 ? `Percent per year, e.g. 2.5 for a 2.5% COLA -- actual raises, including inflation. Social Security steps once each January, not continuously. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the benefit flat in today's dollars.`
-                : `Percent per year, e.g. 5 for 5% -- actual raises, including inflation. Blank = matches your inflation assumption (${inflationPctLabel}%); 0 = flat in nominal terms (shrinks in real terms).`
+                : category === "pension"
+                  ? "Cost-of-living raise per year, if the pension has one. Most public and private pensions have none, so blank = 0 (the dollar amount stays the same for life and buys less each year)."
+                  : `Percent per year, e.g. 5 for 5% -- actual raises, including inflation. Blank = matches your inflation assumption (${inflationPctLabel}%); 0 = flat in nominal terms (shrinks in real terms).`
             }
           >
-            <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
+            <PercentInput
+              reg={register("growthRatePct")}
+              placeholder={category === "pension" ? "blank = no COLA (0%)" : `blank = inflation (${inflationPctLabel}%)`}
+            />
           </Field>
         )}
 

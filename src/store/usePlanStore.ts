@@ -299,10 +299,12 @@ export const usePlanStore = create<PlanState>()(
                 return e.downPaymentFromAccountId === id;
               case "sell_home":
                 return e.realEstateAccountId === id || e.proceedsAccountId === id;
-              case "have_a_kid":
-                return e.paymentAccountId === id;
+              case "roth_conversion":
+              case "rollover":
               case "custom_transfer":
                 return e.fromAccountId === id || e.toAccountId === id;
+              case "pay_off_loan":
+                return e.fromAccountId === id || e.loanAccountId === id;
               default:
                 return false;
             }

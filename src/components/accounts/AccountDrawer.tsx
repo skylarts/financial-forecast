@@ -18,6 +18,8 @@ const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
   { value: "taxable_investment", label: "Taxable Investment" },
   { value: "tax_deferred", label: "Tax-deferred (Traditional 401k/IRA)" },
   { value: "tax_free", label: "Tax-free (Roth 401k/IRA)" },
+  { value: "hsa", label: "Health Savings Account (HSA)" },
+  { value: "education_529", label: "Education savings (529)" },
   { value: "other_asset", label: "Other Asset" },
   { value: "credit_card", label: "Credit Card" },
   { value: "loan", label: "Loan" },
@@ -45,7 +47,7 @@ function isEffectivelyTaxable(cls: AccountClass | "", taxTreatment: TaxTreatment
 
 function isEffectivelyTaxFree(cls: AccountClass | "", taxTreatment: TaxTreatment): boolean {
   if (taxTreatment !== "n/a") return taxTreatment === "tax_free";
-  return cls === "tax_free";
+  return cls === "tax_free" || cls === "hsa" || cls === "education_529";
 }
 
 const TAX_TREATMENT_OPTIONS: { value: TaxTreatment; label: string }[] = [
@@ -315,7 +317,12 @@ export function AccountDrawer({
       const last = rows[rows.length - 1];
       // Suggest a funding source: inherit the previous row's, else infer from
       // the account type (tax-deferred accounts are usually payroll-deducted).
-      const funding = last?.funding ?? (selectedTaxTreatment === "tax_deferred" ? "paycheck" : "take_home");
+      // Suggest a funding source from the account's EFFECTIVE treatment: a
+      // traditional 401k/457 and an HSA are paycheck deductions; a Roth IRA,
+      // a 529, or a brokerage is funded from take-home.
+      const funding =
+        last?.funding ??
+        (isEffectivelyTaxDeferred(selectedClass, selectedTaxTreatment) || selectedClass === "hsa" ? "paycheck" : "take_home");
       return [
         ...rows,
         { key: nanoid(), startDate: "", amount: "", frequency: last?.frequency ?? "monthly", growthRatePct: "", funding, endDate: "" },
@@ -649,6 +656,18 @@ export function AccountDrawer({
           >
             <MoneyInput reg={register("startingCostBasis")} placeholder="blank = whole balance" />
           </Field>
+        )}
+        {selectedClass === "hsa" && (
+          <p className="text-xs text-dim">
+            Contributions are treated as paycheck deductions and withdrawals as tax-free (spent on medical costs). Add
+            a Healthcare expense for the costs it pays.
+          </p>
+        )}
+        {selectedClass === "education_529" && (
+          <p className="text-xs text-dim">
+            Withdrawals are treated as tax-free (spent on education). Point the tuition expense at this account so it
+            is paid from here.
+          </p>
         )}
         {showRmdCheckbox && (
           <>

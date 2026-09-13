@@ -33,7 +33,9 @@ import { rmdDivisor, rmdStartAgeForBirthYear } from "./rmd";
 import { computeMonthlyPayment, amortizeMonth } from "./amortization";
 import { resolveEvents } from "./resolveEvents";
 import { resolvePrimarySpendingAccountId } from "./moneyFlow";
+import { effectiveOwnerOn, filingStatusForYear } from "./household";
 import type { EngineAccount, MortgageSpec, Posting } from "./types";
+import type { TaxBracket } from "./taxTables";
 import {
   bracketsForYear,
   marginalRate,
@@ -350,10 +352,18 @@ function effectiveTaxTreatment(account: EngineAccount): "taxable" | "tax_deferre
     case "tax_deferred":
       return "tax_deferred";
     case "tax_free":
+    case "hsa":
+    case "education_529":
       return "tax_free";
     default:
       return "n/a";
   }
+}
+
+/** The top of the bracket taxed at `rate` (the taxable income where the next bracket begins), or null for the top bracket. */
+function bracketTopFor(brackets: TaxBracket[], rate: number): number | null {
+  const b = brackets.find((x) => Math.abs(x.rate - rate) < 1e-9);
+  return b ? b.upTo : null;
 }
 
 /**
@@ -528,13 +538,12 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     if (!otherActivityAccountId.has(id)) otherActivityAccountId.set(id, counterpartyId);
   };
 
-  const personById = new Map(scenario.household.people.map((p) => [p.id, p]));
   const EARLY_WITHDRAWAL_PENALTY_RATE = 0.1;
-  /** 10% penalty applies to a tax-deferred withdrawal when the owner is under 59½ and the account isn't flagged exempt (72(t) / rule of 55). */
+  /** 10% penalty applies to a tax-deferred withdrawal when the owner is under 59½ and the account isn't flagged exempt (72(t) / rule of 55). After the owner's modelled death the account passes to the survivor, whose age applies. */
   const earlyWithdrawalPenaltyRate = (account: EngineAccount): number => {
     if (account.noEarlyWithdrawalPenalty) return 0;
     if (effectiveTaxTreatment(account) !== "tax_deferred") return 0;
-    const owner = account.ownerId ? personById.get(account.ownerId) : undefined;
+    const owner = effectiveOwnerOn(scenario.household.people, account.ownerId, currentMonth);
     if (!owner) return 0; // jointly-held/unowned: no age to test against
     return elapsedYears(owner.birthDate, currentMonth) < 59.5 ? EARLY_WITHDRAWAL_PENALTY_RATE : 0;
   };
@@ -1081,7 +1090,33 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
 
     // 2. Scheduled cashflows for this month. (resolveEvents already omits
     //    postings targeting an excluded account; this check is a cheap backstop.)
-    for (const rawPosting of postingsByMonth.get(yearMonth) ?? []) {
+    //    A "whole balance" transfer (roll the whole 401k over, pay off what is
+    //    left on the loan) is sized here, now that this month's balances are
+    //    known, and expanded into its two concrete legs.
+    const monthPostings: Posting[] = [];
+    for (const p of postingsByMonth.get(yearMonth) ?? []) {
+      if (!p.wholeBalance || !p.counterpartyAccountId) {
+        monthPostings.push(p);
+        continue;
+      }
+      const source = accountById.get(p.accountId);
+      const dest = accountById.get(p.counterpartyAccountId);
+      if (!source || !dest) continue;
+      let size = Math.max(0, balances.get(source.id) ?? 0);
+      if (p.transferKind === "payoff") size = Math.min(size, Math.max(0, balances.get(dest.id) ?? 0));
+      if (p.transferKind !== "rollover") size = affordableOutflow(source, size);
+      if (size <= 0.005) continue;
+      monthPostings.push({ ...p, amount: -size, wholeBalance: false });
+      monthPostings.push({
+        ...p,
+        accountId: dest.id,
+        counterpartyAccountId: source.id,
+        amount: size,
+        sourceId: p.sourceId.replace(/:from$/, ":to"),
+        wholeBalance: false,
+      });
+    }
+    for (const rawPosting of monthPostings) {
       // A posting aimed at an account that no longer exists (possible only in
       // a hand-edited file that dodged the loader's repair) is charged to the
       // hub and said out loud, rather than debited into a phantom balance.
@@ -1152,7 +1187,14 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // an over-sized withdrawal rate empties the account to exactly $0
         // instead of driving it negative; the rest is charged to the hub and
         // picked up by the drain order below.
-        outflowApplied = affordableOutflow(targetAccount, -posting.amount);
+        // A rollover or Roth conversion realizes no tax at the source (the
+        // conversion's tax is settled separately), so it takes the balance
+        // as-is rather than the tax-grossed-up share a sale would leave.
+        const untaxedLeg =
+          posting.category === "transfer" && (posting.transferKind === "rollover" || posting.transferKind === "conversion");
+        outflowApplied = untaxedLeg
+          ? Math.min(-posting.amount, Math.max(0, balances.get(posting.accountId) ?? 0))
+          : affordableOutflow(targetAccount, -posting.amount);
         balances.set(posting.accountId, (balances.get(posting.accountId) ?? 0) - outflowApplied);
         if (bucket) bucket.withdrawals += outflowApplied;
         const unmet = -posting.amount - outflowApplied;
@@ -1293,11 +1335,20 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         acc.rothConversions += converted;
         const rates = ratesForYear(currentYear);
         const tax = converted * rates.ordinaryWithholdingRate;
-        if (tax > 0.005 && primarySpendingAccountId) {
-          balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) - tax);
-          acc.rollforward.get(primarySpendingAccountId)!.withdrawals += tax;
-          acc.taxesPaid += tax;
-          if (hubIds.has(primarySpendingAccountId)) acc.incomeWithheldFromHub += tax;
+        if (tax > 0.005) {
+          if (posting.taxSource === "withhold" && posting.counterpartyAccountId) {
+            // Withheld from the conversion itself: less lands in the Roth.
+            const destId = posting.counterpartyAccountId;
+            balances.set(destId, (balances.get(destId) ?? 0) - tax);
+            const destBucket = acc.rollforward.get(destId);
+            if (destBucket) destBucket.withdrawals += tax;
+            acc.taxesPaid += tax;
+          } else if (primarySpendingAccountId) {
+            balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) - tax);
+            acc.rollforward.get(primarySpendingAccountId)!.withdrawals += tax;
+            acc.taxesPaid += tax;
+            if (hubIds.has(primarySpendingAccountId)) acc.incomeWithheldFromHub += tax;
+          }
         }
         ledger.push({
           date: posting.date,
@@ -1415,7 +1466,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         // a "401k") while carrying taxTreatment="tax_free".
         if (effectiveTaxTreatment(account) === "tax_free") continue;
         if (!hasReachedStartMonth(month, account.effectiveStartDate)) continue;
-        const owner = scenario.household.people.find((p) => p.id === account.ownerId);
+        const owner = effectiveOwnerOn(scenario.household.people, account.ownerId, month);
         if (!owner) continue;
         const age = ageOn(owner.birthDate, endOfYear(year));
         if (age < rmdStartAgeForBirthYear(yearOf(owner.birthDate))) continue;
@@ -1657,6 +1708,87 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
     // full year's exact tax bill exactly once between them.
     let exactTax = NO_EXACT_TAX;
     if (isLastMonthOfYear) {
+      // A married household reduced to one member files single from the
+      // following year (see household.ts).
+      const filingStatus = filingStatusForYear(scenario.household.people, settings.filingStatus, currentYear);
+      const { ordinary: ordinaryBrackets, ltcg: ltcgBrackets } = bracketsForYear(
+        currentYear,
+        filingStatus,
+        settings.inflationRatePct
+      );
+
+      // "Fill to the top of a bracket" Roth conversions run now, when the
+      // year's other ordinary income is known: convert just enough to bring
+      // ordinary taxable income up to that bracket's top.
+      for (const rule of resolved.bracketFills) {
+        if (month.slice(0, 7) < rule.startDate.slice(0, 7)) continue;
+        if (rule.endDate && month.slice(0, 7) > rule.endDate.slice(0, 7)) continue;
+        if (rule.oneTime && yearOf(rule.startDate) !== currentYear) continue;
+        const source = accountById.get(rule.fromAccountId);
+        const dest = accountById.get(rule.toAccountId);
+        if (!source || !dest || source.isExcluded || dest.isExcluded) continue;
+        const top = bracketTopFor(ordinaryBrackets, rule.bracketRate);
+        if (top == null) continue;
+        const soFar = withdrawalItems(acc)
+          .filter((w) => w.taxTreatment === "tax_deferred")
+          .reduce((s, w) => s + w.gross, 0);
+        const ssSoFar = taxableSocialSecurity(
+          acc.grossSocialSecurity,
+          soFar + acc.rothConversions + acc.grossPension + acc.grossSalary + acc.capitalGainsRealized,
+          filingStatus
+        );
+        const grossSoFar = soFar + acc.rothConversions + acc.grossPension + ssSoFar + acc.grossSalary;
+        const deduction = standardDeductionForYear(
+          scenario.household.people,
+          filingStatus,
+          currentYear,
+          settings.inflationRatePct,
+          grossSoFar + acc.capitalGainsRealized
+        );
+        // Room is measured against taxable income, which may be negative
+        // when the deduction is not yet used up: that unused deduction is
+        // room too. Adding the conversion can also pull more Social Security
+        // into taxable income, so refine once with the conversion included.
+        let room = Math.max(0, top - (grossSoFar - deduction));
+        if (acc.grossSocialSecurity > 0 && room > 0) {
+          const ssWith = taxableSocialSecurity(
+            acc.grossSocialSecurity,
+            soFar + acc.rothConversions + room + acc.grossPension + acc.grossSalary + acc.capitalGainsRealized,
+            filingStatus
+          );
+          room = Math.max(0, room - (ssWith - ssSoFar));
+        }
+        const available = Math.max(0, balances.get(source.id) ?? 0);
+        const converted = Math.min(room, available);
+        if (converted <= 0.005) continue;
+        balances.set(source.id, (balances.get(source.id) ?? 0) - converted);
+        balances.set(dest.id, (balances.get(dest.id) ?? 0) + converted);
+        acc.rollforward.get(source.id)!.withdrawals += converted;
+        acc.rollforward.get(dest.id)!.deposits += converted;
+        acc.rothConversions += converted;
+        const fillTax = converted * ratesForYear(currentYear).ordinaryWithholdingRate;
+        if (fillTax > 0.005) {
+          if (rule.taxSource === "withhold") {
+            balances.set(dest.id, (balances.get(dest.id) ?? 0) - fillTax);
+            acc.rollforward.get(dest.id)!.withdrawals += fillTax;
+            acc.taxesPaid += fillTax;
+          } else if (primarySpendingAccountId) {
+            balances.set(primarySpendingAccountId, (balances.get(primarySpendingAccountId) ?? 0) - fillTax);
+            acc.rollforward.get(primarySpendingAccountId)!.withdrawals += fillTax;
+            acc.taxesPaid += fillTax;
+            if (hubIds.has(primarySpendingAccountId)) acc.incomeWithheldFromHub += fillTax;
+          }
+        }
+        ledger.push({
+          date: month,
+          kind: "roth_conversion",
+          accountId: source.id,
+          toAccountId: dest.id,
+          amount: converted,
+          note: `${rule.label}: converted up to the top of the ${Math.round(rule.bracketRate * 100)}% bracket`,
+        });
+      }
+
       // NOTE ON ORDER: the exact federal bill is computed FIRST, then the
       // withholding-vs-exact true-up is posted to the hub and a refund routed
       // through the split order, and only then are rollforwards, net worth,
@@ -1680,7 +1812,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       const taxableSocialSecurityAmount = taxableSocialSecurity(
         acc.grossSocialSecurity,
         grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + grossSalary + acc.capitalGainsRealized,
-        settings.filingStatus
+        filingStatus
       );
       // Denominator for the component split below -- deliberately excludes
       // salary, since federalOrdinaryTax (computed further down) is already
@@ -1690,7 +1822,7 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
         grossOrdinaryWithdrawals + acc.rothConversions + acc.grossPension + taxableSocialSecurityAmount;
       const standardDeduction = standardDeductionForYear(
         scenario.household.people,
-        settings.filingStatus,
+        filingStatus,
         currentYear,
         settings.inflationRatePct,
         grossOrdinaryIncome + grossSalary + acc.capitalGainsRealized
@@ -1707,11 +1839,6 @@ export function forecastScenario(scenario: Scenario, ratesByYearOverride?: Map<n
       // again by this engine; only the INCREMENT due to withdrawals/pension/
       // SS/capital-gains is.
       const salaryTaxableIncome = Math.max(0, grossSalary - standardDeduction);
-      const { ordinary: ordinaryBrackets, ltcg: ltcgBrackets } = bracketsForYear(
-        currentYear,
-        settings.filingStatus,
-        settings.inflationRatePct
-      );
       const federalOrdinaryTax =
         progressiveTax(ordinaryTaxableIncome, ordinaryBrackets) - progressiveTax(salaryTaxableIncome, ordinaryBrackets);
       const { tax: federalLtcgTax } = stackedLtcgTax(ordinaryTaxableIncome, acc.capitalGainsRealized, ltcgBrackets);
@@ -1936,7 +2063,8 @@ export function projectScenario(scenario: Scenario): ProjectionResult {
 
     for (const snapshot of result.years) {
       const prev = ratesByYear.get(snapshot.year) ?? SEED_TAX_RATES;
-      const { ordinary, ltcg } = bracketsForYear(snapshot.year, settings.filingStatus, settings.inflationRatePct);
+      const status = filingStatusForYear(scenario.household.people, settings.filingStatus, snapshot.year);
+      const { ordinary, ltcg } = bracketsForYear(snapshot.year, status, settings.inflationRatePct);
       const nextOrdinary = marginalRate(snapshot.cashFlow.ordinaryTaxableIncome, ordinary);
       const { marginalRate: nextLtcg } = stackedLtcgTax(
         snapshot.cashFlow.ordinaryTaxableIncome,

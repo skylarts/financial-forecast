@@ -63,7 +63,7 @@ Every scenario must contain exactly one account with \`"isExtraSavings": true\` 
       "name": string,               // non-empty
       "birthDate": "YYYY-MM-DD",
       "retirementAge": integer > 0,
-      "planningEndAge": integer > 0  // sets how far the plan projects for this person
+      "planningEndAge": integer > 0  // the age this person is modelled as living to: sets the plan horizon and drives the survivor rules (income stops, pension survivor share, Social Security survivor keeps the larger benefit, married household files single from the next year)
     },
     ...                              // at least 1 person
   ]
@@ -104,7 +104,7 @@ Every scenario must contain exactly one account with \`"isExtraSavings": true\` 
 }
 \`\`\`
 
-**AccountClass enum** (exactly one of): \`"cash"\`, \`"taxable_investment"\`, \`"tax_deferred"\`, \`"tax_free"\`, \`"real_estate"\`, \`"other_asset"\`, \`"credit_card"\`, \`"loan"\`, \`"mortgage"\`.
+**AccountClass enum** (exactly one of): \`"cash"\`, \`"taxable_investment"\`, \`"tax_deferred"\`, \`"tax_free"\`, \`"hsa"\`, \`"education_529"\`, \`"real_estate"\`, \`"other_asset"\`, \`"credit_card"\`, \`"loan"\`, \`"mortgage"\`. An \`hsa\` is paycheck-funded with tax-free withdrawals; an \`education_529\` has tax-free withdrawals.
 
 **category must match class:**
 - \`"credit_card"\`, \`"loan"\`, \`"mortgage"\` → \`"category": "liability"\`
@@ -157,9 +157,13 @@ Every scenario must contain exactly one account with \`"isExtraSavings": true\` 
   "depositAccountId": string | null, // null = deposits automatically to Extra Savings
   "category": IncomeCategory,        // see enum below
   "adjustments": [ TemporaryAdjustment, ... ],  // optional
-  "isExcluded": boolean              // optional
+  "isExcluded": boolean,             // optional
+  "claimAge": number > 0,            // optional; social_security/pension only — the age the benefit starts (informational; startDate is what the engine reads)
+  "survivorPct": number, 0..1        // optional; pension only — share that continues to a surviving household member after the owner's planningEndAge; omitted/0 = stops
 }
 \`\`\`
+
+A pension's \`growthRatePct\` of \`null\` means **0** (no cost-of-living raise), unlike every other category where null tracks inflation.
 
 **IncomeCategory enum:** \`"salary"\`, \`"social_security"\`, \`"pension"\`, \`"rental"\`, \`"other"\`.
 
@@ -212,7 +216,7 @@ Every event shares these base fields, plus a \`"type\"\`-specific set below:
   "endDate": "YYYY-MM-DD" | null,   // optional; for temporary effects — omitted/null = permanent
   "notes": string,                  // optional
   "isExcluded": boolean,            // optional
-  "type": EventType                 // one of the five below — determines which extra fields apply
+  "type": EventType                 // one of the seven below — determines which extra fields apply
 }
 \`\`\`
 
@@ -259,17 +263,45 @@ Every event shares these base fields, plus a \`"type\"\`-specific set below:
 \`\`\`
 Selling zeroes out both that home's asset balance and its linked mortgage balance on this date.
 
-**type: "have_a_kid"**
+**type: "roth_conversion"**
 \`\`\`
 {
   ...base,
-  "type": "have_a_kid",
-  "childcareMonthlyExpense": number >= 0,
-  "childcareEndDate": "YYYY-MM-DD" | null,   // required key, nullable value
-  "additionalOneTimeCost": number >= 0,      // optional; e.g. a one-time hospital/adoption cost
-  "paymentAccountId": string                 // required — which account childcare/one-time costs draw from
+  "type": "roth_conversion",
+  "fromAccountId": string,                   // a tax-deferred account
+  "toAccountId": string,                     // a tax-free (Roth) account; must differ
+  "amount": number > 0 | null,               // today's dollars per occurrence; null when fillToBracketRate is set
+  "fillToBracketRate": number | null,        // e.g. 0.12 = each December convert just enough to fill ordinary taxable income to the top of the 12% bracket; null = use amount
+  "frequency": "annual" | "one_time",        // default "annual"
+  "taxSource": "cash" | "withhold",          // default "cash": tax paid from Extra Savings; "withhold": taken out of the conversion
+  "growthRatePct": number | null,            // optional; the fixed amount's yearly growth; null = inflation
+  "endDate": "YYYY-MM-DD" | null             // optional; last year for an annual conversion
 }
 \`\`\`
+Ordinary income in the year it happens, never the 10% penalty.
+
+**type: "pay_off_loan"**
+\`\`\`
+{
+  ...base,
+  "type": "pay_off_loan",
+  "loanAccountId": string,                   // a credit_card / loan / mortgage account
+  "fromAccountId": string,                   // the asset account that pays; must differ
+  "amount": number > 0 | null                // today's dollars; null = pay off whatever is left on that date
+}
+\`\`\`
+
+**type: "rollover"**
+\`\`\`
+{
+  ...base,
+  "type": "rollover",
+  "fromAccountId": string,                   // a tax-deferred account
+  "toAccountId": string,                     // another tax-deferred account; must differ
+  "amount": number > 0 | null                // today's dollars; null = the whole balance on that date
+}
+\`\`\`
+Not a taxable event.
 
 **type: "custom_transfer"**
 \`\`\`
@@ -284,7 +316,7 @@ Selling zeroes out both that home's asset balance and its linked mortgage balanc
   "intervalYears": integer > 0               // optional; repeat every N years, overrides frequency
 }
 \`\`\`
-Use this for anything that moves money between two of the household's own accounts on a schedule — a Roth conversion ladder (traditional → Roth), a planned annual transfer to a 529, etc. It is NOT for money entering/leaving the household (that's an income source or expense).
+Use this for other moves between two of the household's own accounts on a schedule (e.g. a planned annual transfer to a 529 from a brokerage). Use \`roth_conversion\`, \`rollover\`, and \`pay_off_loan\` for those cases. It is NOT for money entering/leaving the household (that's an income source or expense). Money leaving a taxable or tax-deferred account this way is taxed as a sale or distribution.
 
 ## Settings
 

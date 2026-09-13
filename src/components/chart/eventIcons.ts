@@ -4,7 +4,9 @@ export const EVENT_TYPE_ICONS: Record<EventType, string> = {
   retire: "🏖️",
   buy_home: "🏠",
   sell_home: "🏷️",
-  have_a_kid: "👶",
+  roth_conversion: "🔄",
+  pay_off_loan: "✅",
+  rollover: "📦",
   custom_transfer: "🔁",
 };
 

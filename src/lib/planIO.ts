@@ -1,6 +1,7 @@
 import { planSchema, scenarioSchema, type Plan, type Scenario, type ScenarioEvent } from "@/domain";
 import { looksLikeV2Plan, migrateV2PlanToV3 } from "@/lib/migrateV2Plan";
 import { migrateLegacyBuyHomeEvents } from "@/lib/migrateLegacyBuyHome";
+import { migrateV4Plan, needsV4Migration } from "@/lib/migrateV4Plan";
 
 /**
  * The one way a plan enters the app.
@@ -17,7 +18,7 @@ import { migrateLegacyBuyHomeEvents } from "@/lib/migrateLegacyBuyHome";
  */
 
 /** Bumped whenever the persisted shape changes in a way a migration handles. */
-export const PLAN_SCHEMA_VERSION = 4;
+export const PLAN_SCHEMA_VERSION = 5;
 
 export interface NormalizeOk {
   ok: true;
@@ -134,15 +135,17 @@ export function repairReferences(scenario: Scenario): { scenario: Scenario; repa
           return [{ ...e, proceedsAccountId: null }];
         }
         return [e];
-      case "have_a_kid":
-        if (!accountIds.has(e.paymentAccountId)) {
-          repairs.push(`${e.name}: its payment account no longer exists, so the event was removed.`);
-          return [];
-        }
-        return [e];
+      case "roth_conversion":
+      case "rollover":
       case "custom_transfer":
         if (!accountIds.has(e.fromAccountId) || !accountIds.has(e.toAccountId)) {
           repairs.push(`${e.name}: an account it moves money between no longer exists, so the event was removed.`);
+          return [];
+        }
+        return [e];
+      case "pay_off_loan":
+        if (!accountIds.has(e.fromAccountId) || !accountIds.has(e.loanAccountId)) {
+          repairs.push(`${e.name}: the loan or the paying account no longer exists, so the event was removed.`);
           return [];
         }
         return [e];
@@ -195,9 +198,12 @@ export function normalizePlan(raw: unknown): NormalizeResult {
   if (!isRecord(unwrapped)) {
     return { ok: false, error: "That is not a Forecast plan: expected a JSON object with scenarios." };
   }
-  const migrated = looksLikeV2Plan(unwrapped);
-  const v3 = migrated ? migrateV2PlanToV3(unwrapped) : unwrapped;
-  const candidate = migrateLegacyBuyHomeEvents(v3);
+  const wasV2 = looksLikeV2Plan(unwrapped);
+  const v3 = wasV2 ? migrateV2PlanToV3(unwrapped) : unwrapped;
+  const withHomes = migrateLegacyBuyHomeEvents(v3);
+  const wasV4 = needsV4Migration(withHomes);
+  const candidate = wasV4 ? migrateV4Plan(withHomes) : withHomes;
+  const migrated = wasV2 || wasV4;
   const result = planSchema.safeParse(candidate);
   if (!result.success) {
     const issue = result.error.issues[0];

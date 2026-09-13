@@ -5,6 +5,8 @@ export const accountClassLabels: Record<AccountClass, string> = {
   taxable_investment: "Taxable Investments",
   tax_deferred: "Tax-deferred Investments",
   tax_free: "Tax-free Investments",
+  hsa: "Health Savings (HSA)",
+  education_529: "Education (529)",
   real_estate: "Real Estate",
   other_asset: "Other Assets",
   credit_card: "Credit Cards",
@@ -17,6 +19,8 @@ export const ASSET_CLASS_ORDER: AccountClass[] = [
   "taxable_investment",
   "tax_deferred",
   "tax_free",
+  "hsa",
+  "education_529",
   "real_estate",
   "other_asset",
 ];
