@@ -87,15 +87,27 @@ export function MoneyFlowEditor({ accounts, settings, ledger = [] }: { accounts:
   const presetOrder = strategy === "custom" ? [] : accountsInStrategyOrder(strategy, accounts);
   const neverDrawn = accounts.filter((a) => a.category === "asset" && !a.isExtraSavings && !a.isExcluded && drainTierOf(a) === null);
   const unreachable = strategy === "custom" ? unreachableAccounts(moneyFlow.drainOrder, accounts) : [];
+  // A custom order that was built earlier stays in the plan while a preset is
+  // selected (the engine ignores it), so picking Custom again brings back every
+  // stop exactly as it was -- order, share, limits and date windows included.
+  const savedCustomOrder = strategy === "custom" ? [] : moneyFlow.drainOrder;
   const chooseStrategy = (next: WithdrawalStrategy) => {
     if (next === strategy) return;
     if (next === "custom") {
-      // Start the editor from the order the current preset was using.
-      const seed = strategy === "custom" ? moneyFlow.drainOrder : materializeDrainOrder(strategy, accounts);
+      // Reuse the saved custom order when there is one; otherwise start the
+      // editor from the order the current preset was using.
+      const seed =
+        moneyFlow.drainOrder.length > 0 || strategy === "custom" ? moneyFlow.drainOrder : materializeDrainOrder(strategy, accounts);
       saveSettings({ withdrawalStrategy: "custom", moneyFlow: { ...moneyFlow, drainOrder: seed } });
       return;
     }
     saveSettings({ withdrawalStrategy: next });
+  };
+  // Throw the saved custom order away and re-seed it from the preset on screen.
+  const restartCustomFromPreset = () => {
+    if (strategy === "custom") return;
+    if (moneyFlow.drainOrder.length > 0 && !window.confirm("Replace your saved custom order -- stops, limits and date windows -- with this preset's order?")) return;
+    saveSettings({ withdrawalStrategy: "custom", moneyFlow: { ...moneyFlow, drainOrder: materializeDrainOrder(strategy, accounts) } });
   };
 
   // --- Extra Savings split (surplus routing) ---
@@ -317,15 +329,25 @@ export function MoneyFlowEditor({ accounts, settings, ledger = [] }: { accounts:
                 Never drawn: {neverDrawn.map((a) => a.name).join(", ")}. Homes, other assets, HSAs and 529s are left for their own purpose; use Custom to include one.
               </p>
             )}
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => chooseStrategy("custom")}
                 className="rounded-md border border-border px-2.5 py-1 text-xs text-dim hover:border-accent hover:text-foreground"
               >
-                Customize this order
+                {savedCustomOrder.length > 0 ? "Back to my custom order" : "Customize this order"}
               </button>
+              {savedCustomOrder.length > 0 && (
+                <button type="button" onClick={restartCustomFromPreset} className="text-xs text-dim-2 underline hover:text-foreground">
+                  or start a new one from this order
+                </button>
+              )}
             </div>
+            {savedCustomOrder.length > 0 && (
+              <p className="text-dim-2">
+                Your custom order is kept: {savedCustomOrder.map((s) => accountName(s.accountId)).join(" → ")}.
+              </p>
+            )}
           </div>
         ) : (
           <>
