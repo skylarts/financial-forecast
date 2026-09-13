@@ -5,10 +5,26 @@ import { useForm } from "react-hook-form";
 import type { ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { expenseBaselineSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, FieldRow, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import {
+  AdvancedDisclosure,
+  DrawerFooter,
+  ErrorBanner,
+  Field,
+  FieldNote,
+  FieldRow,
+  FREQUENCY_OPTIONS,
+  MoneyInput,
+  PercentInput,
+  SelectInput,
+  CheckboxInput,
+  TextInput,
+  implausibleRateMessage,
+  missingFieldMessage,
+} from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
+import { accountOptions } from "@/lib/people";
 import { usePlanStore } from "@/store/usePlanStore";
-import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
+import { AdjustmentsEditor, adjustmentsIssue } from "@/components/ui/AdjustmentsEditor";
 
 const CATEGORY_OPTIONS: { value: ExpenseCategory; label: string }[] = [
   { value: "housing", label: "Housing" },
@@ -20,13 +36,7 @@ const CATEGORY_OPTIONS: { value: ExpenseCategory; label: string }[] = [
   { value: "other", label: "Other" },
 ];
 
-const FREQUENCIES: { value: RecurrenceFrequency; label: string }[] = [
-  { value: "monthly", label: "Monthly" },
-  { value: "biweekly", label: "Biweekly" },
-  { value: "weekly", label: "Weekly" },
-  { value: "annual", label: "Annual" },
-  { value: "one_time", label: "One time" },
-];
+const REQUIRED_LABELS = { name: "a name", amount: "an amount", startDate: "a start date" };
 
 interface FormValues {
   name: string;
@@ -73,29 +83,38 @@ export function ExpenseDrawer({
   const addExpense = usePlanStore((s) => s.addExpense);
   const updateExpense = usePlanStore((s) => s.updateExpense);
   const removeExpense = usePlanStore((s) => s.removeExpense);
+  const people = usePlanStore((s) => s.activeScenario().household.people);
+  const healthcareModelOn = usePlanStore((s) => s.activeScenario().settings.healthcare.enabled);
   const [error, setError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(expense?.adjustments ?? []);
+  const [adjustmentsKey, setAdjustmentsKey] = useState(() => JSON.stringify(expense?.adjustments ?? []));
   const [advancedOpen, setAdvancedOpen] = useState(
     !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
   );
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
-  const { register, handleSubmit, watch, reset } = useForm<FormValues>({
+  const {
+    register,
+    handleSubmit,
+    watch,
+    reset,
+    formState: { isDirty },
+  } = useForm<FormValues>({
     defaultValues: toFormValues(expense),
   });
   const category = watch("category");
   const isOneTime = watch("frequency") === "one_time";
+  const dirty = isDirty || JSON.stringify(adjustments) !== adjustmentsKey;
 
   // Re-sync the form whenever the drawer opens on a different expense --
   // without this, a reused drawer instance shows the previous item's values.
   useEffect(() => {
     reset(toFormValues(expense));
     setAdjustments(expense?.adjustments ?? []);
+    setAdjustmentsKey(JSON.stringify(expense?.adjustments ?? []));
     setError(null);
-    setAdvancedOpen(
-      !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
-    );
+    setAdvancedOpen(!!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true));
   }, [expense, open, reset]);
 
   const onSubmit = (values: FormValues) => {
@@ -103,13 +122,30 @@ export function ExpenseDrawer({
       setError("Select a category.");
       return;
     }
+    const growth = percentStrToFraction(values.growthRatePct);
+    const rateIssue = implausibleRateMessage("The growth rate", growth);
+    if (rateIssue) {
+      setError(rateIssue);
+      return;
+    }
+    const amount = moneyStrToNumber(values.amount) ?? 0;
+    if (amount <= 0) {
+      setError("The amount needs to be more than zero.");
+      return;
+    }
+    const adjIssue = adjustmentsIssue(adjustments);
+    if (adjIssue) {
+      setError(adjIssue);
+      setAdvancedOpen(true);
+      return;
+    }
     const candidate = {
       name: values.name.trim(),
-      amount: moneyStrToNumber(values.amount) ?? 0,
+      amount,
       frequency: values.frequency,
       startDate: values.startDate,
       endDate: values.frequency === "one_time" ? null : values.endDate || null,
-      growthRatePct: percentStrToFraction(values.growthRatePct),
+      growthRatePct: growth,
       // A one-time item is one-time: never carry a hidden repeat interval.
       intervalYears: values.frequency !== "one_time" && values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
       paymentAccountId: values.paymentAccountId === "" ? null : values.paymentAccountId,
@@ -129,9 +165,11 @@ export function ExpenseDrawer({
     onClose();
   };
 
+  const onInvalid = (errors: Record<string, unknown>) => setError(missingFieldMessage(errors, REQUIRED_LABELS));
+
   return (
-    <Drawer open={open} onClose={onClose} title={expense ? "Edit Expense" : "Add Expense"}>
-      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3">
+    <Drawer open={open} onClose={onClose} title={expense ? "Edit Expense" : "Add Expense"} dirty={dirty}>
+      <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-3">
         <ErrorBanner message={error} />
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Rent" />
@@ -141,118 +179,95 @@ export function ExpenseDrawer({
             reg={register("category")}
             options={expense ? CATEGORY_OPTIONS : [{ value: "", label: "Select a category..." }, ...CATEGORY_OPTIONS]}
           />
+          {category === "healthcare" && healthcareModelOn && (
+            <FieldNote>
+              The healthcare model (Assumptions) already charges premiums, Medicare and out-of-pocket costs. Enter here only what it does not cover.
+            </FieldNote>
+          )}
         </Field>
         {category !== "" && (
-        <>
-        <Field label="Amount" hint="Per occurrence, today's dollars.">
-          <MoneyInput reg={register("amount", { required: true })} placeholder="e.g. 6,500" />
-        </Field>
-        {/* Alternatives, not independent settings -- the second overrides the
-            first -- so "Or" sits beside what it is an alternative to. */}
-        {isOneTime ? (
-          <Field label="Frequency">
-            <SelectInput reg={register("frequency")} options={FREQUENCIES} />
-          </Field>
-        ) : (
-          <FieldRow>
-            <Field label="Frequency">
-              <SelectInput reg={register("frequency")} options={FREQUENCIES} />
+          <>
+            <Field label="Amount" hint="Per occurrence, today's dollars.">
+              <MoneyInput reg={register("amount", { required: true })} placeholder="e.g. 6,500" />
             </Field>
-            <Field
-              label="Or every N years"
-              hint="Optional. For a repeat purchase like a car every few years. Overrides the Frequency."
-            >
-              <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
-            </Field>
-          </FieldRow>
-        )}
-        {isOneTime ? (
-          <Field label="Date">
-            <TextInput reg={register("startDate", { required: true })} type="date" />
-          </Field>
-        ) : (
-          <FieldRow>
-            <Field label="Start Date">
-              <TextInput reg={register("startDate", { required: true })} type="date" />
-            </Field>
-            <Field label="End Date" hint="Optional -- leave blank to continue indefinitely.">
-              <TextInput reg={register("endDate")} type="date" />
-            </Field>
-          </FieldRow>
-        )}
-        <Field label="Payment Account">
-          <SelectInput
-            reg={register("paymentAccountId")}
-            options={[
-              { value: "", label: "Extra Savings (Default)" },
-              // Paying an expense FROM a loan is borrowing, and from a home
-              // is meaningless: only spendable asset accounts are offered.
-              ...accounts
-                .filter((a) => !a.isExtraSavings && a.category === "asset" && a.class !== "real_estate")
-                .map((a) => ({ value: a.id, label: a.name })),
-            ]}
-          />
-        </Field>
-        {!isOneTime && (
-          <Field
-            label="Annual Growth Rate"
-            hint={`Percent per year, e.g. 3 for 3%. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the expense flat in today's dollars -- the right default for most living expenses. 0 = flat in nominal terms (quietly shrinks in real terms over decades).`}
-          >
-            <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
-          </Field>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-dim hover:text-foreground"
-        >
-          <span className="inline-block w-3">{advancedOpen ? "▾" : "▸"}</span>
-          Advanced
-        </button>
-
-        {advancedOpen && (
-          <div className="flex flex-col gap-3 border-l border-border pl-3">
-            {!isOneTime && (
-              <AdjustmentsEditor
-                adjustments={adjustments}
-                onChange={setAdjustments}
-                helpText="A temporary scale-up or scale-down over a date range (e.g. a rent hike: multiplier 1.2)."
-              />
+            {/* Alternatives, not independent settings -- the second overrides the
+                first -- so "Or" sits beside what it is an alternative to. */}
+            {isOneTime ? (
+              <Field label="Frequency">
+                <SelectInput reg={register("frequency")} options={FREQUENCY_OPTIONS} />
+              </Field>
+            ) : (
+              <FieldRow>
+                <Field label="Frequency">
+                  <SelectInput reg={register("frequency")} options={FREQUENCY_OPTIONS} />
+                </Field>
+                <Field label="Or every N years" hint="Optional. For a repeat purchase like a car every few years. Overrides the Frequency.">
+                  <TextInput reg={register("intervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
+                </Field>
+              </FieldRow>
             )}
-            <CheckboxInput
-              reg={register("isExcluded")}
-              label="Excluded (kept visible for reference, no effect on the projection)"
-            />
-          </div>
-        )}
-        </>
+            {isOneTime ? (
+              <Field label="Date">
+                <TextInput reg={register("startDate", { required: true })} type="date" />
+              </Field>
+            ) : (
+              <FieldRow>
+                <Field label="Start Date">
+                  <TextInput reg={register("startDate", { required: true })} type="date" />
+                </Field>
+                <Field label="End Date" hint="Optional -- leave blank to continue indefinitely.">
+                  <TextInput reg={register("endDate")} type="date" />
+                </Field>
+              </FieldRow>
+            )}
+            <Field label="Payment Account">
+              <SelectInput
+                reg={register("paymentAccountId")}
+                options={[
+                  { value: "", label: "Extra Savings (Default)" },
+                  // Paying an expense FROM a loan is borrowing, and from a home
+                  // is meaningless: only spendable asset accounts are offered.
+                  ...accountOptions(
+                    accounts.filter((a) => !a.isExtraSavings && a.category === "asset" && a.class !== "real_estate"),
+                    people
+                  ),
+                ]}
+              />
+            </Field>
+            {!isOneTime && (
+              <Field
+                label="Annual Growth Rate"
+                hint={`Percent per year, e.g. 3 for 3%. Blank = matches your inflation assumption (${inflationPctLabel}%), keeping the expense flat in today's dollars -- the right default for most living expenses. 0 = flat in nominal terms (quietly shrinks in real terms over decades).`}
+              >
+                <PercentInput reg={register("growthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
+              </Field>
+            )}
+
+            <AdvancedDisclosure open={advancedOpen} onToggle={() => setAdvancedOpen((v) => !v)}>
+              {!isOneTime && (
+                <AdjustmentsEditor
+                  adjustments={adjustments}
+                  onChange={setAdjustments}
+                  helpText="A temporary scale-up or scale-down over a date range (a rent hike: +20)."
+                />
+              )}
+              <CheckboxInput reg={register("isExcluded")} label="Excluded (kept visible for reference, no effect on the projection)" />
+            </AdvancedDisclosure>
+          </>
         )}
 
-        <div className="mt-2 flex items-center justify-between gap-2">
-          {expense ? (
-            <button
-              type="button"
-              onClick={() => {
-                removeExpense(expense.id);
-                onClose();
-              }}
-              className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
-            >
-              Delete
-            </button>
-          ) : (
-            <span />
-          )}
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
-              Cancel
-            </button>
-            <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
-              {expense ? "Save" : "Add Expense"}
-            </button>
-          </div>
-        </div>
+        <DrawerFooter
+          submitLabel={expense ? "Save" : "Add Expense"}
+          onDelete={
+            expense
+              ? () => {
+                  removeExpense(expense.id);
+                  onClose();
+                }
+              : undefined
+          }
+          deleteConfirmText={`Delete ${expense?.name ?? "this expense"}? You can undo from the toast afterwards.`}
+        />
       </form>
     </Drawer>
   );

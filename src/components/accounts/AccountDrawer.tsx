@@ -6,7 +6,25 @@ import { nanoid } from "nanoid";
 import type { Account, AccountClass, Person, RecurrenceFrequency, TaxTreatment } from "@/domain";
 import { accountObjectSchema, categoryForClass } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner, InfoTooltip, inputClass, labelClass } from "@/components/ui/formFields";
+import {
+  AdvancedDisclosure,
+  DrawerFooter,
+  ErrorBanner,
+  Field,
+  FieldNote,
+  FREQUENCY_OPTIONS,
+  InfoTooltip,
+  MoneyInput,
+  PercentInput,
+  SelectInput,
+  CheckboxInput,
+  TextInput,
+  implausibleRateMessage,
+  inputClass,
+  labelClass,
+  missingFieldMessage,
+} from "@/components/ui/formFields";
+import { ownerOptions } from "@/lib/people";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { todayISO } from "@/engine/dateMath";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -55,14 +73,6 @@ const TAX_TREATMENT_OPTIONS: { value: TaxTreatment; label: string }[] = [
   { value: "taxable", label: "Taxable" },
   { value: "tax_deferred", label: "Tax-deferred" },
   { value: "tax_free", label: "Tax-free" },
-];
-
-const FREQUENCY_OPTIONS: { value: RecurrenceFrequency; label: string }[] = [
-  { value: "monthly", label: "Monthly" },
-  { value: "biweekly", label: "Biweekly" },
-  { value: "weekly", label: "Weekly" },
-  { value: "annual", label: "Annual" },
-  { value: "one_time", label: "One time" },
 ];
 
 const FUNDING_OPTIONS: { value: string; label: string }[] = [
@@ -230,9 +240,26 @@ export function AccountDrawer({
   const [contribRows, setContribRows] = useState<ContribRow[]>(() => toContribRows(account));
   const [loanDraft, setLoanDraft] = useState<LoanDraft>(() => toLoanDraft(account));
 
-  const { register, handleSubmit, reset, watch, setValue, getValues } = useForm<FormValues>({
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    setValue,
+    getValues,
+    formState: { isDirty },
+  } = useForm<FormValues>({
     defaultValues: toFormValues(account),
   });
+  // The row editors live outside react-hook-form; compare them to what the
+  // drawer opened with so the unsaved-changes guard sees them too.
+  const [rowsKey, setRowsKey] = useState(() => JSON.stringify([toGrowthRows(account), toContribRows(account), toLoanDraft(account)]));
+  const rowsNow = JSON.stringify([
+    growthRows.map((r) => ({ ...r, key: "" })),
+    contribRows.map((r) => ({ ...r, key: "" })),
+    loanDraft,
+  ]);
+  const dirty = isDirty || rowsNow !== rowsKey;
   // Tracks the class the cash-default effect below last saw, so it can tell
   // an actual transition (switched INTO or OUT OF Cash) apart from just
   // re-running. Reset to null whenever the drawer (re)opens, below.
@@ -240,9 +267,13 @@ export function AccountDrawer({
 
   useEffect(() => {
     reset(toFormValues(account));
-    setGrowthRows(toGrowthRows(account));
-    setContribRows(toContribRows(account));
-    setLoanDraft(toLoanDraft(account));
+    const g = toGrowthRows(account);
+    const c = toContribRows(account);
+    const l = toLoanDraft(account);
+    setGrowthRows(g);
+    setContribRows(c);
+    setLoanDraft(l);
+    setRowsKey(JSON.stringify([g.map((r) => ({ ...r, key: "" })), c.map((r) => ({ ...r, key: "" })), l]));
     setError(null);
     prevClassRef.current = "";
     // Auto-expand Advanced when editing an account that already has
@@ -289,10 +320,21 @@ export function AccountDrawer({
     const prevClass = prevClassRef.current;
     if (cls === prevClass) return;
     const current = getValues("growthRatePct");
-    if (cls === "cash" && current === "") setValue("growthRatePct", "0");
-    else if (prevClass === "cash" && current === "0") setValue("growthRatePct", "");
+    // Cash and "other asset" (a car, furniture) do not grow with inflation
+    // by default -- a car that appreciates 3% a year was the old default.
+    const flat = (c: AccountClass | "") => c === "cash" || c === "other_asset";
+    if (flat(cls) && current === "") setValue("growthRatePct", "0");
+    else if (flat(prevClass) && !flat(cls) && current === "0") setValue("growthRatePct", "");
+    // A traditional 401(k)/IRA has required distributions; leaving the box
+    // off by default meant most plans never saw an RMD.
+    if (cls === "tax_deferred") setValue("subjectToRMD", true);
+    // Age-based rules need a person: default the owner for the account
+    // types that have them.
+    if ((cls === "tax_deferred" || cls === "tax_free" || cls === "hsa") && getValues("ownerId") === "" && people[0]) {
+      setValue("ownerId", people[0].id);
+    }
     prevClassRef.current = cls;
-  }, [account, open, selectedClass, getValues, setValue]);
+  }, [account, open, selectedClass, getValues, setValue, people]);
 
   const classOptions = (() => {
     const opts: { value: AccountClass | ""; label: string }[] = [...CLASS_OPTIONS];
@@ -389,10 +431,22 @@ export function AccountDrawer({
     // Amortized classes don't grow via growthRatePct at all (see
     // forecastScenario.ts's monthly growth step) -- force it to an explicit
     // 0 rather than leave a stale or "matches inflation" rate on the record.
+    const growthIssue = isAmortized ? null : implausibleRateMessage("The growth rate", percentStrToFraction(values.growthRatePct));
+    if (growthIssue) {
+      setError(growthIssue);
+      return;
+    }
     let loanTerms: Account["loanTerms"];
     if (isAmortized) {
       const annualInterestRatePct = percentStrToFraction(loanDraft.annualInterestRatePct) ?? 0;
-      const termMonths = Math.max(1, Math.round(Number(loanDraft.termYears) || 0) * 12);
+      const termYears = Number(loanDraft.termYears);
+      // A blank term used to become a one-month balloon loan: the whole
+      // balance charged the month after it started, with no error.
+      if (!Number.isFinite(termYears) || termYears <= 0) {
+        setError("Enter the loan's remaining term in years.");
+        return;
+      }
+      const termMonths = Math.max(1, Math.round(termYears * 12));
       const monthlyPayment = moneyStrToNumber(loanDraft.monthlyPayment) ?? undefined;
       // A payment below interest-only would negative-amortize forever --
       // catch it here instead of letting the balance silently grow unbounded.
@@ -570,8 +624,8 @@ export function AccountDrawer({
   );
 
   return (
-    <Drawer open={open} onClose={onClose} title={account ? "Edit Account" : "Add Account"}>
-      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3">
+    <Drawer open={open} onClose={onClose} title={account ? "Edit Account" : "Add Account"} dirty={dirty}>
+      <form onSubmit={handleSubmit(onSubmit, (errors) => setError(missingFieldMessage(errors, { name: "a name" })))} className="flex flex-col gap-3">
         <ErrorBanner message={error} />
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Joint Checking" />
@@ -655,10 +709,12 @@ export function AccountDrawer({
           </Field>
         )}
         <Field label="Owner">
-          <SelectInput
-            reg={register("ownerId")}
-            options={[{ value: "", label: "Joint / none" }, ...people.map((p) => ({ value: p.id, label: p.name }))]}
-          />
+          <SelectInput reg={register("ownerId")} options={ownerOptions(people)} />
+          {showRmdCheckbox && watch("ownerId") === "" && (
+            <FieldNote>
+              Without an owner there is no age to test: no required distributions, no early-withdrawal penalty, and paycheck contributions never stop at retirement.
+            </FieldNote>
+          )}
         </Field>
         {showCostBasis && (
           <Field
@@ -691,17 +747,7 @@ export function AccountDrawer({
         )}
         {showContributions && contributionsBlock}
 
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen((v) => !v)}
-          className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-dim hover:text-foreground"
-        >
-          <span className="inline-block w-3">{advancedOpen ? "▾" : "▸"}</span>
-          Advanced
-        </button>
-
-        {advancedOpen && (
-          <div className="flex flex-col gap-3 border-l border-border pl-3">
+        <AdvancedDisclosure open={advancedOpen} onToggle={() => setAdvancedOpen((v) => !v)}>
             <Field label="Tax Treatment (blank/N-A infers from class)">
               <SelectInput reg={register("taxTreatment")} options={TAX_TREATMENT_OPTIONS} />
             </Field>
@@ -788,41 +834,27 @@ export function AccountDrawer({
               reg={register("isExcluded")}
               label="Excluded (kept visible for reference, no effect on the projection)"
             />
-          </div>
-        )}
+        </AdvancedDisclosure>
         </>
         )}
 
-        <div className="mt-2 flex items-center justify-between gap-2">
-          {account && account.isExtraSavings ? (
-            <span className="text-xs text-dim">Extra Savings is a system account and can&rsquo;t be deleted.</span>
-          ) : account ? (
-            <button
-              type="button"
-              onClick={() => {
-                const removed = removeAccount(account.id);
-                if (removed) onClose();
-                else
-                  alert(
-                    `Can't delete ${account.name || "this account"} -- it's still used as a payment, deposit, or transfer account by an expense, income source, or event. Update or delete those first.`
-                  );
-              }}
-              className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
-            >
-              Delete
-            </button>
-          ) : (
-            <span />
-          )}
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
-              Cancel
-            </button>
-            <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
-              {account ? "Save" : "Add Account"}
-            </button>
-          </div>
-        </div>
+        <DrawerFooter
+          submitLabel={account ? "Save" : "Add Account"}
+          deleteNote={account?.isExtraSavings ? "Extra Savings is a system account and can’t be deleted." : undefined}
+          onDelete={
+            account && !account.isExtraSavings
+              ? () => {
+                  const removed = removeAccount(account.id);
+                  if (removed) onClose();
+                  else
+                    setError(
+                      `Can't delete ${account.name || "this account"} -- it's still used as a payment, deposit, or transfer account by an expense, income source, or event. Update or delete those first.`
+                    );
+                }
+              : undefined
+          }
+          deleteConfirmText={`Delete ${account?.name ?? "this account"}? You can undo from the toast afterwards.`}
+        />
       </form>
     </Drawer>
   );

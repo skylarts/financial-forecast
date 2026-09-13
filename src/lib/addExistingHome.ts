@@ -23,9 +23,11 @@ export const EXISTING_HOME_DEFAULTS: ExistingHomeInput = {
   name: "",
   homeValue: "",
   homeGrowthRatePct: "3",
-  propertyTaxRatePct: "",
-  homeInsuranceRatePct: "",
-  maintenanceRatePct: "",
+  // The same running costs a purchase defaults to: an owned home used to
+  // start at 0% for all three, so it carried no property tax unless noticed.
+  propertyTaxRatePct: "1",
+  homeInsuranceRatePct: "0.5",
+  maintenanceRatePct: "1",
   hasMortgage: false,
   mortgageBalance: "",
   mortgageRate: "6.5",
