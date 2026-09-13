@@ -171,7 +171,10 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 <button type="button" disabled={i === 0} onClick={() => moveSplitStop(i, -1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▲</button>
                 <button type="button" disabled={i === moneyFlow.splitOrder.length - 1} onClick={() => moveSplitStop(i, 1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▼</button>
               </div>
-              <span className="flex-1 truncate text-sm">{i + 1}. {accountName(stop.accountId)}</span>
+              <span className="flex-1 truncate text-sm">
+                {i + 1}. {accountName(stop.accountId)}
+                {isInert(stop) && <span className="ml-2 text-[11px] text-negative">receives nothing</span>}
+              </span>
               <button type="button" onClick={() => removeSplitStop(stop.id)} className="text-xs text-negative hover:underline">
                 Remove
               </button>
@@ -207,17 +210,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
               ) : (
                 <label className="flex items-center gap-1">
                   Share
-                  <input
-                    className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                    type="number"
-                    step="1"
-                    min="0"
-                    max="100"
-                    value={stop.pct == null ? "" : Math.round(stop.pct * 100)}
-                    onChange={(e) =>
-                      updateSplitStop(stop.id, { pct: e.target.value === "" ? null : Number(e.target.value) / 100 })
-                    }
-                  />
+                  <ShareInput value={stop.pct} onCommit={(pct) => updateSplitStop(stop.id, { pct })} />
                   % of remainder
                 </label>
               )}
@@ -317,7 +310,10 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                 <button type="button" disabled={i === 0} onClick={() => moveDrainSource(i, -1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▲</button>
                 <button type="button" disabled={i === moneyFlow.drainOrder.length - 1} onClick={() => moveDrainSource(i, 1)} className="text-xs text-dim disabled:opacity-30 hover:text-foreground">▼</button>
               </div>
-              <span className="flex-1 truncate text-sm">{i + 1}. {accountName(stop.accountId)}</span>
+              <span className="flex-1 truncate text-sm">
+                {i + 1}. {accountName(stop.accountId)}
+                {isInert(stop) && <span className="ml-2 text-[11px] text-negative">covers nothing</span>}
+              </span>
               <button type="button" onClick={() => removeDrainSource(stop.id)} className="text-xs text-negative hover:underline">
                 Remove
               </button>
@@ -353,17 +349,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
               ) : (
                 <label className="flex items-center gap-1">
                   Share
-                  <input
-                    className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
-                    type="number"
-                    step="1"
-                    min="0"
-                    max="100"
-                    value={stop.pct == null ? "" : Math.round(stop.pct * 100)}
-                    onChange={(e) =>
-                      updateDrainStop(stop.id, { pct: e.target.value === "" ? null : Number(e.target.value) / 100 })
-                    }
-                  />
+                  <ShareInput value={stop.pct} onCommit={(pct) => updateDrainStop(stop.id, { pct })} />
                   % of remainder
                 </label>
               )}
@@ -405,6 +391,41 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
         </label>
       </section>
     </div>
+  );
+}
+
+/** A stop that can never move money: a flat amount left blank, or a zero/blank share. */
+function isInert(stop: { kind: "flat" | "percent_of_remainder"; amount: number | null; pct: number | null }): boolean {
+  return stop.kind === "flat" ? stop.amount == null || stop.amount <= 0 : stop.pct == null || stop.pct <= 0;
+}
+
+/**
+ * The "% of remainder" box. Saves when you leave it, not on every keystroke
+ * (each save re-runs the projection), and a box cleared to retype goes back
+ * to its old value instead of saving a blank share that routes nothing.
+ */
+function ShareInput({ value, onCommit }: { value: number | null; onCommit: (pct: number) => void }) {
+  const shown = value == null ? "" : String(Math.round(value * 100));
+  return (
+    <input
+      key={shown}
+      className="w-20 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+      type="number"
+      step="1"
+      min="0"
+      max="100"
+      defaultValue={shown}
+      onBlur={(e) => {
+        const raw = e.target.value.trim();
+        const n = Number(raw);
+        if (raw === "" || !Number.isFinite(n)) {
+          e.target.value = shown;
+          return;
+        }
+        const pct = Math.max(0, Math.min(100, n)) / 100;
+        if (pct !== value) onCommit(pct);
+      }}
+    />
   );
 }
 

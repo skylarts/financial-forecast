@@ -107,7 +107,9 @@ export function buyNewHome(input: BuyHomeInput, settings: { startDate: string; i
 
   if (input.financed) {
     const rate = percentStrToFraction(input.mortgageRate) ?? 0;
-    const termMonths = Math.max(1, Math.round(Number(input.mortgageTermYears) || 0) * 12);
+    const termYears = Number(input.mortgageTermYears);
+    if (!Number.isFinite(termYears) || termYears <= 0) return { ok: false, error: "Enter the mortgage term in years." };
+    const termMonths = Math.max(1, Math.round(termYears * 12));
     const principal = Math.max(0, nominalPrice - nominalDown);
     const mortgageCandidate = {
       name: `${name} (Mortgage)`,
@@ -192,7 +194,9 @@ export function updateBoughtHome(
 
   if (input.financed) {
     const rate = percentStrToFraction(input.mortgageRate) ?? 0;
-    const termMonths = Math.max(1, Math.round(Number(input.mortgageTermYears) || 0) * 12);
+    const termYears = Number(input.mortgageTermYears);
+    if (!Number.isFinite(termYears) || termYears <= 0) return { ok: false, error: "Enter the mortgage term in years." };
+    const termMonths = Math.max(1, Math.round(termYears * 12));
     const principal = Math.max(0, nominalPrice - nominalDown);
     const mortgageCandidate = {
       name: existingMortgage?.name ?? `${name} (Mortgage)`,

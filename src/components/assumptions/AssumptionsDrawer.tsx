@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { ForecastSettings, HealthcareSettings, Person, Scenario } from "@/domain";
 import { personSchema, forecastSettingsSchema } from "@/domain";
-import { addMonths, ageOn } from "@/engine/dateMath";
+import { ageOn, birthdayAtAge } from "@/engine/dateMath";
 import { HEALTHCARE_TABLES_2026, isHealthcareItemId } from "@/engine/healthcare";
 import { Drawer } from "@/components/ui/Drawer";
 import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput, inputClass } from "@/components/ui/formFields";
@@ -17,31 +17,51 @@ function horizonYearFromPeople(people: Person[]): number {
   return Math.max(...people.map((p) => Number(p.birthDate.slice(0, 4)) + p.planningEndAge));
 }
 
+/** What is wrong with a person's row, or null when it can be saved. */
+function personIssue(draft: Person): string | null {
+  if (!draft.name.trim()) return "Give this person a name.";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.birthDate)) return "Enter a birth date.";
+  if (!Number.isInteger(draft.retirementAge) || draft.retirementAge < 18 || draft.retirementAge > 100) return "Retirement age should be a whole number between 18 and 100.";
+  if (!Number.isInteger(draft.planningEndAge) || draft.planningEndAge > 120) return "Planning end age should be a whole number up to 120.";
+  if (draft.planningEndAge < draft.retirementAge) return "Planning end age should be at or after the retirement age.";
+  return null;
+}
+
 function PersonRow({ person }: { person: Person }) {
   const updatePerson = usePlanStore((s) => s.updatePerson);
   const removePerson = usePlanStore((s) => s.removePerson);
   const [draft, setDraft] = useState(person);
+  const [issue, setIssue] = useState<string | null>(null);
 
   const save = () => {
-    const result = personSchema.omit({ id: true }).safeParse(draft);
-    if (!result.success) return;
+    const problem = personIssue(draft);
+    const result = problem ? null : personSchema.omit({ id: true }).safeParse(draft);
+    if (!result || !result.success) {
+      setIssue(problem ?? "That doesn't look right.");
+      return;
+    }
+    setIssue(null);
     const retirementAgeChanged = result.data.retirementAge !== person.retirementAge;
-    const planningEndChanged =
-      result.data.planningEndAge !== person.planningEndAge || result.data.birthDate !== person.birthDate;
+    const birthDateChanged = result.data.birthDate !== person.birthDate;
+    const planningEndChanged = result.data.planningEndAge !== person.planningEndAge || birthDateChanged;
     updatePerson(person.id, result.data);
 
-    // These two ages are only meaningful through what they derive -- keep the
+    // These ages are only meaningful through what they derive -- keep the
     // derived things in sync so editing them here actually changes the plan:
     const { activeScenario, updateSettings, updateEvent } = usePlanStore.getState();
     const scenario = activeScenario();
-    if (retirementAgeChanged) {
+    if (retirementAgeChanged || birthDateChanged) {
       // Move this person's Retire event(s) to their birthday at the new age.
+      // A corrected birth date moves it too: a new person starts with a
+      // placeholder date, and fixing it used to leave retirement anchored to
+      // the placeholder.
       for (const e of scenario.events) {
         if (e.type !== "retire" || e.personId !== person.id) continue;
+        const age = e.retirementAge ?? result.data.retirementAge;
         const updated = {
           ...e,
-          retirementAge: result.data.retirementAge,
-          startDate: addMonths(result.data.birthDate, result.data.retirementAge * 12),
+          retirementAge: retirementAgeChanged ? result.data.retirementAge : age,
+          startDate: birthdayAtAge(result.data.birthDate, retirementAgeChanged ? result.data.retirementAge : age),
         };
         updateEvent(e.id, updated as Omit<typeof e, "id">);
       }
@@ -55,6 +75,7 @@ function PersonRow({ person }: { person: Person }) {
 
   return (
     <div className="grid grid-cols-2 gap-2 rounded-md border border-border p-2">
+      {issue && <p className="col-span-2 text-[11px] text-negative">{issue}</p>}
       <input
         className="col-span-2 rounded border border-border bg-background px-2 py-1 text-sm"
         value={draft.name}
@@ -62,14 +83,16 @@ function PersonRow({ person }: { person: Person }) {
         onBlur={save}
         placeholder="Name"
       />
-      <input
-        className="rounded border border-border bg-background px-2 py-1 text-sm"
-        type="date"
-        value={draft.birthDate}
-        onChange={(e) => setDraft({ ...draft, birthDate: e.target.value })}
-        onBlur={save}
-      />
-      <div />
+      <label className="col-span-2 flex flex-col gap-1 text-xs text-dim">
+        Birth date
+        <input
+          className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+          type="date"
+          value={draft.birthDate}
+          onChange={(e) => setDraft({ ...draft, birthDate: e.target.value })}
+          onBlur={save}
+        />
+      </label>
       <label className="flex flex-col gap-1 text-xs text-dim">
         <span className="inline-flex items-center gap-1">
           Retirement age

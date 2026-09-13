@@ -1,4 +1,5 @@
 import type { Person } from "@/domain/household";
+import type { Account } from "@/domain/account";
 
 /**
  * Resolves an `ownerId` to a display name.
@@ -20,4 +21,16 @@ export function ownerOptions(people: readonly Person[]): { value: string; label:
     { value: "", label: "Joint / none" },
     ...people.map((p) => ({ value: p.id, label: p.name })),
   ];
+}
+
+/** An account's name with its owner appended when it has one, so his and her "Roth IRA" read apart in a picker. */
+export function accountLabel(account: Pick<Account, "name" | "ownerId">, people: readonly Person[]): string {
+  if (!account.ownerId) return account.name;
+  const owner = people.find((p) => p.id === account.ownerId)?.name;
+  return owner ? `${account.name} (${owner})` : account.name;
+}
+
+/** `<select>` options for an account picker, labelled with owners. */
+export function accountOptions(accounts: readonly Account[], people: readonly Person[]): { value: string; label: string }[] {
+  return accounts.map((a) => ({ value: a.id, label: accountLabel(a, people) }));
 }

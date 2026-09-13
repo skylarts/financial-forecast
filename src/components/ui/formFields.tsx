@@ -1,6 +1,10 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useState, type ReactNode } from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
+import type { RecurrenceFrequency } from "@/domain";
 import { reformatMoneyStr } from "@/lib/inputFormat";
+import { useDrawer } from "./Drawer";
 
 export const inputClass =
   "w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground";
@@ -131,4 +135,143 @@ export function ErrorBanner({ message }: { message: string | null }) {
       {message}
     </div>
   );
+}
+
+/** The one frequency list every recurring thing in the app offers. */
+export const FREQUENCY_OPTIONS: { value: RecurrenceFrequency; label: string }[] = [
+  { value: "monthly", label: "Monthly" },
+  { value: "biweekly", label: "Biweekly" },
+  { value: "weekly", label: "Weekly" },
+  { value: "annual", label: "Annual" },
+  { value: "one_time", label: "One time" },
+];
+
+/** A short note under a field: a warning the user should read before saving, or a plain remark. */
+export function FieldNote({ tone = "warn", children }: { tone?: "warn" | "info"; children: ReactNode }) {
+  return <span className={`text-[11px] ${tone === "warn" ? "text-gold" : "text-dim-2"}`}>{children}</span>;
+}
+
+/**
+ * The message for a form submitted with a required field blank. react-hook-
+ * form stops the submit silently; every drawer used to leave the click
+ * unanswered. `labels` names each field the way the form does.
+ */
+export function missingFieldMessage(errors: Record<string, unknown>, labels: Record<string, string>): string {
+  const field = Object.keys(errors)[0];
+  const label = field ? labels[field] : undefined;
+  return label ? `This still needs ${label}.` : "A required field is still blank.";
+}
+
+/** The "Advanced" fold every drawer uses: a small disclosure with its children indented under a rule. */
+export function AdvancedDisclosure({
+  open,
+  onToggle,
+  label = "Advanced",
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  label?: string;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-dim hover:text-foreground"
+      >
+        <span className="inline-block w-3">{open ? "▾" : "▸"}</span>
+        {label}
+      </button>
+      {open && <div className="flex flex-col gap-3 border-l border-border pl-3">{children}</div>}
+    </>
+  );
+}
+
+/**
+ * The footer every drawer shares: Delete on the left (a two-step, in place,
+ * so a stray click never destroys anything; the store's Undo toast is the
+ * second safety net), Cancel and the submit button on the right. Cancel goes
+ * through the drawer's own close request, so an unsaved form is asked about.
+ */
+export function DrawerFooter({
+  submitLabel,
+  onDelete,
+  deleteLabel = "Delete",
+  deleteConfirmText = "Delete this? You can undo from the toast afterwards.",
+  deleteNote,
+  left,
+}: {
+  submitLabel: string;
+  /** Present when editing something that can be deleted. */
+  onDelete?: () => void;
+  deleteLabel?: string;
+  deleteConfirmText?: string;
+  /** Shown instead of a delete button (e.g. "Extra Savings can't be deleted"). */
+  deleteNote?: ReactNode;
+  /** Something else for the left slot, e.g. a "← Back" link. */
+  left?: ReactNode;
+}) {
+  const { requestClose } = useDrawer();
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {confirming && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-negative/40 bg-negative/10 px-3 py-2 text-sm">
+          <span>{deleteConfirmText}</span>
+          <span className="flex gap-2">
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setConfirming(false)}
+              className="rounded-md border border-border px-2.5 py-1 text-xs text-dim hover:text-foreground"
+            >
+              Keep
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirming(false);
+                onDelete?.();
+              }}
+              className="rounded-md bg-negative px-2.5 py-1 text-xs font-semibold text-background"
+            >
+              {deleteLabel}
+            </button>
+          </span>
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        {deleteNote ? (
+          <span className="text-xs text-dim">{deleteNote}</span>
+        ) : onDelete ? (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
+          >
+            {deleteLabel}
+          </button>
+        ) : (
+          left ?? <span />
+        )}
+        <div className="flex gap-2">
+          <button type="button" onClick={requestClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
+            Cancel
+          </button>
+          <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
+            {submitLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A rate that is almost certainly a slipped finger ("30" for 3%): refuse it with a pointer to the unit. */
+export function implausibleRateMessage(label: string, fraction: number | null, maxAbs = 0.5): string | null {
+  if (fraction === null || Math.abs(fraction) <= maxAbs) return null;
+  return `${label} is ${Number((fraction * 100).toFixed(2))}% a year. Enter a percent like 7 for 7%, not a fraction or a dollar amount.`;
 }

@@ -13,10 +13,22 @@ import {
 } from "@/domain";
 import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, FieldRow, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import {
+  DrawerFooter,
+  ErrorBanner,
+  Field,
+  FieldRow,
+  FREQUENCY_OPTIONS,
+  MoneyInput,
+  PercentInput,
+  SelectInput,
+  CheckboxInput,
+  TextInput,
+  implausibleRateMessage,
+} from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
-import { AdjustmentsEditor } from "@/components/ui/AdjustmentsEditor";
+import { AdjustmentsEditor, adjustmentsIssue } from "@/components/ui/AdjustmentsEditor";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
@@ -40,14 +52,6 @@ const EVENT_TEMPLATES: { type: TemplateType; label: string; hint: string }[] = [
   { type: "pay_off_loan", label: "Pay off a loan", hint: "Pay a mortgage or loan down, or off, from an account on a date" },
   { type: "rollover", label: "Rollover", hint: "Move money between two tax-deferred accounts, with no tax" },
   { type: "custom_transfer", label: "Custom transfer", hint: "Any other move between two of your accounts" },
-];
-
-const FREQUENCIES: { value: RecurrenceFrequency; label: string }[] = [
-  { value: "monthly", label: "Monthly" },
-  { value: "biweekly", label: "Biweekly" },
-  { value: "weekly", label: "Weekly" },
-  { value: "annual", label: "Annual" },
-  { value: "one_time", label: "One time" },
 ];
 
 const BRACKET_OPTIONS = [
@@ -236,14 +240,28 @@ export function EventDrawer({
   const [retirementExpenseAdjustments, setRetirementExpenseAdjustments] = useState<TemporaryAdjustment[]>(
     event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []
   );
-  const { register, handleSubmit, watch, reset, setValue } = useForm<FormValues>({
+  const {
+    register,
+    handleSubmit,
+    watch,
+    reset,
+    setValue,
+    getValues,
+    formState: { isDirty },
+  } = useForm<FormValues>({
     defaultValues: event ? eventToFormValues(event) : DEFAULTS,
   });
+  const [adjustmentsKey, setAdjustmentsKey] = useState(() =>
+    JSON.stringify(event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : [])
+  );
+  const dirty = isDirty || JSON.stringify(retirementExpenseAdjustments) !== adjustmentsKey;
 
   useEffect(() => {
     setSelectedType(event?.type ?? null);
     reset(event ? eventToFormValues(event) : DEFAULTS);
-    setRetirementExpenseAdjustments(event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []);
+    const adj = event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : [];
+    setRetirementExpenseAdjustments(adj);
+    setAdjustmentsKey(JSON.stringify(adj));
     setError(null);
   }, [event, open, reset]);
 
@@ -334,11 +352,11 @@ export function EventDrawer({
   };
 
   /** Typing a retirement age fills the start date with that person's birthday at that age. */
-  const syncRetireDateFromAge = (ageStr: string) => {
+  const syncRetireDateFromAge = (ageStr: string, personIdNow: string = retirePersonId) => {
     const age = Number(ageStr);
-    const person = people.find((p) => p.id === (retirePersonId || people[0]?.id));
+    const person = people.find((p) => p.id === (personIdNow || people[0]?.id));
     if (person && Number.isFinite(age) && age > 0) {
-      setValue("startDate", birthdayAtAge(person.birthDate, age));
+      setValue("startDate", birthdayAtAge(person.birthDate, age), { shouldDirty: true });
     }
   };
 
@@ -353,6 +371,20 @@ export function EventDrawer({
     let candidate: unknown;
     let schema: { safeParse: (x: unknown) => { success: boolean; data?: unknown; error?: { issues: { message: string }[] } } };
 
+    const growthIssue =
+      implausibleRateMessage("The growth rate", percentStrToFraction(v.transferGrowthRatePct)) ??
+      implausibleRateMessage("The expense growth rate", percentStrToFraction(v.retirementExpenseGrowthRatePct));
+    if (growthIssue) {
+      setError(growthIssue);
+      return;
+    }
+    if (selectedType === "retire" && v.hasRetirementExpense) {
+      const adjIssue = adjustmentsIssue(retirementExpenseAdjustments);
+      if (adjIssue) {
+        setError(adjIssue);
+        return;
+      }
+    }
     switch (selectedType) {
       case "retire":
         candidate = {
@@ -451,7 +483,7 @@ export function EventDrawer({
   const isWholeBalanceKind = selectedType === "pay_off_loan" || selectedType === "rollover";
 
   return (
-    <Drawer open={open} onClose={onClose} title={event ? "Edit Event" : "Add Event"}>
+    <Drawer open={open} onClose={onClose} title={event ? "Edit Event" : "Add Event"} dirty={selectedType !== null && dirty}>
       {!selectedType ? (
         <div className="flex flex-col gap-2">
           {EVENT_TEMPLATES.map((t) => (
@@ -476,7 +508,16 @@ export function EventDrawer({
           {selectedType === "retire" && (
             <>
               <Field label="Person">
-                <SelectInput reg={register("personId")} options={personOptions} />
+                <SelectInput
+                  reg={register("personId", {
+                    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+                      // The age is this person's: re-derive the date for them.
+                      const age = getValues("retirementAge");
+                      if (age.trim() !== "") syncRetireDateFromAge(age, e.target.value);
+                    },
+                  })}
+                  options={personOptions}
+                />
               </Field>
               <Field label="Retirement Age" hint="Typing an age fills the start date below with that person's birthday at that age -- adjust the exact date freely afterward.">
                 <TextInput
@@ -721,7 +762,7 @@ export function EventDrawer({
               </FieldRow>
               <FieldRow>
                 <Field label="Frequency">
-                  <SelectInput reg={register("transferFrequency")} options={FREQUENCIES} />
+                  <SelectInput reg={register("transferFrequency")} options={FREQUENCY_OPTIONS} />
                 </Field>
                 <Field label="Or every N years" hint="Optional. Overrides the frequency: e.g. a car every 7 years.">
                   <TextInput reg={register("transferIntervalYears")} type="number" min="1" step="1" placeholder="e.g. 7" />
@@ -741,32 +782,23 @@ export function EventDrawer({
           </Field>
           <CheckboxInput reg={register("isExcluded")} label="Excluded (kept for reference, no effect on the projection)" />
 
-          <div className="mt-2 flex items-center justify-between gap-2">
-            {event ? (
-              <button
-                type="button"
-                onClick={() => {
-                  removeEvent(event.id);
-                  onClose();
-                }}
-                className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
-              >
-                Delete
-              </button>
-            ) : (
+          <DrawerFooter
+            submitLabel={event ? "Save" : isWholeBalanceKind ? "Add" : "Add Event"}
+            onDelete={
+              event
+                ? () => {
+                    removeEvent(event.id);
+                    onClose();
+                  }
+                : undefined
+            }
+            deleteConfirmText={`Delete ${event?.name ?? "this event"}? You can undo from the toast afterwards.`}
+            left={
               <button type="button" onClick={() => setSelectedType(null)} className="text-sm text-dim hover:text-foreground">
                 ← Back
               </button>
-            )}
-            <div className="flex gap-2">
-              <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
-                Cancel
-              </button>
-              <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
-                {event ? "Save" : isWholeBalanceKind ? "Add" : "Add Event"}
-              </button>
-            </div>
-          </div>
+            }
+          />
         </form>
       )}
     </Drawer>

@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { Account, BuyHomeEvent } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
-import { Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, ErrorBanner } from "@/components/ui/formFields";
+import { DrawerFooter, ErrorBanner, Field, TextInput, PercentInput, MoneyInput, SelectInput, CheckboxInput, missingFieldMessage } from "@/components/ui/formFields";
+import { accountOptions as labelledAccountOptions } from "@/lib/people";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { addExistingHome, updateExistingHome, removeExistingHome, EXISTING_HOME_DEFAULTS } from "@/lib/addExistingHome";
@@ -40,9 +41,9 @@ function defaultsForMode(mode: Mode): FormValues {
         startDate: "",
         value: "",
         growthRatePct: EXISTING_HOME_DEFAULTS.homeGrowthRatePct,
-        propertyTaxRatePct: "",
-        homeInsuranceRatePct: "",
-        maintenanceRatePct: "",
+        propertyTaxRatePct: EXISTING_HOME_DEFAULTS.propertyTaxRatePct,
+        homeInsuranceRatePct: EXISTING_HOME_DEFAULTS.homeInsuranceRatePct,
+        maintenanceRatePct: EXISTING_HOME_DEFAULTS.maintenanceRatePct,
         hasMortgage: false,
         mortgageBalance: "",
         financed: false,
@@ -154,9 +155,28 @@ export function HomeDrawer({
   const [mode, setMode] = useState<Mode>(event ? "buy" : initialMode);
   const mortgage = account?.linkedLiabilityId ? scenarioAccounts.find((a) => a.id === account.linkedLiabilityId) : undefined;
 
-  const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    setValue,
+    getValues,
+    formState: { isDirty },
+  } = useForm<FormValues>({
     defaultValues: toFormValues(mode, account, event, mortgage),
   });
+  const people = usePlanStore((s) => s.activeScenario().household.people);
+
+  /** Switching between "own it" and "buying it" on a new home re-seeds that
+   *  mode's defaults (they differ), keeping what was already typed. */
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
+    setMode(next);
+    if (!isEditing) {
+      reset({ ...defaultsForMode(next), name: getValues("name") || defaultsForMode(next).name, value: getValues("value") });
+    }
+  };
 
   useEffect(() => {
     const nextMode: Mode = event ? "buy" : isEditing ? "existing" : initialMode;
@@ -187,7 +207,10 @@ export function HomeDrawer({
   const monthlyTotal = pAndI + extra + taxMonthly + insuranceMonthly + maintenanceMonthly;
   const money0 = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
-  const accountOptions = accounts.map((a) => ({ value: a.id, label: a.name }));
+  const accountOptions = labelledAccountOptions(
+    accounts.filter((a) => a.category === "asset" && a.class !== "real_estate" && a.class !== "other_asset"),
+    people
+  );
 
   const onSubmit = (v: FormValues) => {
     let result: { ok: true } | { ok: false; error: string };
@@ -244,22 +267,36 @@ export function HomeDrawer({
   };
 
   return (
-    <Drawer open={open} onClose={onClose} title={isEditing ? "Edit Home" : "Add a Home"}>
-      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-3">
+    <Drawer open={open} onClose={onClose} title={isEditing ? "Edit Home" : "Add a Home"} dirty={isDirty}>
+      <form
+        onSubmit={handleSubmit(onSubmit, (errors) =>
+          setError(
+            missingFieldMessage(errors, {
+              name: "a name",
+              startDate: "a closing date",
+              value: mode === "existing" ? "the home's value" : "a purchase price",
+              downPaymentAmount: "a down payment",
+              mortgageBalance: "the remaining mortgage balance",
+              downPaymentFromAccountId: "the account the down payment comes from",
+            })
+          )
+        )}
+        className="flex flex-col gap-3"
+      >
         <ErrorBanner message={error} />
 
         {!isEditing && (
           <div className="flex rounded-md border border-border p-0.5 text-sm">
             <button
               type="button"
-              onClick={() => setMode("existing")}
+              onClick={() => switchMode("existing")}
               className={`flex-1 rounded px-3 py-1.5 font-medium ${mode === "existing" ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
             >
               Already own it
             </button>
             <button
               type="button"
-              onClick={() => setMode("buy")}
+              onClick={() => switchMode("buy")}
               className={`flex-1 rounded px-3 py-1.5 font-medium ${mode === "buy" ? "bg-pri text-pri-fg" : "text-dim hover:text-foreground"}`}
             >
               Buying it
@@ -404,27 +441,15 @@ export function HomeDrawer({
           </div>
         )}
 
-        <div className="mt-2 flex items-center justify-between gap-2">
-          {isEditing ? (
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="rounded-md border border-negative/40 px-3 py-1.5 text-sm text-negative hover:bg-negative/10"
-            >
-              Delete
-            </button>
-          ) : (
-            <span />
-          )}
-          <div className="flex gap-2">
-            <button type="button" onClick={onClose} className="rounded-md border border-border px-3 py-1.5 text-sm text-dim">
-              Cancel
-            </button>
-            <button type="submit" className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg">
-              {isEditing ? "Save" : "Add Home"}
-            </button>
-          </div>
-        </div>
+        <DrawerFooter
+          submitLabel={isEditing ? "Save" : "Add Home"}
+          onDelete={isEditing ? handleDelete : undefined}
+          deleteConfirmText={
+            mortgage
+              ? `Delete ${account?.name ?? "this home"} and its mortgage? You can undo from the toast afterwards.`
+              : `Delete ${account?.name ?? "this home"}? You can undo from the toast afterwards.`
+          }
+        />
       </form>
     </Drawer>
   );
