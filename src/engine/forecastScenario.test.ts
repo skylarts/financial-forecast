@@ -1014,6 +1014,36 @@ describe("forecastScenario -- variable contribution & growth-rate schedules", ()
     expect(year.cashFlow.afterTaxContributionTotal).toBeCloseTo(12_000, 0);
   });
 
+  it("a payroll-deducted segment is not a cash outflow, same as the single-value contribution path", () => {
+    // Regression: the cash-flow statement used to read payrollDeducted off the
+    // account's single `contribution` field, which a scheduled account doesn't
+    // have -- so every scheduled 401k/457 deduction showed up as a take-home
+    // outflow (and the statement stopped reconciling by that amount).
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
+    const four57 = makeAccount({
+      class: "tax_deferred",
+      name: "457",
+      taxTreatment: "tax_deferred",
+      ownerId: nanoid(),
+      startingBalance: 0,
+      growthRatePct: 0,
+      contributionSchedule: [
+        { startDate: "2026-01-01", amount: 1_000, frequency: "monthly", growthRatePct: 0, payrollDeducted: true },
+      ],
+    });
+    const scenario = makeScenario({
+      accounts: [checking, four57],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000 })],
+      startDate: "2026-01-01",
+      horizonEndDate: "2026-12-31",
+    });
+    const year = forecastScenario(scenario).years[0];
+
+    expect(year.accountBalances[four57.id]).toBeCloseTo(12_000, 0);
+    expect(year.cashFlow.afterTaxContributionTotal).toBe(0);
+    expect(year.cashFlow.netCashFlow).toBeCloseTo(year.cashFlow.operatingCashFlow, 2);
+  });
+
   it("a single-value account with no schedule fields behaves exactly as before this feature", () => {
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
     const four01k = makeAccount({

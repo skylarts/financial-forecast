@@ -586,6 +586,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       category: "contribution_in",
       label: `Contribution: ${account.name}`,
       sourceId: `${account.id}:contribution`,
+      payrollDeducted,
     });
     if (!payrollDeducted && contributionSpendingAccountId && contributionSpendingAccountId !== account.id) {
       pushPosting({
