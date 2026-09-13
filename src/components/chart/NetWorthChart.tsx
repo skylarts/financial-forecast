@@ -159,6 +159,26 @@ export function nextHiddenAccountIds(
   return allHidden ? new Set() : new Set(accountIds);
 }
 
+/**
+ * Clicking a legend group heading ("Cash", "Tax Deferred") acts on that group
+ * only, leaving every other group's visibility alone: if any of its accounts
+ * are hidden, show the whole group; if they are all already showing, hide it.
+ * That makes the heading a one-click "just this group" when combined with
+ * "Hide all", and still un-does itself on a second click.
+ */
+export function nextHiddenAfterGroupToggle(
+  hiddenAccountIds: Set<string>,
+  groupAccountIds: string[]
+): Set<string> {
+  const next = new Set(hiddenAccountIds);
+  const anyHidden = groupAccountIds.some((id) => hiddenAccountIds.has(id));
+  for (const id of groupAccountIds) {
+    if (anyHidden) next.delete(id);
+    else next.add(id);
+  }
+  return next;
+}
+
 interface CompareScenarioData {
   name: string;
   years: PeriodSnapshot[];
@@ -788,6 +808,10 @@ export function NetWorthChart({
     setHiddenAccountIds((prev) => nextHiddenAccountIds(prev, accounts.map((a) => a.id)));
   };
 
+  const toggleAccountGroup = (groupAccountIds: string[]) => {
+    setHiddenAccountIds((prev) => nextHiddenAfterGroupToggle(prev, groupAccountIds));
+  };
+
   const compareName = compareOptions.find((o) => o.id === compareScenarioId)?.name ?? null;
 
   // Recharts' <Legend> auto-collects items in the order its <Line> children
@@ -808,9 +832,15 @@ export function NetWorthChart({
             key={g.cls}
             className={`flex flex-col gap-1 ${gi > 0 ? "border-l border-border pl-4" : ""}`}
           >
-            <span className="text-[10px] font-medium uppercase tracking-wide text-dim/70">
+            <button
+              type="button"
+              onClick={() => toggleAccountGroup(g.accounts.map((a) => a.id))}
+              title={`Show or hide every ${ACCOUNT_CLASS_LABELS[g.cls]} account`}
+              className="cursor-pointer text-left text-[10px] font-medium uppercase tracking-wide text-dim/70 hover:text-fg"
+              style={{ opacity: g.accounts.every((a) => hiddenAccountIds.has(a.id)) ? 0.5 : 1 }}
+            >
               {ACCOUNT_CLASS_LABELS[g.cls]}
-            </span>
+            </button>
             <ul className="flex flex-wrap gap-x-3 gap-y-1">
               {g.accounts.map((a) => {
                 const hidden = hiddenAccountIds.has(a.id);
