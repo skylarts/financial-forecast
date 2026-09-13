@@ -1388,7 +1388,11 @@ export function forecastScenario(
         addTo(acc.contributionsByItem, posting.sourceId, posting.amount);
         itemLabels.set(posting.sourceId, posting.label);
         markFirstDate(posting.sourceId, posting.date);
-        const fromPaycheck = accountById.get(posting.accountId)?.contribution?.payrollDeducted ?? false;
+        // The posting carries its own funding source -- a contributionSchedule
+        // segment's payrollDeducted never reaches the account's single
+        // `contribution` field, so reading it off the account would call every
+        // scheduled payroll deduction a take-home cash outflow.
+        const fromPaycheck = posting.payrollDeducted ?? accountById.get(posting.accountId)?.contribution?.payrollDeducted ?? false;
         contributionFromPaycheck.set(posting.sourceId, fromPaycheck);
         // Take-home-funded contributions cost cash; the matching contribution_out
         // posting handles the spending-account balance, so we only tally the

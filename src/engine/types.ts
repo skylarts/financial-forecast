@@ -88,6 +88,15 @@ export interface Posting {
   wholeBalance?: boolean;
   /** Roth conversion only: where the tax on it comes from. */
   taxSource?: "cash" | "withhold";
+  /**
+   * contribution_in only: whether this particular contribution came out of the
+   * paycheck before it landed (no cash outflow) or out of take-home (a real
+   * one). It rides on the posting because the answer belongs to the
+   * contribution *occurrence*, not to the account -- a `contributionSchedule`
+   * can change the funding source partway through the plan, and its segments
+   * never touch the account's single `contribution` field.
+   */
+  payrollDeducted?: boolean;
 }
 
 /**
