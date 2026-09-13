@@ -1,39 +1,7 @@
 import type { Account, AccountClass } from "@/domain";
+import { sortAccountsForDisplay } from "@/lib/labels";
 
-/** Fixed grouping for "By Account" -- cash first (most liquid), then
- *  investment/retirement accounts by tax treatment, then other assets,
- *  then liabilities last. */
-const ACCOUNT_CLASS_ORDER: Record<AccountClass, number> = {
-  cash: 0,
-  taxable_investment: 1,
-  tax_free: 2,
-  tax_deferred: 3,
-  hsa: 4,
-  education_529: 5,
-  real_estate: 6,
-  other_asset: 7,
-  credit_card: 8,
-  loan: 9,
-  mortgage: 10,
-};
-
-export const ACCOUNT_CLASS_LABELS: Record<AccountClass, string> = {
-  cash: "Cash",
-  taxable_investment: "Taxable",
-  tax_free: "Tax-Free",
-  tax_deferred: "Tax-Deferred",
-  hsa: "HSA",
-  education_529: "529",
-  real_estate: "Real Estate",
-  other_asset: "Other Assets",
-  credit_card: "Credit Cards",
-  loan: "Loans",
-  mortgage: "Mortgages",
-};
-
-export function sortAccountsForDisplay(list: Account[]): Account[] {
-  return [...list].sort((a, b) => ACCOUNT_CLASS_ORDER[a.class] - ACCOUNT_CLASS_ORDER[b.class]);
-}
+export { ACCOUNT_CLASS_LABELS, sortAccountsForDisplay } from "@/lib/labels";
 
 /** Splits an already class-sorted account list into consecutive runs of the
  *  same class, for the grouped "By Account" legend. */

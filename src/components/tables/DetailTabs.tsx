@@ -126,6 +126,7 @@ export function DetailTabs({
           dollarMode={dollarMode}
           events={viewEvents}
           granularity={granularity}
+          readOnly={showCompare}
         />
       )}
       {active === "Timeline" && (
@@ -134,10 +135,9 @@ export function DetailTabs({
           expenses={viewExpenses}
           events={viewEvents}
           timeline={viewTimeline}
-          ledger={viewLedger}
-          accounts={viewAccounts}
           editableAccounts={editableAccounts}
           people={viewPeople}
+          readOnly={showCompare}
         />
       )}
       {active === "Routing" &&
@@ -146,10 +146,10 @@ export function DetailTabs({
             Routing can only be edited for {scenarioName}. Switch back to edit it.
           </div>
         ) : (
-          <MoneyFlowEditor accounts={editableAccounts} settings={settings} />
+          <MoneyFlowEditor accounts={editableAccounts} settings={settings} ledger={ledger} />
         ))}
       {active === "Cash Flow" && (
-        <CashFlowTable periods={viewPeriods} accounts={viewAccounts} dollarMode={dollarMode} granularity={granularity} />
+        <CashFlowTable periods={viewPeriods} accounts={viewAccounts} dollarMode={dollarMode} granularity={granularity} ledger={viewLedger} />
       )}
       {active === "Stress test" && <StressTestTab scenario={scenario} projection={projection} dollarMode={dollarMode} />}
     </div>

@@ -3,14 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
-  LineChart,
+  ComposedChart,
+  Area,
   Line,
+  ReferenceLine,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Legend,
 } from "recharts";
+import { addMonths, yearOf } from "@/engine/dateMath";
+import { rmdStartAgeForBirthYear } from "@/engine/rmd";
 import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, PeriodSnapshot } from "@/domain";
 import type { StressKey } from "@/engine/stress";
 import { formatMoney, type DollarMode } from "@/lib/format";
@@ -244,9 +248,31 @@ function StressMenu({
 const RANGE_PRESETS = [5, 10, 20, 40] as const;
 
 const DOLLAR_OPTIONS = [
-  { value: "nominal" as const, label: "Nominal" },
-  { value: "real" as const, label: "Real" },
+  { value: "real" as const, label: "Today’s $" },
+  { value: "nominal" as const, label: "Future $" },
 ];
+
+/** Markers stacked in one column beyond this many collapse into a "+N" chip. */
+const MAX_VISIBLE_MARKERS = 4;
+
+/**
+ * The ages the engine's rules key off: penalty-free withdrawals at 59½,
+ * Medicare at 65, required distributions at 73 or 75. One line per person
+ * per milestone, in the year it lands.
+ */
+function milestoneYears(people: Person[]): { year: number; label: string }[] {
+  const out: { year: number; label: string }[] = [];
+  for (const p of people) {
+    const rmdAge = rmdStartAgeForBirthYear(yearOf(p.birthDate));
+    const ms: { age: number; text: string }[] = [
+      { age: 59.5, text: "59½" },
+      { age: 65, text: "65" },
+      { age: rmdAge, text: `RMDs ${rmdAge}` },
+    ];
+    for (const m of ms) out.push({ year: yearOf(addMonths(p.birthDate, Math.round(m.age * 12))), label: `${p.name} ${m.text}` });
+  }
+  return out;
+}
 
 export function NetWorthChart({
   accounts: allAccounts,
@@ -301,6 +327,17 @@ export function NetWorthChart({
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showMilestones, setShowMilestones] = useState(true);
+  const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
+  // Escape leaves full screen, the way every other overlay closes.
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsFullscreen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isFullscreen]);
   const [hiddenAccountIds, setHiddenAccountIds] = useState<Set<string>>(new Set());
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const theme = isJoy ? CHART_THEME.joy : CHART_THEME.dark;
@@ -385,9 +422,11 @@ export function NetWorthChart({
         const sy = stressByYear?.get(y.year);
         if (sy) row.stressValue = dollarMode === "real" ? sy.netWorthReal : sy.netWorthNominal;
       } else {
+        // Stacked areas: assets up, debts below zero, net worth on top.
+        row.value = dollarMode === "real" ? y.netWorthReal : y.netWorthNominal;
         for (const a of accounts) {
           const nominal = y.accountBalances[a.id] ?? 0;
-          row[a.id] = nominal / factor;
+          row[a.id] = ((a.category === "liability" ? -1 : 1) * nominal) / factor;
         }
       }
       return row;
@@ -395,6 +434,35 @@ export function NetWorthChart({
   }, [years, viewMode, dollarMode, accounts, compareByYear, stressByYear]);
 
   const dataYears = useMemo(() => data.map((d) => d.year as number), [data]);
+  const milestones = useMemo(() => {
+    if (!showMilestones) return [];
+    const visible = new Set(dataYears);
+    return milestoneYears(people).filter((m) => visible.has(m.year));
+  }, [people, dataYears, showMilestones]);
+  // Each year tick carries the household's ages beneath it, so the axis reads
+  // "2048 · 52 / 50" rather than a bare calendar year.
+  const birthYears = useMemo(() => people.map((p) => yearOf(p.birthDate)), [people]);
+  const renderYearTick = useCallback(
+    (props: { x?: number | string; y?: number | string; payload?: { value?: unknown } }) => {
+      const x = Number(props.x ?? 0);
+      const y = Number(props.y ?? 0);
+      const year = Number(props.payload?.value);
+      const ages = birthYears.map((b) => year - b).filter((a) => a >= 0);
+      return (
+        <g transform={`translate(${x},${y})`}>
+          <text x={0} y={0} dy={12} textAnchor="middle" fill={theme.axis} fontSize={12}>
+            {year}
+          </text>
+          {ages.length > 0 && (
+            <text x={0} y={0} dy={25} textAnchor="middle" fill={theme.axis} fontSize={10} opacity={0.75}>
+              {ages.join(" / ")}
+            </text>
+          )}
+        </g>
+      );
+    },
+    [birthYears, theme.axis]
+  );
 
   // Years where net worth first crosses a big round milestone ($1M, $5M, ...).
   // Joy mode twinkles a sparkle on those points to celebrate the climb.
@@ -747,6 +815,11 @@ export function NetWorthChart({
             {viewMode === "by_account" && (
               <Chip onClick={toggleAllAccounts}>{allHidden ? "Show all" : "Hide all"}</Chip>
             )}
+            {people.length > 0 && (
+              <Chip active={showMilestones} onClick={() => setShowMilestones((v) => !v)} title="Mark 59½, 65 and the RMD age for each person">
+                Ages
+              </Chip>
+            )}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {isFullscreen && (
@@ -788,9 +861,9 @@ export function NetWorthChart({
           would then push past the bottom of the screen. */}
       <div ref={containerRef} className={`relative ${isFullscreen ? "min-h-0 flex-1" : ""}`}>
         <ResponsiveContainer width="100%" height={isFullscreen ? "100%" : 320}>
-          <LineChart data={data} margin={{ top: chartTopMargin, right: isJoy ? 24 : 8, left: 8, bottom: 4 }}>
+          <ComposedChart data={data} margin={{ top: chartTopMargin, right: isJoy ? 24 : 8, left: 8, bottom: 4 }}>
             <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
-            <XAxis dataKey="year" stroke={theme.axis} tick={{ fontSize: 12 }} />
+            <XAxis dataKey="year" stroke={theme.axis} tick={renderYearTick} height={people.length > 0 ? 34 : 30} />
             <YAxis stroke={theme.axis} tick={{ fontSize: 12 }} tickFormatter={(v) => formatMoney(v)} width={80} />
             <Tooltip
               // Recharts renders the Legend after the Tooltip in the DOM, so
@@ -806,6 +879,7 @@ export function NetWorthChart({
               itemSorter={(item) => -(Number(item.value) || 0)}
               formatter={(value, name) => {
                 if (viewMode !== "net_worth") {
+                  if (name === "value") return [formatMoney(Number(value)), "Net worth"];
                   return [formatMoney(Number(value)), accounts.find((a) => a.id === name)?.name ?? String(name)];
                 }
                 const label =
@@ -821,6 +895,16 @@ export function NetWorthChart({
                 wrapperStyle={{ fontSize: 12 }}
               />
             )}
+            {milestones.map((m, i) => (
+              <ReferenceLine
+                key={`${m.label}-${i}`}
+                x={m.year}
+                stroke={theme.axis}
+                strokeDasharray="2 4"
+                strokeOpacity={0.6}
+                label={{ value: m.label, position: "insideTopLeft", fill: theme.axis, fontSize: 10, opacity: 0.8, angle: -90, dx: -4, dy: 6 } as never}
+              />
+            ))}
             {viewMode === "net_worth" ? (
               <>
                 <Line
@@ -857,29 +941,38 @@ export function NetWorthChart({
                 )}
               </>
             ) : (
-              accounts.map((a) => (
-                <Line
-                  key={a.id}
-                  type="monotone"
-                  dataKey={a.id}
-                  stroke={accountColors.get(a.id)}
-                  dot={false}
-                  strokeWidth={2}
-                  hide={hiddenAccountIds.has(a.id)}
-                  isAnimationActive={false}
-                />
-              ))
+              <>
+                {accounts.map((a) => (
+                  <Area
+                    key={a.id}
+                    type="monotone"
+                    dataKey={a.id}
+                    stackId={a.category === "liability" ? "debts" : "assets"}
+                    stroke={accountColors.get(a.id)}
+                    fill={accountColors.get(a.id)}
+                    fillOpacity={0.55}
+                    strokeWidth={1}
+                    hide={hiddenAccountIds.has(a.id)}
+                    isAnimationActive={false}
+                  />
+                ))}
+                <Line type="monotone" dataKey="value" stroke={theme.label} dot={false} strokeWidth={2} isAnimationActive={false} />
+              </>
             )}
             {viewMode === "net_worth" && <MarkerLayoutReporter years={dataYears} onLayout={handleLayout} />}
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
 
         {viewMode === "net_worth" && layout && (
           <div className="pointer-events-none absolute inset-0">
-            {markerClusters.map(({ x, list }, ci) => {
-              const stackBottom = layout.top + TOP_PAD + list.length * (ICON_SIZE + ICON_GAP) - ICON_GAP;
+            {markerClusters.map(({ x, list: fullList }, ci) => {
+              const clusterKey = fullList[0]?.key ?? String(ci);
+              const collapsed = fullList.length > MAX_VISIBLE_MARKERS && !expandedClusters.has(clusterKey);
+              const list = collapsed ? fullList.slice(0, MAX_VISIBLE_MARKERS - 1) : fullList;
+              const slots = list.length + (collapsed ? 1 : 0);
+              const stackBottom = layout.top + TOP_PAD + slots * (ICON_SIZE + ICON_GAP) - ICON_GAP;
               return (
-                <div key={list[0]?.key ?? ci}>
+                <div key={clusterKey}>
                   <div
                     className="absolute"
                     style={{
@@ -921,6 +1014,17 @@ export function NetWorthChart({
                       </div>
                     );
                   })}
+                  {collapsed && (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedClusters((prev) => new Set(prev).add(clusterKey))}
+                      title={`${fullList.length - list.length} more here: click to show`}
+                      className="pointer-events-auto absolute flex items-center justify-center rounded-md border border-border bg-panel-2 text-[10px] font-semibold text-dim shadow-sm hover:text-foreground"
+                      style={{ left: x - ICON_SIZE / 2, top: layout.top + TOP_PAD + list.length * (ICON_SIZE + ICON_GAP), width: ICON_SIZE, height: ICON_SIZE }}
+                    >
+                      +{fullList.length - list.length}
+                    </button>
+                  )}
                 </div>
               );
             })}

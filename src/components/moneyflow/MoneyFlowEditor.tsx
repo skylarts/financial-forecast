@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { nanoid } from "nanoid";
-import type { Account, FlowLimitPeriod, ForecastSettings, MoneyFlow, WithdrawalStrategy } from "@/domain";
+import type { Account, FlowLimitPeriod, ForecastSettings, LedgerEvent, MoneyFlow, WithdrawalStrategy } from "@/domain";
 import { forecastSettingsSchema } from "@/domain";
 import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
@@ -30,9 +30,34 @@ const PRESET_KEYS: WithdrawalStrategy[] = ["conventional", "tax_deferred_first",
  * both use the same cascading model (each stop a flat $ amount or a % of
  * what's left after the stops above it).
  */
-export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; settings: ForecastSettings }) {
+export function MoneyFlowEditor({ accounts, settings, ledger = [] }: { accounts: Account[]; settings: ForecastSettings; ledger?: LedgerEvent[] }) {
   const updateSettings = usePlanStore((s) => s.updateSettings);
   const [error, setError] = useState<string | null>(null);
+  // Which stops have their limit and date-window controls unfolded.
+  const [openStops, setOpenStops] = useState<Set<string>>(new Set());
+  const toggleStop = (id: string) =>
+    setOpenStops((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // A worked example from the projection itself: the first year the rule
+  // actually moved money, and where it went.
+  const example = (kind: "surplus_route" | "deficit_withdrawal") => {
+    const entries = ledger.filter((e) => e.kind === kind);
+    if (entries.length === 0) return null;
+    const year = Math.min(...entries.map((e) => Number(e.date.slice(0, 4))));
+    const byAccount = new Map<string, number>();
+    for (const e of entries) {
+      if (Number(e.date.slice(0, 4)) !== year) continue;
+      const key = kind === "surplus_route" ? (e.toAccountId ?? e.accountId) : e.accountId;
+      byAccount.set(key, (byAccount.get(key) ?? 0) + e.amount);
+    }
+    const total = [...byAccount.values()].reduce((a, b) => a + b, 0);
+    const parts = [...byAccount.entries()].sort((a, b) => b[1] - a[1]).map(([id, amt]) => `${accountName(id)} $${moneyToStr(Math.round(amt))}`);
+    return { year, total: moneyToStr(Math.round(total)), parts };
+  };
   const moneyFlow = settings.moneyFlow;
   const extraSavingsId = accounts.find((a) => a.isExtraSavings)?.id;
 
@@ -163,7 +188,8 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
           When there&rsquo;s extra cash, split it
           <InfoTooltip text="Order is priority -- the first stop is offered first. Each stop is a flat dollar amount or a percentage of what's left after the stops above it (cascading, not a share of the total). Whatever the list doesn't claim stays in Extra Savings. A stop can also have a per-period Limit (how much it may add) and a Start/End date -- leave either blank for 'always'. An account's balance cap lives on the account itself, over on the Accounts tab." />
         </h3>
-        {moneyFlow.splitOrder.length === 0 && <p className="text-xs text-dim">No surplus targets configured yet.</p>}
+        <WorkedExample kind="surplus_route" example={example("surplus_route")} />
+        {moneyFlow.splitOrder.length === 0 && <p className="text-xs text-dim">No surplus targets configured yet: extra cash stays in Extra Savings.</p>}
         {moneyFlow.splitOrder.map((stop, i) => (
           <div key={stop.id} className="flex flex-col gap-2 rounded-md border border-border p-2">
             <div className="flex items-center gap-2">
@@ -214,19 +240,24 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   % of remainder
                 </label>
               )}
-              <FlowLimitFields
-                label="Limit"
-                tooltip="The most this stop may add to the account per period, resetting each period -- e.g. $7,000/year for an IRA's contribution room. Anything over it spills to the next stop. Separate from the account's own cap: this bounds how much goes IN, the cap bounds what it may HOLD."
-                stop={stop}
-                onChange={(patch) => updateSplitStop(stop.id, patch)}
-              />
               <BalanceBoundNote account={accounts.find((a) => a.id === stop.accountId)} kind="ceiling" />
-              <ActiveWindowFields
-                startDate={stop.startDate ?? ""}
-                endDate={stop.endDate ?? ""}
-                onChange={(patch) => updateSplitStop(stop.id, patch)}
-              />
+              <MoreToggle open={openStops.has(stop.id)} onToggle={() => toggleStop(stop.id)} stop={stop} />
             </div>
+            {openStops.has(stop.id) && (
+              <div className="ml-6 flex flex-wrap items-center gap-3 border-l border-border pl-3 text-xs text-dim">
+                <FlowLimitFields
+                  label="Limit"
+                  tooltip="The most this stop may add to the account per period, resetting each period -- e.g. $7,000/year for an IRA's contribution room. Anything over it spills to the next stop. Separate from the account's own cap: this bounds how much goes IN, the cap bounds what it may HOLD."
+                  stop={stop}
+                  onChange={(patch) => updateSplitStop(stop.id, patch)}
+                />
+                <ActiveWindowFields
+                  startDate={stop.startDate ?? ""}
+                  endDate={stop.endDate ?? ""}
+                  onChange={(patch) => updateSplitStop(stop.id, patch)}
+                />
+              </div>
+            )}
           </div>
         ))}
         <AddAccountSelect
@@ -261,6 +292,7 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
             );
           })}
         </div>
+        <WorkedExample kind="deficit_withdrawal" example={example("deficit_withdrawal")} />
         {strategy !== "custom" ? (
           <div className="flex flex-col gap-2 rounded-md border border-border p-2.5 text-xs">
             <div className="font-semibold text-dim">The order the plan will use</div>
@@ -353,19 +385,24 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
                   % of remainder
                 </label>
               )}
-              <FlowLimitFields
-                label="Max draw"
-                tooltip="The most this source may send per period, resetting each period -- e.g. $40,000/year to keep realized gains inside a tax bracket. Once it's used up, the rest of the shortfall spills to the next stop. Separate from the account's floor: this bounds how FAST it drains, the floor bounds how far DOWN it may go."
-                stop={stop}
-                onChange={(patch) => updateDrainStop(stop.id, patch)}
-              />
               <BalanceBoundNote account={accounts.find((a) => a.id === stop.accountId)} kind="floor" />
-              <ActiveWindowFields
-                startDate={stop.startDate ?? ""}
-                endDate={stop.endDate ?? ""}
-                onChange={(patch) => updateDrainStop(stop.id, patch)}
-              />
+              <MoreToggle open={openStops.has(stop.id)} onToggle={() => toggleStop(stop.id)} stop={stop} />
             </div>
+            {openStops.has(stop.id) && (
+              <div className="ml-6 flex flex-wrap items-center gap-3 border-l border-border pl-3 text-xs text-dim">
+                <FlowLimitFields
+                  label="Max draw"
+                  tooltip="The most this source may send per period, resetting each period -- e.g. $40,000/year to keep realized gains inside a tax bracket. Once it's used up, the rest of the shortfall spills to the next stop. Separate from the account's floor: this bounds how FAST it drains, the floor bounds how far DOWN it may go."
+                  stop={stop}
+                  onChange={(patch) => updateDrainStop(stop.id, patch)}
+                />
+                <ActiveWindowFields
+                  startDate={stop.startDate ?? ""}
+                  endDate={stop.endDate ?? ""}
+                  onChange={(patch) => updateDrainStop(stop.id, patch)}
+                />
+              </div>
+            )}
           </div>
         ))}
         <AddAccountSelect
@@ -391,6 +428,48 @@ export function MoneyFlowEditor({ accounts, settings }: { accounts: Account[]; s
         </label>
       </section>
     </div>
+  );
+}
+
+/** "More" for a stop: the limit and date window, folded away unless set. */
+function MoreToggle({
+  open,
+  onToggle,
+  stop,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  stop: { limitAmount?: number | null; startDate: string | null; endDate: string | null };
+}) {
+  const hasDetail = stop.limitAmount != null || !!stop.startDate || !!stop.endDate;
+  return (
+    <button type="button" onClick={onToggle} className="text-[11px] text-dim hover:text-foreground">
+      {open ? "▾ Less" : hasDetail ? "▸ Limit / dates set" : "▸ More"}
+    </button>
+  );
+}
+
+/** One line from the projection showing the rule at work. */
+function WorkedExample({
+  kind,
+  example,
+}: {
+  kind: "surplus_route" | "deficit_withdrawal";
+  example: { year: number; total: string; parts: string[] } | null;
+}) {
+  if (!example) {
+    return (
+      <p className="text-[11px] text-dim-2">
+        {kind === "surplus_route" ? "The projection never swept a surplus anywhere." : "The projection never had to draw on an account."}
+      </p>
+    );
+  }
+  return (
+    <p className="text-[11px] text-dim-2">
+      {kind === "surplus_route"
+        ? `In ${example.year}: $${example.total} of surplus went to ${example.parts.join(", ")}.`
+        : `In ${example.year}: $${example.total} was drawn from ${example.parts.join(", ")}.`}
+    </p>
   );
 }
 

@@ -1,4 +1,4 @@
-import type { EventType, IncomeCategory } from "@/domain";
+import type { EventType, IncomeCategory, LedgerEvent } from "@/domain";
 
 export const FREQUENCY_LABELS: Record<string, string> = {
   monthly: "/mo",
@@ -27,6 +27,34 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   pay_off_loan: "Pay off loan",
   rollover: "Rollover",
   custom_transfer: "Transfer",
+};
+
+/** What the engine's own money movements are called on the Cash Flow tab. */
+export const LEDGER_KIND_LABELS: Record<LedgerEvent["kind"], string> = {
+  deficit_withdrawal: "Withdrawals to cover spending",
+  rmd: "Required distributions (RMDs)",
+  surplus_route: "Surplus swept into accounts",
+  cap_overflow: "Moved out of a capped account",
+  mortgage_payment: "Mortgage payments",
+  tax_settlement: "Tax true-up",
+  home_sale: "Home sale proceeds",
+  roth_conversion: "Roth conversions",
+  rollover: "Rollovers",
+  shortfall_spill: "Bills an account could not cover",
+};
+
+/** The direction of each kind as it affects cash: +1 lands in cash, -1 leaves it (a true-up carries its own sign). */
+export const LEDGER_KIND_SIGN: Record<LedgerEvent["kind"], 1 | -1> = {
+  deficit_withdrawal: 1,
+  rmd: 1,
+  surplus_route: -1,
+  cap_overflow: 1,
+  mortgage_payment: -1,
+  tax_settlement: 1,
+  home_sale: 1,
+  roth_conversion: 1,
+  rollover: 1,
+  shortfall_spill: -1,
 };
 
 export function freqLabel(frequency: string, intervalYears?: number): string {

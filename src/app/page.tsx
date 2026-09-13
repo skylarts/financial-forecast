@@ -64,7 +64,14 @@ function HomeContent() {
 
   const minYear = projection.years[0]?.year ?? new Date().getFullYear();
   const maxYear = projection.years[projection.years.length - 1]?.year ?? minYear;
-  const [range, setRange] = useState<[number, number]>([minYear, Math.min(maxYear, minYear + 19)]);
+  const [pickedRange, setRange] = useState<[number, number]>([minYear, Math.min(maxYear, minYear + 19)]);
+  // A restored backup or a switch to a scenario with a different span can
+  // leave the picked years outside the plan: read them clamped back in.
+  const range = useMemo<[number, number]>(() => {
+    const s = Math.min(Math.max(pickedRange[0], minYear), maxYear);
+    const e = Math.min(Math.max(pickedRange[1], s), maxYear);
+    return [s, e];
+  }, [pickedRange, minYear, maxYear]);
   // Single display toggle: future (nominal) vs today's (real) dollars, applied
   // consistently across the KPIs, chart, and all tables. Defaults to real
   // (today's dollars) since that's the more meaningful lens for a long horizon.
@@ -151,6 +158,7 @@ function HomeContent() {
       <JoyConfetti fire={isJoy && projection.kpis.retirementAge !== null} />
       <Header scenario={scenario} view={view} onViewChange={setView} />
       <ViewBar
+        view={view}
         minYear={minYear}
         maxYear={maxYear}
         rangeStart={range[0]}
@@ -176,7 +184,7 @@ function HomeContent() {
       <div className="flex flex-col gap-3 px-3 sm:px-6 pt-4 empty:hidden">
         <RecoveryBanner />
         {hasContent && <StalePlanBanner scenario={scenario} />}
-        {hasContent && <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} />}
+        {hasContent && <WarningsBanner warnings={projection.warnings} accounts={projection.accounts} onOpenRouting={() => setView("Routing")} />}
       </div>
 
       {!hasContent ? (
@@ -187,14 +195,14 @@ function HomeContent() {
         <main className="flex w-full flex-1 flex-col gap-3 px-3 sm:px-6 py-4">
           {isJoy && <JoyQuote />}
           <OverviewBento
-            kpis={projection.kpis}
+            projection={projection}
             years={years}
             accounts={projection.accounts}
             dollarMode={dollarMode}
-            isFullRange={range[0] === minYear && range[1] === maxYear}
             planStartDate={scenario.settings.startDate ?? todayISO()}
-            compareKpis={hasCompare ? compareProjection.kpis : null}
-            compareName={hasCompare ? compareScenarioRaw!.name : null}
+            people={scenario.household.people}
+            events={scenario.events}
+            compare={hasCompare ? { name: compareScenarioRaw!.name, projection: compareProjection } : null}
             chart={
               <NetWorthChart
                 accounts={projection.accounts}
