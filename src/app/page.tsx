@@ -201,7 +201,6 @@ function HomeContent() {
             dollarMode={dollarMode}
             planStartDate={scenario.settings.startDate ?? todayISO()}
             people={scenario.household.people}
-            events={scenario.events}
             compare={hasCompare ? { name: compareScenarioRaw!.name, projection: compareProjection } : null}
             chart={
               <NetWorthChart

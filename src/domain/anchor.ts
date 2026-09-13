@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { addDays, addMonths, birthdayAtAge, compareDates } from "@/engine/dateMath";
+import { addDays, addMonths } from "@/engine/dateMath";
 import { idSchema, type ISODate } from "./common";
-import type { Person } from "./household";
+import { retirementDateOf, type Person } from "./household";
 
 /**
  * A date that is DERIVED from a life milestone instead of typed in.
@@ -47,38 +47,10 @@ type Anchorable = {
   endAnchor?: DateAnchor | null;
 };
 
-/**
- * The date a person's retirement lands on.
- *
- * A `retire` event wins when there is one, because that event may carry its
- * own `retirementAge` override and is what the engine itself keys off (it is
- * what stops a salary and its payroll contributions). The earliest such event
- * wins, matching the engine's own rule in resolveEvents.ts. With no event, the
- * person's profile age is the answer, so an anchor still resolves in a plan
- * that has not got as far as adding the event.
- */
-export function retirementDateFor(
-  people: readonly Person[],
-  events: readonly { type: string; personId?: string; startDate: ISODate; isExcluded?: boolean }[],
-  personId: string
-): ISODate | null {
-  let fromEvent: ISODate | null = null;
-  for (const event of events) {
-    if (event.type !== "retire" || event.personId !== personId || event.isExcluded) continue;
-    if (!fromEvent || compareDates(event.startDate, fromEvent) < 0) fromEvent = event.startDate;
-  }
-  if (fromEvent) return fromEvent;
-  const person = people.find((p) => p.id === personId);
-  return person ? birthdayAtAge(person.birthDate, person.retirementAge) : null;
-}
-
-/** The concrete date an anchor points at, or null when the person it names is gone. */
-export function resolveAnchor(
-  anchor: DateAnchor,
-  people: readonly Person[],
-  events: readonly { type: string; personId?: string; startDate: ISODate; isExcluded?: boolean }[]
-): ISODate | null {
-  const base = retirementDateFor(people, events, anchor.personId);
+/** The concrete date an anchor points at, or null when the person it names is gone (or never retires). */
+export function resolveAnchor(anchor: DateAnchor, people: readonly Person[]): ISODate | null {
+  const person = people.find((p) => p.id === anchor.personId);
+  const base = person ? retirementDateOf(person) : null;
   return base ? addMonths(base, anchor.offsetMonths) : null;
 }
 
@@ -86,32 +58,24 @@ export function resolveAnchor(
  * An END anchor resolves to the day BEFORE the anchor point, because `endDate`
  * is inclusive: "my salary ends when I retire" means the last paycheck is
  * before retirement day, not on it. This is the same day-before trim the
- * engine already applies to a salary at its owner's retire event, so an
- * explicit end anchor and the automatic rule agree instead of fighting.
+ * engine already applies to a salary at its owner's retirement, so an explicit
+ * end anchor and the automatic rule agree instead of fighting.
  */
-export function resolveEndAnchor(
-  anchor: DateAnchor,
-  people: readonly Person[],
-  events: readonly { type: string; personId?: string; startDate: ISODate; isExcluded?: boolean }[]
-): ISODate | null {
-  const at = resolveAnchor(anchor, people, events);
+export function resolveEndAnchor(anchor: DateAnchor, people: readonly Person[]): ISODate | null {
+  const at = resolveAnchor(anchor, people);
   return at ? addDays(at, -1) : null;
 }
 
-function applyAnchors<T extends Anchorable>(
-  item: T,
-  people: readonly Person[],
-  events: readonly { type: string; personId?: string; startDate: ISODate; isExcluded?: boolean }[]
-): T {
+function applyAnchors<T extends Anchorable>(item: T, people: readonly Person[]): T {
   let next = item;
   if (item.startAnchor) {
-    const resolved = resolveAnchor(item.startAnchor, people, events);
+    const resolved = resolveAnchor(item.startAnchor, people);
     // An unresolvable anchor (the person was removed) leaves the last computed
     // date standing rather than blanking a required field.
     if (resolved && resolved !== item.startDate) next = { ...next, startDate: resolved };
   }
   if (item.endAnchor && "endDate" in item) {
-    const resolved = resolveEndAnchor(item.endAnchor, people, events);
+    const resolved = resolveEndAnchor(item.endAnchor, people);
     if (resolved && resolved !== item.endDate) next = { ...next, endDate: resolved };
   }
   return next;
@@ -125,39 +89,31 @@ function applyAnchors<T extends Anchorable>(
  * changed. Returns the same object when nothing moved, so it is free to run on
  * every keystroke-sized edit.
  *
- * A `retire` event is deliberately skipped: it IS the anchor point, so letting
- * one anchor itself would be circular.
  */
 export function resolveAnchoredDates<
   T extends {
     household: { people: Person[] };
     incomeSources: Anchorable[];
     expenses: Anchorable[];
-    events: (Anchorable & { type: string; personId?: string; isExcluded?: boolean })[];
+    events: Anchorable[];
   },
 >(scenario: T): T {
   const people = scenario.household.people;
-  const events = scenario.events;
 
   let changed = false;
   const mapped = <I extends Anchorable>(items: I[]): I[] =>
     items.map((item) => {
-      const next = applyAnchors(item, people, events);
+      const next = applyAnchors(item, people);
       if (next !== item) changed = true;
       return next;
     });
 
   const incomeSources = mapped(scenario.incomeSources);
   const expenses = mapped(scenario.expenses);
-  const nextEvents = scenario.events.map((event) => {
-    if (event.type === "retire") return event;
-    const next = applyAnchors(event, people, events);
-    if (next !== event) changed = true;
-    return next;
-  });
+  const events = mapped(scenario.events);
 
   if (!changed) return scenario;
-  return { ...scenario, incomeSources, expenses, events: nextEvents };
+  return { ...scenario, incomeSources, expenses, events };
 }
 
 /** How many dated fields in a scenario follow this person's retirement -- the "if I move this, N things move" count. */
@@ -165,15 +121,11 @@ export function countAnchorsToPerson(
   scenario: {
     incomeSources: Anchorable[];
     expenses: Anchorable[];
-    events: (Anchorable & { type: string })[];
+    events: Anchorable[];
   },
   personId: string
 ): number {
-  const items: Anchorable[] = [
-    ...scenario.incomeSources,
-    ...scenario.expenses,
-    ...scenario.events.filter((e) => e.type !== "retire"),
-  ];
+  const items: Anchorable[] = [...scenario.incomeSources, ...scenario.expenses, ...scenario.events];
   let count = 0;
   for (const item of items) {
     if (item.startAnchor?.personId === personId) count += 1;

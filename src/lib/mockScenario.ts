@@ -294,22 +294,8 @@ export const mockScenario: Scenario = {
       downPaymentFromAccountId: brokerageId,
       realEstateAccountId: homeId,
     },
-    {
-      id: nanoid(),
-      type: "retire",
-      name: "Alex retires",
-      startDate: "2055-05-15",
-      personId: alexId,
-      retirementAge: 65,
-    },
-    {
-      id: nanoid(),
-      type: "retire",
-      name: "Jordan retires",
-      startDate: "2055-09-22",
-      personId: jordanId,
-      retirementAge: 63,
-    },
+    // No "retires" events: retirement is a property of each person above
+    // (retirementAge 65 and 63), which is what the engine reads.
   ],
   settings: {
     startDate: "2026-01-01",

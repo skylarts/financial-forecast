@@ -1,3 +1,4 @@
+import { retirementsInOrder } from "@/domain";
 import type { Scenario } from "@/domain";
 import { addMonths, yearOf } from "./dateMath";
 import type { ProjectionOptions } from "./forecastScenario";
@@ -66,10 +67,10 @@ export const STRESS_PRESETS: { key: StressKey; label: string; describe: (p: Stre
   },
 ];
 
-/** The calendar year of the first retirement in the plan, or null when there is no retire event. */
+/** The calendar year the first person in the household retires, or null when nobody does. */
 export function retirementYearOf(scenario: Scenario): number | null {
-  const dates = scenario.events.filter((e) => e.type === "retire" && !e.isExcluded).map((e) => e.startDate).sort();
-  return dates.length ? yearOf(dates[0]) : null;
+  const first = retirementsInOrder(scenario.household.people)[0];
+  return first ? yearOf(first.date) : null;
 }
 
 function liveLonger(scenario: Scenario, p: StressParams): Scenario {

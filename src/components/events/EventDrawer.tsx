@@ -2,16 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import type { Account, DateAnchor, EventType, Person, RecurrenceFrequency, ScenarioEvent, TemporaryAdjustment } from "@/domain";
+import type { Account, DateAnchor, EventType, Person, RecurrenceFrequency, ScenarioEvent } from "@/domain";
 import {
-  retireEventSchema,
   sellHomeEventSchema,
   rothConversionEventSchema,
   payOffLoanEventSchema,
   rolloverEventSchema,
   customTransferEventSchema,
 } from "@/domain";
-import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
 import {
   ANCHOR_HINT,
@@ -30,7 +28,6 @@ import {
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AnchoredDateInput } from "@/components/ui/AnchoredDate";
-import { AdjustmentsEditor, adjustmentsIssue } from "@/components/ui/AdjustmentsEditor";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
@@ -47,7 +44,6 @@ type TemplateType = EventType | "income" | "expense";
 const EVENT_TEMPLATES: { type: TemplateType; label: string; hint: string }[] = [
   { type: "income", label: "Income", hint: "Salary, Social Security, pension, rental, or a one-time payment" },
   { type: "expense", label: "Expense", hint: "A recurring or one-time cost, including childcare or a car every few years" },
-  { type: "retire", label: "Retire", hint: "Stop a person's salary and paycheck contributions on a date" },
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
   { type: "sell_home", label: "Sell a home", hint: "Sell a home you own: retires its mortgage and credits the proceeds" },
   { type: "roth_conversion", label: "Roth conversion", hint: "Move money from a tax-deferred account to a Roth: taxed as income, never penalized" },
@@ -69,15 +65,6 @@ interface FormValues {
   endDate: string;
   isExcluded: boolean;
   notes: string;
-  personId: string;
-  retirementAge: string;
-  hasRetirementExpense: boolean;
-  /** Money string. */
-  retirementExpenseAmount: string;
-  /** Percent string; blank = matches inflation. */
-  retirementExpenseGrowthRatePct: string;
-  retirementExpensePaymentAccountId: string;
-  retirementExpenseEndDate: string;
   sellRealEstateAccountId: string;
   /** "computed" (engine derives from simulated equity) or "fixed" (enter net proceeds directly). */
   sellMode: string;
@@ -110,13 +97,6 @@ const DEFAULTS: FormValues = {
   endDate: "",
   isExcluded: false,
   notes: "",
-  personId: "",
-  retirementAge: "",
-  hasRetirementExpense: false,
-  retirementExpenseAmount: "",
-  retirementExpenseGrowthRatePct: "",
-  retirementExpensePaymentAccountId: "",
-  retirementExpenseEndDate: "",
   sellRealEstateAccountId: "",
   sellMode: "computed",
   sellingCostsPct: "6",
@@ -146,17 +126,6 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
     notes: event.notes ?? "",
   };
   switch (event.type) {
-    case "retire":
-      return {
-        ...base,
-        personId: event.personId,
-        retirementAge: event.retirementAge?.toString() ?? "",
-        hasRetirementExpense: !!event.retirementExpense,
-        retirementExpenseAmount: event.retirementExpense ? moneyToStr(event.retirementExpense.amount) : "",
-        retirementExpenseGrowthRatePct: fractionToPercentStr(event.retirementExpense?.growthRatePct),
-        retirementExpensePaymentAccountId: event.retirementExpense?.paymentAccountId ?? "",
-        retirementExpenseEndDate: event.retirementExpense?.endDate ?? "",
-      };
     case "buy_home":
       // Handled entirely by HomeDrawer (see the early return in the component
       // below) -- never actually reaches this form.
@@ -242,40 +211,26 @@ export function EventDrawer({
 
   const [selectedType, setSelectedType] = useState<TemplateType | null>(event?.type ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [retirementExpenseAdjustments, setRetirementExpenseAdjustments] = useState<TemporaryAdjustment[]>(
-    event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : []
-  );
   const {
     register,
     handleSubmit,
     watch,
     reset,
     setValue,
-    getValues,
     formState: { isDirty },
   } = useForm<FormValues>({
     defaultValues: event ? eventToFormValues(event) : DEFAULTS,
   });
-  const [adjustmentsKey, setAdjustmentsKey] = useState(() =>
-    JSON.stringify(event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : [])
-  );
   // The date links live outside react-hook-form (like the adjustments above):
   // they are structured values that write into the registered date fields.
   const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(event?.startAnchor ?? null);
   const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(event?.endAnchor ?? null);
   const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([event?.startAnchor ?? null, event?.endAnchor ?? null]));
-  const scenarioEvents = usePlanStore((s) => s.activeScenario().events);
-  const dirty =
-    isDirty ||
-    JSON.stringify(retirementExpenseAdjustments) !== adjustmentsKey ||
-    JSON.stringify([startAnchor, endAnchor]) !== anchorsKey;
+  const dirty = isDirty || JSON.stringify([startAnchor, endAnchor]) !== anchorsKey;
 
   useEffect(() => {
     setSelectedType(event?.type ?? null);
     reset(event ? eventToFormValues(event) : DEFAULTS);
-    const adj = event?.type === "retire" ? event.retirementExpense?.adjustments ?? [] : [];
-    setRetirementExpenseAdjustments(adj);
-    setAdjustmentsKey(JSON.stringify(adj));
     setStartAnchor(event?.startAnchor ?? null);
     setEndAnchor(event?.endAnchor ?? null);
     setAnchorsKey(JSON.stringify([event?.startAnchor ?? null, event?.endAnchor ?? null]));
@@ -288,11 +243,8 @@ export function EventDrawer({
   const deferredOptions = opt(accounts.filter((a) => treatmentOf(a) === "tax_deferred"));
   const rothOptions = opt(accounts.filter((a) => treatmentOf(a) === "tax_free" && a.class !== "education_529" && a.class !== "hsa"));
   const loanOptions = opt(accounts.filter((a) => a.category === "liability"));
-  const personOptions = people.map((p) => ({ value: p.id, label: p.name }));
   const realEstateOptions = opt(accounts.filter((a) => a.class === "real_estate"));
-  const hasRetirementExpense = watch("hasRetirementExpense");
   const sellMode = watch("sellMode");
-  const retirePersonId = watch("personId");
   const conversionMode = watch("conversionMode");
   const conversionFrequency = watch("conversionFrequency");
   const wholeBalance = watch("wholeBalance");
@@ -326,9 +278,6 @@ export function EventDrawer({
     const first = (list: { value: string }[]) => list[0]?.value ?? "";
     const second = (list: { value: string }[]) => list[1]?.value ?? first(list);
     switch (type) {
-      case "retire":
-        setValue("personId", first(personOptions));
-        break;
       case "sell_home":
         setValue("sellRealEstateAccountId", first(realEstateOptions));
         break;
@@ -368,15 +317,6 @@ export function EventDrawer({
     setError(`This event still needs ${labels[field ?? ""] ?? "a required field"}.`);
   };
 
-  /** Typing a retirement age fills the start date with that person's birthday at that age. */
-  const syncRetireDateFromAge = (ageStr: string, personIdNow: string = retirePersonId) => {
-    const age = Number(ageStr);
-    const person = people.find((p) => p.id === (personIdNow || people[0]?.id));
-    if (person && Number.isFinite(age) && age > 0) {
-      setValue("startDate", birthdayAtAge(person.birthDate, age), { shouldDirty: true });
-    }
-  };
-
   const onSubmit = (v: FormValues) => {
     if (!selectedType) return;
     const base = {
@@ -384,47 +324,18 @@ export function EventDrawer({
       startDate: v.startDate,
       isExcluded: v.isExcluded,
       notes: v.notes.trim() || undefined,
-      // A retire event IS the milestone other dates follow, so it never
-      // follows one itself -- that would be circular.
-      startAnchor: selectedType === "retire" ? null : startAnchor,
+      startAnchor,
       endAnchor: HAS_END_DATE.has(selectedType) ? endAnchor : null,
     };
     let candidate: unknown;
     let schema: { safeParse: (x: unknown) => { success: boolean; data?: unknown; error?: { issues: { message: string }[] } } };
 
-    const growthIssue =
-      implausibleRateMessage("The growth rate", percentStrToFraction(v.transferGrowthRatePct)) ??
-      implausibleRateMessage("The expense growth rate", percentStrToFraction(v.retirementExpenseGrowthRatePct));
+    const growthIssue = implausibleRateMessage("The growth rate", percentStrToFraction(v.transferGrowthRatePct));
     if (growthIssue) {
       setError(growthIssue);
       return;
     }
-    if (selectedType === "retire" && v.hasRetirementExpense) {
-      const adjIssue = adjustmentsIssue(retirementExpenseAdjustments);
-      if (adjIssue) {
-        setError(adjIssue);
-        return;
-      }
-    }
     switch (selectedType) {
-      case "retire":
-        candidate = {
-          ...base,
-          type: "retire",
-          personId: v.personId,
-          retirementAge: v.retirementAge ? Number(v.retirementAge) : undefined,
-          retirementExpense: v.hasRetirementExpense
-            ? {
-                amount: moneyStrToNumber(v.retirementExpenseAmount) ?? 0,
-                growthRatePct: percentStrToFraction(v.retirementExpenseGrowthRatePct),
-                paymentAccountId: v.retirementExpensePaymentAccountId || null,
-                endDate: v.retirementExpenseEndDate || null,
-                adjustments: retirementExpenseAdjustments,
-              }
-            : null,
-        };
-        schema = retireEventSchema.omit({ id: true });
-        break;
       case "sell_home": {
         const computed = v.sellMode === "computed";
         candidate = {
@@ -526,85 +437,19 @@ export function EventDrawer({
             <TextInput reg={register("name", { required: true })} />
           </Field>
 
-          {selectedType === "retire" && (
-            <>
-              <Field label="Person">
-                <SelectInput
-                  reg={register("personId", {
-                    onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
-                      // The age is this person's: re-derive the date for them.
-                      const age = getValues("retirementAge");
-                      if (age.trim() !== "") syncRetireDateFromAge(age, e.target.value);
-                    },
-                  })}
-                  options={personOptions}
-                />
-              </Field>
-              <Field label="Retirement Age" hint="Typing an age fills the start date below with that person's birthday at that age -- adjust the exact date freely afterward.">
-                <TextInput
-                  reg={register("retirementAge", {
-                    onChange: (e: React.ChangeEvent<HTMLInputElement>) => syncRetireDateFromAge(e.target.value),
-                  })}
-                  type="number"
-                />
-              </Field>
-            </>
-          )}
-
           <Field
             label={selectedType === "roth_conversion" && conversionFrequency === "annual" ? "First Year (date)" : "Date"}
-            hint={selectedType === "retire" ? undefined : ANCHOR_HINT}
+            hint={ANCHOR_HINT}
           >
-            {selectedType === "retire" ? (
-              <TextInput reg={register("startDate", { required: true })} type="date" />
-            ) : (
-              <AnchoredDateInput
-                reg={register("startDate", { required: true })}
-                anchor={startAnchor}
-                onAnchorChange={setStartAnchor}
-                onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
-                people={people}
-                events={scenarioEvents}
-                kind="start"
-              />
-            )}
+            <AnchoredDateInput
+              reg={register("startDate", { required: true })}
+              anchor={startAnchor}
+              onAnchorChange={setStartAnchor}
+              onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
+              people={people}
+              kind="start"
+            />
           </Field>
-
-          {selectedType === "retire" && (
-            <>
-              <CheckboxInput
-                reg={register("hasRetirementExpense")}
-                label="Add a retirement expense (e.g. more travel, hobbies)"
-              />
-              {hasRetirementExpense && (
-                <div className="flex flex-col gap-3 border-l border-border pl-3">
-                  <Field label="Yearly Amount" hint="Today's dollars, spread through each year -- starts the day retirement begins.">
-                    <MoneyInput reg={register("retirementExpenseAmount", { required: true })} placeholder="e.g. 12,000" />
-                  </Field>
-                  <Field
-                    label="Annual Growth Rate"
-                    hint={`Percent per year. Blank = matches inflation (${inflationPctLabel}%), keeping it flat in today's dollars. 0 = flat nominal (shrinks in real terms).`}
-                  >
-                    <PercentInput reg={register("retirementExpenseGrowthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
-                  </Field>
-                  <Field label="Payment Account">
-                    <SelectInput
-                      reg={register("retirementExpensePaymentAccountId")}
-                      options={[{ value: "", label: "Extra Savings (Default)" }, ...assetOptions]}
-                    />
-                  </Field>
-                  <Field label="End Date (optional)" hint="Leave blank to continue through the end of the plan.">
-                    <TextInput reg={register("retirementExpenseEndDate")} type="date" />
-                  </Field>
-                  <AdjustmentsEditor
-                    adjustments={retirementExpenseAdjustments}
-                    onChange={setRetirementExpenseAdjustments}
-                    helpText="A temporary boost or cut to this expense (e.g. a few extra years of travel budget)."
-                  />
-                </div>
-              )}
-            </>
-          )}
 
           {selectedType === "sell_home" && (
             <>
@@ -722,7 +567,6 @@ export function EventDrawer({
                       onAnchorChange={setEndAnchor}
                       onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
                       people={people}
-                      events={scenarioEvents}
                       kind="end"
                     />
                   </Field>
@@ -825,7 +669,6 @@ export function EventDrawer({
                   onAnchorChange={setEndAnchor}
                   onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
                   people={people}
-                  events={scenarioEvents}
                   kind="end"
                 />
               </Field>

@@ -10,7 +10,7 @@ import type {
   ScenarioEvent,
   TemporaryAdjustment,
 } from "@/domain";
-import { anchorLabel } from "@/domain";
+import { anchorLabel, retirementDateOf } from "@/domain";
 import { projectScenario } from "@/engine/forecastScenario";
 import { STRATEGY_DESCRIPTIONS, STRATEGY_LABELS, deriveDrainOrder } from "@/engine/strategy";
 import { todayISO } from "@/engine/dateMath";
@@ -135,7 +135,11 @@ export function buildLlmExport(scenario: Scenario): string {
   lines.push(section("Household"));
   for (const p of scenario.household.people) {
     lines.push(
-      `- **${p.name}** (id: \`${p.id}\`) — born ${p.birthDate}, plans to retire at age ${p.retirementAge}, modelled as living to age ${p.planningEndAge} (the plan runs through the latest such date; see "Death is modelled" above).`
+      `- **${p.name}** (id: \`${p.id}\`) — born ${p.birthDate}, ${
+        retirementDateOf(p)
+          ? `retires ${retirementDateOf(p)} (age ${p.retirementAge}${p.retirementDate ? ", from an exact date rather than the age" : ""}) — their salary and paycheck contributions stop then, and any date linked to their retirement moves with it`
+          : "**modelled as never retiring** (their salary runs to the end of the plan)"
+      }, modelled as living to age ${p.planningEndAge} (the plan runs through the latest such date; see "Death is modelled" above).`
     );
   }
 
@@ -340,6 +344,16 @@ export function buildLlmExport(scenario: Scenario): string {
     }
   }
 
+  for (const p of scenario.household.people) {
+    if (!p.retirementSpending?.amount) continue;
+    const rs = p.retirementSpending;
+    lines.push(
+      `  - ${p.name}'s retirement spending: ${formatMoney(rs.amount)}/yr from ${accountName(rs.paymentAccountId)}, ${fmtGrowth(rs.growthRatePct)}, starting the day they retire${rs.endDate ? ` and running through ${rs.endDate}` : ""}.`
+    );
+    lines.push(...fmtAdjustments(rs.adjustments));
+    if (p.retirementNotes) lines.push(`  - Note on ${p.name}'s retirement: ${p.retirementNotes}`);
+  }
+
   lines.push(section("Income Sources"));
   if (scenario.incomeSources.length === 0) {
     lines.push("- None.");
@@ -380,17 +394,6 @@ export function buildLlmExport(scenario: Scenario): string {
       lines.push(head);
       lines.push(...fmtAnchors(ev, scenario.household.people));
       switch (ev.type) {
-        case "retire":
-          lines.push(
-            `  - ${personName(ev.personId)} retires${ev.retirementAge ? ` at age ${ev.retirementAge} (overriding their profile's retirement age)` : ""}. Payroll-deducted contributions stop here automatically.`
-          );
-          if (ev.retirementExpense) {
-            lines.push(
-              `  - Retirement expense: ${formatMoney(ev.retirementExpense.amount)}/yr from ${accountName(ev.retirementExpense.paymentAccountId)}, ${fmtGrowth(ev.retirementExpense.growthRatePct)}${ev.retirementExpense.endDate ? ` through ${ev.retirementExpense.endDate}` : ""}.`
-            );
-            lines.push(...fmtAdjustments(ev.retirementExpense.adjustments));
-          }
-          break;
         case "buy_home": {
           // Rates/mortgage terms now live on the linked real_estate account
           // (and its own linked mortgage account) -- see BuyHomeEvent.realEstateAccountId.

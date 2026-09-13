@@ -110,7 +110,6 @@ export function IncomeDrawer({
   const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(income?.startAnchor ?? null);
   const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(income?.endAnchor ?? null);
   const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([income?.startAnchor ?? null, income?.endAnchor ?? null]));
-  const events = usePlanStore((s) => s.activeScenario().events);
   const [advancedOpen, setAdvancedOpen] = useState(
     !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.grossAmount != null)
   );
@@ -329,7 +328,6 @@ export function IncomeDrawer({
                   onAnchorChange={setStartAnchor}
                   onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
                   people={people}
-                  events={events}
                   kind="start"
                   defaultPersonId={ownerId}
                 />
@@ -343,7 +341,6 @@ export function IncomeDrawer({
                     onAnchorChange={setStartAnchor}
                     onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
                     people={people}
-                    events={events}
                     kind="start"
                     defaultPersonId={ownerId}
                   />
@@ -358,7 +355,6 @@ export function IncomeDrawer({
                     onAnchorChange={setEndAnchor}
                     onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
                     people={people}
-                    events={events}
                     kind="end"
                     defaultPersonId={ownerId}
                   />

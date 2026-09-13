@@ -94,7 +94,6 @@ export function ExpenseDrawer({
   const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(expense?.startAnchor ?? null);
   const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(expense?.endAnchor ?? null);
   const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([expense?.startAnchor ?? null, expense?.endAnchor ?? null]));
-  const events = usePlanStore((s) => s.activeScenario().events);
   const [advancedOpen, setAdvancedOpen] = useState(
     !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
   );
@@ -228,7 +227,6 @@ export function ExpenseDrawer({
                   onAnchorChange={setStartAnchor}
                   onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
                   people={people}
-                  events={events}
                   kind="start"
                 />
               </Field>
@@ -241,7 +239,6 @@ export function ExpenseDrawer({
                     onAnchorChange={setStartAnchor}
                     onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
                     people={people}
-                    events={events}
                     kind="start"
                   />
                 </Field>
@@ -255,7 +252,6 @@ export function ExpenseDrawer({
                     onAnchorChange={setEndAnchor}
                     onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
                     people={people}
-                    events={events}
                     kind="end"
                   />
                 </Field>

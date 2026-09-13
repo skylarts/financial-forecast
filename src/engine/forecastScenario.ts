@@ -14,6 +14,7 @@ import type {
   DrainStop,
   FlowLimitPeriod,
 } from "@/domain";
+import { retirementsInOrder } from "@/domain";
 import {
   addMonths,
   ageOn,
@@ -2101,20 +2102,16 @@ export function forecastScenario(
     }
   }
 
-  const retireEvents = scenario.events
-    .filter((e) => e.type === "retire" && !e.isExcluded)
-    .sort((a, b) => compareDates(a.startDate, b.startDate));
-  const firstRetire = retireEvents[0];
+  // "At retirement" means the first person in the household to stop working.
+  const firstRetirement = retirementsInOrder(scenario.household.people)[0];
   let netWorthAtRetirement: number | null = null;
   let netWorthAtRetirementReal: number | null = null;
   let retirementAge: number | null = null;
-  if (firstRetire && firstRetire.type === "retire") {
-    const retireYear = yearOf(firstRetire.startDate);
-    const snapshot = years.find((y) => y.year === retireYear);
+  if (firstRetirement) {
+    const snapshot = years.find((y) => y.year === yearOf(firstRetirement.date));
     netWorthAtRetirement = snapshot ? snapshot.netWorthNominal : null;
     netWorthAtRetirementReal = snapshot ? snapshot.netWorthReal : null;
-    const person = scenario.household.people.find((p) => p.id === firstRetire.personId);
-    retirementAge = person ? ageOn(person.birthDate, firstRetire.startDate) : null;
+    retirementAge = ageOn(firstRetirement.person.birthDate, firstRetirement.date);
   }
 
   const unlinkedMortgages = activeAccounts.filter((a) => a.class === "mortgage" && !a.loanTerms?.linkedAssetId);

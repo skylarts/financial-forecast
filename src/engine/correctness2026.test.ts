@@ -13,7 +13,14 @@ import { makeAccount, makeExpense, makeIncome, makeScenario } from "./testHelper
  * the ones the review reproduced before the fix.
  */
 
-const person = (birthDate: string) => ({ id: nanoid(), name: "P", birthDate, retirementAge: 65, planningEndAge: 95 });
+const person = (birthDate: string, retirementDate?: string) => ({
+  id: nanoid(),
+  name: "P",
+  birthDate,
+  retirementAge: 65,
+  ...(retirementDate ? { retirementDate } : {}),
+  planningEndAge: 95,
+});
 
 describe("basis is credited on every kind of inflow into a taxable account", () => {
   it("does not tax a transfer in and back out as gain", () => {
@@ -292,8 +299,8 @@ describe("an already-running loan pays in the plan's first month", () => {
 });
 
 describe("a salary that starts after retirement is left alone", () => {
-  it("posts consulting income after the retire event", () => {
-    const owner = person("1974-06-01");
+  it("posts consulting income that starts after retirement", () => {
+    const owner = person("1974-06-01", "2026-07-01");
     const cash = makeAccount({ class: "cash", name: "Cash", isSpendingAccount: true, startingBalance: 0 });
     const scenario = makeScenario({
       accounts: [cash],
@@ -302,7 +309,6 @@ describe("a salary that starts after retirement is left alone", () => {
         makeIncome({ name: "Salary", amount: 5_000, ownerId: owner.id }),
         makeIncome({ name: "Consulting", amount: 2_000, ownerId: owner.id, startDate: "2026-09-01" }),
       ],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-07-01", personId: owner.id }],
     });
     const r = forecastScenario(scenario);
     const y = r.years[0];
@@ -315,16 +321,15 @@ describe("small rules", () => {
   it("an interval still repeats a one-time item every N years (the convention the drawers rely on)", () => {
     expect(expandOccurrences("2026-01-01", null, "one_time", "2040-12-31", 7)).toEqual(["2026-01-01", "2033-01-01", "2040-01-01"]);
   });
-  it("a retirement expense posts monthly, not as a December lump", () => {
-    const owner = person("1974-06-01");
+  it("retirement spending posts monthly, not as a December lump", () => {
+    const owner = {
+      ...person("1974-06-01", "2026-01-01"),
+      retirementSpending: { amount: 12_000, growthRatePct: 0, paymentAccountId: null, endDate: null },
+    };
     const cash = makeAccount({ class: "cash", name: "Cash", isSpendingAccount: true, startingBalance: 0 });
-    const scenario = makeScenario({
-      accounts: [cash],
-      people: [owner],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-01-01", personId: owner.id, retirementExpense: { amount: 12_000, growthRatePct: 0, paymentAccountId: null, endDate: null } }],
-    });
+    const scenario = makeScenario({ accounts: [cash], people: [owner] });
     const { postings } = resolveEvents(scenario);
-    const posts = postings.filter((p) => p.sourceId.endsWith(":retirement_expense"));
+    const posts = postings.filter((p) => p.sourceId.endsWith(":retirement_spending"));
     expect(posts).toHaveLength(12);
     expect(posts[0].amount).toBeCloseTo(-1_000, 6);
   });
@@ -339,5 +344,46 @@ describe("small rules", () => {
     const costs2028 = r.years[2].cashFlow.expenseByItem.find((i) => i.id === `${home.id}:ownership_costs`)!.amount;
     expect(costs2026).toBeCloseTo(10_000, 0);
     expect(costs2028).toBeGreaterThan(costs2026 * 2.5);
+  });
+});
+
+/**
+ * The reason retirement moved off the event and onto the person. A retirement
+ * age used to be inert: only a `retire` EVENT stopped a salary, so a person
+ * added from the Assumptions panel (which never created one) worked to the end
+ * of the plan, silently. There is no event left to forget.
+ */
+describe("a retirement age is enough on its own", () => {
+  it("stops a salary with nothing in the plan but the person's age", () => {
+    const owner = person("1975-01-01"); // retirementAge 65 -> retires 2040-01-01
+    const cash = makeAccount({ class: "cash", name: "Cash", isSpendingAccount: true, startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [cash],
+      people: [owner],
+      incomeSources: [makeIncome({ name: "Salary", amount: 5_000, ownerId: owner.id, category: "salary" })],
+      horizonEndDate: "2041-12-31",
+      events: [],
+    });
+    const r = forecastScenario(scenario);
+    const income = (year: number) => r.years.find((y) => y.year === year)!.cashFlow.totalIncome;
+
+    expect(income(2039)).toBeCloseTo(60_000, 0); // still working
+    expect(income(2040)).toBeCloseTo(0, 0); // retired on Jan 1
+    expect(income(2041)).toBeCloseTo(0, 0);
+    expect(r.kpis.retirementAge).toBe(65);
+  });
+
+  it("an explicit end date earlier than retirement still wins", () => {
+    const owner = person("1975-01-01");
+    const cash = makeAccount({ class: "cash", name: "Cash", isSpendingAccount: true, startingBalance: 0 });
+    const scenario = makeScenario({
+      accounts: [cash],
+      people: [owner],
+      incomeSources: [
+        makeIncome({ name: "Salary", amount: 5_000, ownerId: owner.id, category: "salary", endDate: "2026-06-30" }),
+      ],
+    });
+    const r = forecastScenario(scenario);
+    expect(r.years[0].cashFlow.totalIncome).toBeCloseTo(30_000, 0); // Jan-Jun, not the whole year
   });
 });

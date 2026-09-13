@@ -7,7 +7,7 @@ import { usePlanStore, planHasContent } from "@/store/usePlanStore";
 import { Field, ErrorBanner, PercentInput, MoneyInput, inputClass } from "@/components/ui/formFields";
 import { percentStrToFraction, fractionToPercentStr } from "@/lib/inputFormat";
 import { formatMoney } from "@/lib/format";
-import { birthdayAtAge, todayISO } from "@/engine/dateMath";
+import { todayISO } from "@/engine/dateMath";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
 import { addExistingHome, EXISTING_HOME_DEFAULTS } from "@/lib/addExistingHome";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
@@ -75,8 +75,6 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
   const addPerson = usePlanStore((s) => s.addPerson);
   const removePerson = usePlanStore((s) => s.removePerson);
   const updateSettings = usePlanStore((s) => s.updateSettings);
-  const addEvent = usePlanStore((s) => s.addEvent);
-  const updateEvent = usePlanStore((s) => s.updateEvent);
   const plan = usePlanStore((s) => s.plan);
   const activeScenario = usePlanStore((s) => s.activeScenario());
 
@@ -236,21 +234,6 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
   const currentPerson: Person | undefined = people[retirementIndex];
   const draftFor = (p: Person) => ageDraft ?? { retirementAge: String(p.retirementAge), planningEndAge: String(p.planningEndAge) };
 
-  /** Keeps a person's Retire event on their birthday at their retirement age. */
-  const syncRetireEvent = (p: Person) => {
-    const current = usePlanStore.getState().plan.scenarios.find((s) => s.id === scenarioId);
-    const existing = current?.events.find((e) => e.type === "retire" && e.personId === p.id);
-    const startDate = birthdayAtAge(p.birthDate, p.retirementAge);
-    if (existing && existing.type === "retire") {
-      if (existing.startDate !== startDate || existing.retirementAge !== p.retirementAge) {
-        updateEvent(existing.id, { ...existing, startDate, retirementAge: p.retirementAge } as Omit<typeof existing, "id">);
-      }
-      return;
-    }
-    const retireEvent = { type: "retire" as const, name: `${p.name} retires`, startDate, personId: p.id, retirementAge: p.retirementAge };
-    addEvent(retireEvent as Parameters<typeof addEvent>[0]);
-  };
-
   const handleRetirementContinue = () => {
     if (!currentPerson) return;
     const draft = draftFor(currentPerson);
@@ -261,10 +244,9 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
       return;
     }
     const updated = { ...currentPerson, ...ages };
+    // Saving the age IS saving the retirement: the engine reads it off the
+    // person, so there is no second thing to create and keep in step.
     updatePerson(currentPerson.id, { name: updated.name, birthDate: updated.birthDate, retirementAge: ages.retirementAge, planningEndAge: ages.planningEndAge });
-    // A retirement age with no Retire event does nothing (only the event
-    // stops a salary, ends contributions, and drives the retirement figures).
-    syncRetireEvent(updated);
     setAgeDraft(null);
     setError(null);
     if (retirementIndex + 1 < people.length) {
@@ -664,17 +646,14 @@ export function SetupWizard({ open, onClose }: { open: boolean; onClose: () => v
             <>
               <h2 className="text-lg font-semibold">Life events</h2>
               <p className="text-sm text-dim">
-                Anything specific coming up: buying or selling a home, a Roth conversion, paying off a loan, a big one-time cost. Retirement is already in: {" "}
-                {scenario.events
-                  .filter((e) => e.type === "retire")
-                  .map((e) => e.name)
-                  .join(", ") || "none yet"}
-                . Optional.
+                Anything specific coming up: buying or selling a home, a Roth conversion, paying off a loan, a big one-time cost. Retirement is
+                already in, from the ages you set: {" "}
+                {scenario.household.people.map((p) => `${p.name} at ${p.retirementAge}`).join(", ")}. Optional.
               </p>
               <button type="button" onClick={() => setEventDrawerOpen(true)} className={optionButtonClass}>
                 + Add a life event
               </button>
-              {added(scenario.events.filter((e) => e.type !== "retire").map((e) => ({ name: e.name, detail: e.startDate })))}
+              {added(scenario.events.map((e) => ({ name: e.name, detail: e.startDate })))}
               {nav({ label: "Finish setup →", onClick: () => go("review") })}
             </>
           )}

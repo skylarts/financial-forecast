@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ProjectionResult, Scenario } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
-import { DEFAULT_STRESS_PARAMS, type StressKey, type StressParams } from "@/engine/stress";
+import { DEFAULT_STRESS_PARAMS, retirementYearOf, type StressKey, type StressParams } from "@/engine/stress";
 import { firstShortfallYear } from "@/engine/planHealth";
 import { useStressSuite, type StressRun } from "@/store/useStress";
 import { useUiStore } from "@/store/useUiStore";
@@ -99,10 +99,9 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
   const runs = useStressSuite(scenario, params);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
 
-  const retirementYear = useMemo(() => {
-    const dates = scenario.events.filter((e) => e.type === "retire" && !e.isExcluded).map((e) => e.startDate).sort();
-    return dates.length ? Number(dates[0].slice(0, 4)) : null;
-  }, [scenario.events]);
+  // The engine's own definition, not a second copy of it: retirement lives on
+  // the person now, and one place to ask keeps this row honest.
+  const retirementYear = useMemo(() => retirementYearOf(scenario), [scenario]);
 
   const baseRetire = netWorthAt(projection, retirementYear, real);
   const baseEnd = endNetWorth(projection, real);

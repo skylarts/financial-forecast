@@ -6,6 +6,7 @@ import type {
   RecurrenceFrequency,
   ScenarioEvent,
 } from "@/domain";
+import { retirementsInOrder } from "@/domain";
 import { formatMoney } from "@/lib/format";
 import { EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES } from "@/lib/timelineFormat";
 import { EVENT_TYPE_ICONS, EXPENSE_CATEGORY_ICONS, INCOME_CATEGORY_ICONS, type MarkerKind } from "./eventIcons";
@@ -103,17 +104,34 @@ export function buildChartMarkers({
 
   const markers: ChartMarker[] = [];
 
+  // Retirement is not an event any more, so its milestone is built from the
+  // household. It stays the most important marker on the chart.
+  for (const { person, date } of retirementsInOrder(people)) {
+    const rows: MarkerRow[] = [
+      { label: "Start year", value: String(yearOf(date)) },
+      { label: "Person", value: person.name },
+      { label: "Retirement age", value: String(person.retirementAge) },
+    ];
+    if (person.retirementSpending?.amount) {
+      rows.push({ label: "Extra spending", value: `${formatMoney(person.retirementSpending.amount)}/yr` });
+    }
+    markers.push({
+      key: `retirement-${person.id}`,
+      id: `retirement:${person.id}`,
+      kind: "event",
+      year: yearOf(date),
+      startDate: date,
+      icon: EVENT_TYPE_ICONS.retirement,
+      badge: EVENT_TYPE_LABELS.retirement,
+      title: `${person.name} retires`,
+      rows,
+    });
+  }
+
   for (const ev of events) {
     if (ev.isExcluded) continue;
     const rows: MarkerRow[] = [{ label: "Start year", value: String(yearOf(ev.startDate)) }];
     switch (ev.type) {
-      case "retire":
-        rows.push({ label: "Person", value: personName(ev.personId) });
-        if (ev.retirementAge) rows.push({ label: "Retirement age", value: String(ev.retirementAge) });
-        if (ev.retirementExpense) {
-          rows.push({ label: "Retirement expense", value: `${formatMoney(ev.retirementExpense.amount)}/yr` });
-        }
-        break;
       case "buy_home": {
         // Rates/mortgage terms now live on the linked real_estate account
         // (and its own linked mortgage account) -- see BuyHomeEvent.realEstateAccountId.
