@@ -208,6 +208,10 @@ export const mockScenario: Scenario = {
       amount: 2_800,
       frequency: "monthly",
       startDate: "2057-05-15",
+      // Claimed two years after Alex retires -- LINKED rather than typed, so
+      // trying "what if we retire earlier?" moves the benefit with it. The
+      // resolved date is the same one that was hard-coded here before.
+      startAnchor: { personId: alexId, point: "retirement", offsetMonths: 24 },
       endDate: null,
       growthRatePct: 0.03, // COLA tracks inflation
       depositAccountId: null, // automatic -- lands in Extra Savings
@@ -220,6 +224,7 @@ export const mockScenario: Scenario = {
       amount: 2_400,
       frequency: "monthly",
       startDate: "2059-09-22",
+      startAnchor: { personId: jordanId, point: "retirement", offsetMonths: 48 },
       endDate: null,
       growthRatePct: 0.03, // COLA tracks inflation
       depositAccountId: null, // automatic -- lands in Extra Savings

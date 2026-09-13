@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { idSchema, isoDateSchema, recurrenceFrequencySchema } from "./common";
 import { temporaryAdjustmentSchema } from "./adjustment";
+import { dateAnchorFields } from "./anchor";
 
 const baseEventFields = {
   id: idSchema,
@@ -8,6 +9,7 @@ const baseEventFields = {
   startDate: isoDateSchema,
   /** For temporary effects (career break); omitted/null = permanent. */
   endDate: isoDateSchema.nullable().optional(),
+  ...dateAnchorFields,
   notes: z.string().optional(),
   /** Visible and editable, but the engine skips it entirely -- no effect on
    *  the projection. A lighter-weight "what if this didn't happen" toggle

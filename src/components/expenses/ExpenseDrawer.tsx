@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import type { ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
+import type { DateAnchor, ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { expenseBaselineSchema } from "@/domain";
 import { Drawer } from "@/components/ui/Drawer";
 import {
@@ -25,6 +25,8 @@ import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumbe
 import { accountOptions } from "@/lib/people";
 import { usePlanStore } from "@/store/usePlanStore";
 import { AdjustmentsEditor, adjustmentsIssue } from "@/components/ui/AdjustmentsEditor";
+import { AnchoredDateInput } from "@/components/ui/AnchoredDate";
+import { ANCHOR_HINT } from "@/components/ui/formFields";
 
 const CATEGORY_OPTIONS: { value: ExpenseCategory; label: string }[] = [
   { value: "housing", label: "Housing" },
@@ -88,6 +90,11 @@ export function ExpenseDrawer({
   const [error, setError] = useState<string | null>(null);
   const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(expense?.adjustments ?? []);
   const [adjustmentsKey, setAdjustmentsKey] = useState(() => JSON.stringify(expense?.adjustments ?? []));
+  // Structured values that live outside react-hook-form, like `adjustments`.
+  const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(expense?.startAnchor ?? null);
+  const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(expense?.endAnchor ?? null);
+  const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([expense?.startAnchor ?? null, expense?.endAnchor ?? null]));
+  const events = usePlanStore((s) => s.activeScenario().events);
   const [advancedOpen, setAdvancedOpen] = useState(
     !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
   );
@@ -99,13 +106,14 @@ export function ExpenseDrawer({
     handleSubmit,
     watch,
     reset,
+    setValue,
     formState: { isDirty },
   } = useForm<FormValues>({
     defaultValues: toFormValues(expense),
   });
   const category = watch("category");
   const isOneTime = watch("frequency") === "one_time";
-  const dirty = isDirty || JSON.stringify(adjustments) !== adjustmentsKey;
+  const dirty = isDirty || JSON.stringify(adjustments) !== adjustmentsKey || JSON.stringify([startAnchor, endAnchor]) !== anchorsKey;
 
   // Re-sync the form whenever the drawer opens on a different expense --
   // without this, a reused drawer instance shows the previous item's values.
@@ -113,6 +121,9 @@ export function ExpenseDrawer({
     reset(toFormValues(expense));
     setAdjustments(expense?.adjustments ?? []);
     setAdjustmentsKey(JSON.stringify(expense?.adjustments ?? []));
+    setStartAnchor(expense?.startAnchor ?? null);
+    setEndAnchor(expense?.endAnchor ?? null);
+    setAnchorsKey(JSON.stringify([expense?.startAnchor ?? null, expense?.endAnchor ?? null]));
     setError(null);
     setAdvancedOpen(!!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true));
   }, [expense, open, reset]);
@@ -145,6 +156,9 @@ export function ExpenseDrawer({
       frequency: values.frequency,
       startDate: values.startDate,
       endDate: values.frequency === "one_time" ? null : values.endDate || null,
+      startAnchor,
+      // A one-time expense has no end date, so it can have no end link either.
+      endAnchor: values.frequency === "one_time" ? null : endAnchor,
       growthRatePct: growth,
       // A one-time item is one-time: never carry a hidden repeat interval.
       intervalYears: values.frequency !== "one_time" && values.intervalYears.trim() !== "" ? Number(values.intervalYears) : undefined,
@@ -207,16 +221,43 @@ export function ExpenseDrawer({
               </FieldRow>
             )}
             {isOneTime ? (
-              <Field label="Date">
-                <TextInput reg={register("startDate", { required: true })} type="date" />
+              <Field label="Date" hint={ANCHOR_HINT}>
+                <AnchoredDateInput
+                  reg={register("startDate", { required: true })}
+                  anchor={startAnchor}
+                  onAnchorChange={setStartAnchor}
+                  onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
+                  people={people}
+                  events={events}
+                  kind="start"
+                />
               </Field>
             ) : (
               <FieldRow>
-                <Field label="Start Date">
-                  <TextInput reg={register("startDate", { required: true })} type="date" />
+                <Field label="Start Date" hint={ANCHOR_HINT}>
+                  <AnchoredDateInput
+                    reg={register("startDate", { required: true })}
+                    anchor={startAnchor}
+                    onAnchorChange={setStartAnchor}
+                    onResolve={(d) => setValue("startDate", d, { shouldDirty: true })}
+                    people={people}
+                    events={events}
+                    kind="start"
+                  />
                 </Field>
-                <Field label="End Date" hint="Optional -- leave blank to continue indefinitely.">
-                  <TextInput reg={register("endDate")} type="date" />
+                <Field
+                  label="End Date"
+                  hint="Optional -- leave blank to continue indefinitely. Link it to a retirement (a pre-Medicare healthcare bridge, a mortgage you mean to clear) and the last payment lands the day before."
+                >
+                  <AnchoredDateInput
+                    reg={register("endDate")}
+                    anchor={endAnchor}
+                    onAnchorChange={setEndAnchor}
+                    onResolve={(d) => setValue("endDate", d, { shouldDirty: true })}
+                    people={people}
+                    events={events}
+                    kind="end"
+                  />
                 </Field>
               </FieldRow>
             )}

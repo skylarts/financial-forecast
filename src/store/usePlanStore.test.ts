@@ -130,3 +130,53 @@ describe("usePlanStore", () => {
     expect(listRecoveryCopies(storage).map((c) => c.reason)).toEqual(["Replaced by the cloud copy"]);
   });
 });
+
+/**
+ * The reason anchored dates live behind `withActiveScenario` rather than in
+ * any one form: the edit that moves them is a change to a PERSON, made in a
+ * different drawer from the pension or the Roth window that follows it.
+ */
+describe("retirement-linked dates", () => {
+  beforeEach(reset);
+
+  it("moves every linked date when the retirement age changes, without touching unlinked ones", () => {
+    const store = usePlanStore.getState();
+    const person = store.activeScenario().household.people[0];
+    const retireAt = (offsetMonths: number) => ({ personId: person.id, point: "retirement" as const, offsetMonths });
+
+    store.addIncomeSource({
+      name: "Pension",
+      ownerId: person.id,
+      amount: 4000,
+      frequency: "monthly",
+      startDate: "2030-01-01",
+      endDate: null,
+      startAnchor: retireAt(0),
+      growthRatePct: 0,
+      depositAccountId: null,
+      category: "pension",
+    });
+    store.addExpense({
+      name: "Fixed expense",
+      amount: 500,
+      frequency: "monthly",
+      startDate: "2026-01-01",
+      endDate: null,
+      growthRatePct: null,
+      paymentAccountId: null,
+      category: "other",
+    });
+
+    const linkedId = () => usePlanStore.getState().activeScenario().incomeSources.find((i) => i.name === "Pension")!;
+    const unlinkedId = () => usePlanStore.getState().activeScenario().expenses.find((e) => e.name === "Fixed expense")!;
+
+    const before = linkedId().startDate;
+    expect(before).not.toBe("2030-01-01"); // resolved off the retirement, not the typed date
+
+    usePlanStore.getState().updatePerson(person.id, { ...person, retirementAge: person.retirementAge + 3 });
+
+    const after = linkedId().startDate;
+    expect(Number(after.slice(0, 4))).toBe(Number(before.slice(0, 4)) + 3);
+    expect(unlinkedId().startDate).toBe("2026-01-01");
+  });
+});

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import { idSchema } from "./common";
+import { resolveAnchoredDates } from "./anchor";
 import { householdSchema } from "./household";
 import { accountSchema, type Account } from "./account";
 import { incomeSourceSchema } from "./income";
@@ -109,7 +110,13 @@ export const scenarioSchema = z
     if (scenario.accounts.some((a) => a.isExtraSavings)) return scenario;
     return { ...scenario, accounts: [freshExtraSavingsAccount(), ...scenario.accounts] };
   })
-  .transform(migrateStopBoundsToAccounts);
+  .transform(migrateStopBoundsToAccounts)
+  // Anchored dates are recomputed on every parse, so a plan loaded from disk,
+  // restored from a backup, or built as a fixture already carries the dates its
+  // anchors imply -- no downstream code ever sees a stale one. The other half
+  // of this lives in usePlanStore's withActiveScenario, for live edits that
+  // never go back through the schema.
+  .transform(resolveAnchoredDates);
 export type Scenario = z.infer<typeof scenarioSchema>;
 
 /** Top-level persisted document. */

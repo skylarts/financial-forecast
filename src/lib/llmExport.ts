@@ -1,13 +1,16 @@
 import type {
   Account,
+  DateAnchor,
   DrainStop,
   ExpenseBaseline,
   IncomeSource,
+  Person,
   SplitStop,
   Scenario,
   ScenarioEvent,
   TemporaryAdjustment,
 } from "@/domain";
+import { anchorLabel } from "@/domain";
 import { projectScenario } from "@/engine/forecastScenario";
 import { STRATEGY_DESCRIPTIONS, STRATEGY_LABELS, deriveDrainOrder } from "@/engine/strategy";
 import { todayISO } from "@/engine/dateMath";
@@ -79,6 +82,22 @@ function fmtGrowth(rate: number | null | undefined): string {
   if (rate == null) return "growth matches the plan's inflation rate (left blank)";
   if (!rate) return "flat in nominal terms (0% growth)";
   return `growing ${fmtPct(rate)}/yr (nominal)`;
+}
+
+/**
+ * A note saying that a date is DERIVED from a retirement, not typed in.
+ * Without this, an advisor reading the export sees a hard date and has no way
+ * to know it moves on its own when the retirement age is changed.
+ */
+function fmtAnchors(
+  item: { startAnchor?: DateAnchor | null; endAnchor?: DateAnchor | null },
+  people: readonly Person[]
+): string[] {
+  const parts: string[] = [];
+  if (item.startAnchor) parts.push(`its start date follows ${anchorLabel(item.startAnchor, people)}`);
+  if (item.endAnchor) parts.push(`its end date is the day before ${anchorLabel(item.endAnchor, people)}`);
+  if (!parts.length) return [];
+  return [`  - Linked date: ${parts.join("; ")} — recomputed whenever that retirement moves.`];
 }
 
 function fmtAdjustments(adjustments: TemporaryAdjustment[] | undefined): string[] {
@@ -335,6 +354,7 @@ export function buildLlmExport(scenario: Scenario): string {
         `  - Gross (Box-1-style) amount: ${formatMoney(inc.grossAmount)} — used to stack withdrawals/gains on top of this person's true tax bracket while still working, instead of assuming $0 other ordinary income.`
       );
     }
+    lines.push(...fmtAnchors(inc, scenario.household.people));
     lines.push(...fmtAdjustments(inc.adjustments));
   }
 
@@ -346,6 +366,7 @@ export function buildLlmExport(scenario: Scenario): string {
     lines.push(
       `- **${exp.name}** (id: \`${exp.id}\`, category: ${exp.category}) — ${fmtRecurrence(exp.amount, exp.frequency, exp.intervalYears)}, ${fmtGrowth(exp.growthRatePct)}, paid from ${accountName(exp.paymentAccountId)}, ${exp.startDate} → ${exp.endDate ?? "end of plan"}${exp.isExcluded ? " — **excluded**" : ""}`
     );
+    lines.push(...fmtAnchors(exp, scenario.household.people));
     lines.push(...fmtAdjustments(exp.adjustments));
   }
 
@@ -357,6 +378,7 @@ export function buildLlmExport(scenario: Scenario): string {
       const suffix = ev.isExcluded ? " — **excluded**" : "";
       const head = `- **${ev.name}** (${ev.type}) — ${ev.startDate}${ev.endDate ? ` → ${ev.endDate}` : ""}${suffix}`;
       lines.push(head);
+      lines.push(...fmtAnchors(ev, scenario.household.people));
       switch (ev.type) {
         case "retire":
           lines.push(
