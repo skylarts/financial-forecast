@@ -62,11 +62,28 @@ Every scenario must contain exactly one account with \`"isExtraSavings": true\` 
       "id": string,
       "name": string,               // non-empty
       "birthDate": "YYYY-MM-DD",
-      "retirementAge": integer > 0,
+      "retirementAge": integer > 0,  // THE retirement setting: the engine reads it (see the note below)
+      "retirementDate": "YYYY-MM-DD" | null,           // optional; an exact date, when it isn't the birthday at retirementAge
+      "skipRetirement": boolean,                       // optional; true = modelled as working through the whole plan
+      "retirementSpending": RetirementSpending | null, // optional; extra spending from the day they retire
+      "retirementNotes": string,                       // optional
       "planningEndAge": integer > 0  // the age this person is modelled as living to: sets the plan horizon and drives the survivor rules (income stops, pension survivor share, Social Security survivor keeps the larger benefit, married household files single from the next year)
     },
     ...                              // at least 1 person
   ]
+}
+\`\`\`
+
+**Retirement lives on the person.** There is no \`retire\` event -- a plan saved by an older build still has one, and loading it folds the event onto its person and drops it (schema version 5 → 6). The retirement date is \`retirementDate\` when set, else the birthday at \`retirementAge\`, and \`skipRetirement: true\` means they never retire. That date is what stops their salary and paycheck contributions, switches their healthcare stage, places the retirement KPIs, and anchors any linked date.
+
+**RetirementSpending:**
+\`\`\`
+{
+  "amount": number >= 0,            // ANNUAL, today's dollars -- posted monthly, not as a December lump
+  "growthRatePct": number | null,   // null = track plan inflation
+  "paymentAccountId": string | null, // null = pays from Extra Savings
+  "endDate": "YYYY-MM-DD" | null,   // null = runs to the end of the plan
+  "adjustments": [ TemporaryAdjustment, ... ]  // optional
 }
 \`\`\`
 
@@ -194,7 +211,7 @@ A pension's \`growthRatePct\` of \`null\` means **0** (no cost-of-living raise),
 
 ## DateAnchor
 
-A date that FOLLOWS someone's retirement instead of being typed in. Available on any IncomeSource, ExpenseBaseline, or event (except \`retire\`, which is the milestone itself). When an anchor is present the corresponding \`startDate\`/\`endDate\` is **derived**: the app recomputes it on every load and every edit, so a hand-written date beside an anchor is ignored (write the anchor's own answer there, or omit the anchor).
+A date that FOLLOWS someone's retirement instead of being typed in. Available on any IncomeSource, ExpenseBaseline, or event. When an anchor is present the corresponding \`startDate\`/\`endDate\` is **derived**: the app recomputes it on every load and every edit, so a hand-written date beside an anchor is ignored (write the anchor's own answer there, or omit the anchor).
 \`\`\`
 {
   "personId": string,           // whose retirement this follows
@@ -203,7 +220,7 @@ A date that FOLLOWS someone's retirement instead of being typed in. Available on
 }
 \`\`\`
 
-The retirement date itself is the person's earliest non-excluded \`retire\` event, or -- when they have none -- their birthday at \`Household.retirementAge\`. An \`endAnchor\` resolves to the day BEFORE that date, because \`endDate\` is inclusive ("ends when I retire" = the last payment is before retirement day).
+The retirement date itself comes from the person (see Household above): \`retirementDate\` when set, else their birthday at \`retirementAge\`. Someone with \`skipRetirement\` has no date, so an anchor to them resolves to nothing and the stored date stands. An \`endAnchor\` resolves to the day BEFORE that date, because \`endDate\` is inclusive ("ends when I retire" = the last payment is before retirement day).
 
 ## Frequency enum
 
@@ -235,24 +252,7 @@ Every event shares these base fields, plus a \`"type\"\`-specific set below:
   "endAnchor": DateAnchor | null,    // optional; when set, endDate is recomputed as the DAY BEFORE the anchor point
   "notes": string,                  // optional
   "isExcluded": boolean,            // optional
-  "type": EventType                 // one of the seven below — determines which extra fields apply
-}
-\`\`\`
-
-**type: "retire"**
-\`\`\`
-{
-  ...base,
-  "type": "retire",
-  "personId": string,                       // whose retirement this is
-  "retirementAge": integer > 0,              // optional; overrides that person's Household.retirementAge
-  "retirementExpense": {                     // optional; extra spending starting the day retirement begins
-    "amount": number >= 0,                    // annual, today's dollars
-    "growthRatePct": number | null,
-    "paymentAccountId": string | null,        // null = pays from Extra Savings
-    "endDate": "YYYY-MM-DD" | null,           // null = runs to end of plan
-    "adjustments": [ TemporaryAdjustment, ... ]  // optional
-  } | null
+  "type": EventType                 // one of the six below — determines which extra fields apply
 }
 \`\`\`
 

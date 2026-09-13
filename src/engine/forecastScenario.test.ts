@@ -300,14 +300,14 @@ describe("forecastScenario -- RMDs", () => {
 });
 
 describe("forecastScenario -- retirement", () => {
-  it("stops salary income at the retire event's date", () => {
+  it("stops salary income on the person's retirement date", () => {
     const personId = nanoid();
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
     const scenario = makeScenario({
       accounts: [checking],
-      people: [{ id: personId, name: "Worker", birthDate: "1990-01-01", retirementAge: 65, planningEndAge: 95 }],
+      // An exact date rather than the age: retirement does not have to land on a birthday.
+      people: [{ id: personId, name: "Worker", birthDate: "1990-01-01", retirementAge: 65, retirementDate: "2026-07-01", planningEndAge: 95 }],
       incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5000, ownerId: personId, category: "salary" })],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-07-01", personId }],
       horizonEndDate: "2026-12-31",
     });
     const result = forecastScenario(scenario);
@@ -1189,8 +1189,7 @@ describe("forecastScenario -- contributions stop at retirement", () => {
     });
     const scenario = makeScenario({
       accounts: [checking, k401],
-      people: [{ id: personId, name: "Worker", birthDate: "1965-01-01", retirementAge: 63, planningEndAge: 95 }],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2028-01-01", personId }],
+      people: [{ id: personId, name: "Worker", birthDate: "1965-01-01", retirementAge: 63, retirementDate: "2028-01-01", planningEndAge: 95 }],
       startDate: "2026-01-01",
       horizonEndDate: "2029-12-31",
     });
@@ -1769,13 +1768,14 @@ describe("forecastScenario -- isExcluded (real exclusion, not cosmetic)", () => 
     expect(year.accountBalances[checking.id]).toBeCloseTo(60_000, 0); // untouched by the (skipped) contribution draw
   });
 
-  it("an excluded event doesn't count toward the retirement KPI", () => {
+  it("someone modelled as never retiring doesn't count toward the retirement KPI", () => {
     const personId = nanoid();
     const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true });
     const scenario = makeScenario({
       accounts: [checking],
-      people: [{ id: personId, name: "Worker", birthDate: "1990-01-01", retirementAge: 65, planningEndAge: 95 }],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-07-01", personId, isExcluded: true }],
+      people: [
+        { id: personId, name: "Worker", birthDate: "1990-01-01", retirementAge: 65, skipRetirement: true, planningEndAge: 95 },
+      ],
       horizonEndDate: "2026-12-31",
     });
     const result = forecastScenario(scenario);

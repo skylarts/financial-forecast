@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import type { Account, DateAnchor, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, TimelineRow } from "@/domain";
+import { retirementsInOrder } from "@/domain";
+import { useAssumptionsStore } from "@/store/useAssumptionsStore";
 import { AnchorChip } from "@/components/ui/AnchoredDate";
 import { formatMoney } from "@/lib/format";
 import { EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES, freqLabel } from "@/lib/timelineFormat";
@@ -67,6 +69,7 @@ export function TimelineTab({
   const [incomeDrawer, setIncomeDrawer] = useState<{ open: boolean; item?: IncomeSource }>({ open: false });
   const [expenseDrawer, setExpenseDrawer] = useState<{ open: boolean; item?: ExpenseBaseline }>({ open: false });
   const [eventDrawer, setEventDrawer] = useState<{ open: boolean; item?: ScenarioEvent }>({ open: false });
+  const openAssumptions = useAssumptionsStore((s) => s.openAssumptions);
 
   const ownerName = (id: string | null) => (id ? people.find((p) => p.id === id)?.name ?? "" : "Joint");
   const timelineById = new Map(timeline.map((t) => [t.eventId, t]));
@@ -124,6 +127,22 @@ export function TimelineTab({
         open: guard(() => setExpenseDrawer({ open: true, item: exp })),
       });
     }
+  }
+
+  // Retirement has no event to iterate any more: one row per person who
+  // retires, built from the household, opening the Assumptions drawer (which
+  // is where retirement is edited) rather than an event drawer.
+  for (const { person, date } of retirementsInOrder(people)) {
+    rows.push({
+      key: `retire-${person.id}`,
+      date,
+      tone: "event",
+      badge: "Retire",
+      name: `${person.name} retires`,
+      detail: timelineById.get(`retirement:${person.id}`)?.description ?? `${person.name} retires`,
+      excluded: false,
+      open: guard(() => openAssumptions()),
+    });
   }
 
   for (const ev of events) {

@@ -2,6 +2,7 @@ import { planSchema, scenarioSchema, type Plan, type Scenario, type ScenarioEven
 import { looksLikeV2Plan, migrateV2PlanToV3 } from "@/lib/migrateV2Plan";
 import { migrateLegacyBuyHomeEvents } from "@/lib/migrateLegacyBuyHome";
 import { migrateV4Plan, needsV4Migration } from "@/lib/migrateV4Plan";
+import { migrateV5Plan, needsV5Migration } from "@/lib/migrateV5Plan";
 
 /**
  * The one way a plan enters the app.
@@ -18,7 +19,7 @@ import { migrateV4Plan, needsV4Migration } from "@/lib/migrateV4Plan";
  */
 
 /** Bumped whenever the persisted shape changes in a way a migration handles. */
-export const PLAN_SCHEMA_VERSION = 5;
+export const PLAN_SCHEMA_VERSION = 6;
 
 export interface NormalizeOk {
   ok: true;
@@ -64,6 +65,15 @@ export function repairReferences(scenario: Scenario): { scenario: Scenario; repa
   const hasAccount = (id: string | null | undefined) => id == null || accountIds.has(id);
   const hasPerson = (id: string | null | undefined) => id == null || personIds.has(id);
 
+  // Retirement spending names an account to pay from, and that account can be
+  // deleted out from under it -- the same repair every other account link gets.
+  const people = scenario.household.people.map((person) => {
+    const spending = person.retirementSpending;
+    if (!spending || hasAccount(spending.paymentAccountId)) return person;
+    repairs.push(`${person.name}: the account their retirement spending was paid from no longer exists, so it now comes from Extra Savings.`);
+    return { ...person, retirementSpending: { ...spending, paymentAccountId: null } };
+  });
+
   const accounts = scenario.accounts.map((a) => {
     let next = a;
     if (!hasPerson(a.ownerId)) {
@@ -108,17 +118,6 @@ export function repairReferences(scenario: Scenario): { scenario: Scenario; repa
 
   const events: ScenarioEvent[] = scenario.events.flatMap((e): ScenarioEvent[] => {
     switch (e.type) {
-      case "retire": {
-        if (!personIds.has(e.personId)) {
-          repairs.push(`${e.name}: the person it retires no longer exists, so the event was removed.`);
-          return [];
-        }
-        if (e.retirementExpense && !hasAccount(e.retirementExpense.paymentAccountId)) {
-          repairs.push(`${e.name}: its retirement expense's account no longer exists, so it is now paid from Extra Savings.`);
-          return [{ ...e, retirementExpense: { ...e.retirementExpense, paymentAccountId: null } }];
-        }
-        return [e];
-      }
       case "buy_home":
         if (!accountIds.has(e.realEstateAccountId) || !accountIds.has(e.downPaymentFromAccountId)) {
           repairs.push(`${e.name}: an account it needs no longer exists, so the event was removed.`);
@@ -164,6 +163,7 @@ export function repairReferences(scenario: Scenario): { scenario: Scenario; repa
   return {
     scenario: {
       ...scenario,
+      household: { people },
       accounts,
       incomeSources,
       expenses,
@@ -202,8 +202,10 @@ export function normalizePlan(raw: unknown): NormalizeResult {
   const v3 = wasV2 ? migrateV2PlanToV3(unwrapped) : unwrapped;
   const withHomes = migrateLegacyBuyHomeEvents(v3);
   const wasV4 = needsV4Migration(withHomes);
-  const candidate = wasV4 ? migrateV4Plan(withHomes) : withHomes;
-  const migrated = wasV2 || wasV4;
+  const v5 = wasV4 ? migrateV4Plan(withHomes) : withHomes;
+  const wasV5 = needsV5Migration(v5);
+  const candidate = wasV5 ? migrateV5Plan(v5) : v5;
+  const migrated = wasV2 || wasV4 || wasV5;
   const result = planSchema.safeParse(candidate);
   if (!result.success) {
     const issue = result.error.issues[0];

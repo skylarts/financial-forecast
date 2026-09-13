@@ -74,23 +74,24 @@ describe("repairReferences", () => {
     expect(repairs.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("nulls a retirement expense's missing payment account instead of dropping the retire event", () => {
+  it("nulls retirement spending's missing payment account instead of dropping it", () => {
     const s = normalizePlan(samplePlan());
     if (!s.ok) throw new Error(s.error);
     const scenario = s.plan.scenarios[0];
-    const retire = scenario.events.find((e) => e.type === "retire")!;
-    const withExpense = {
+    const person = scenario.household.people[0];
+    const withSpending = {
       ...scenario,
-      events: scenario.events.map((e) =>
-        e.id === retire.id && e.type === "retire"
-          ? { ...e, retirementExpense: { amount: 1000, growthRatePct: null, paymentAccountId: "gone", endDate: null } }
-          : e
-      ),
+      household: {
+        people: scenario.household.people.map((p) =>
+          p.id === person.id
+            ? { ...p, retirementSpending: { amount: 1000, growthRatePct: null, paymentAccountId: "gone", endDate: null } }
+            : p
+        ),
+      },
     };
-    const { scenario: repaired, repairs } = repairReferences(withExpense);
-    const fixed = repaired.events.find((e) => e.id === retire.id);
-    expect(fixed?.type).toBe("retire");
-    if (fixed?.type === "retire") expect(fixed.retirementExpense?.paymentAccountId).toBeNull();
+    const { scenario: repaired, repairs } = repairReferences(withSpending);
+    const fixed = repaired.household.people.find((p) => p.id === person.id);
+    expect(fixed?.retirementSpending?.paymentAccountId).toBeNull();
     expect(repairs).toHaveLength(1);
   });
 

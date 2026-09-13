@@ -1,4 +1,4 @@
-import type { EventType, IncomeCategory, LedgerEvent } from "@/domain";
+import type { IncomeCategory, LedgerEvent, TimelineEntryType } from "@/domain";
 
 export const FREQUENCY_LABELS: Record<string, string> = {
   monthly: "/mo",
@@ -19,8 +19,8 @@ export const INCOME_CATEGORY_BADGES: Record<IncomeCategory, string> = {
   other: "Income",
 };
 
-export const EVENT_TYPE_LABELS: Record<EventType, string> = {
-  retire: "Retire",
+export const EVENT_TYPE_LABELS: Record<TimelineEntryType, string> = {
+  retirement: "Retire",
   buy_home: "Buy a home",
   sell_home: "Sell a home",
   roth_conversion: "Roth conversion",

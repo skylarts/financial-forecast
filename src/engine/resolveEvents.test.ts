@@ -60,8 +60,14 @@ describe("resolveEvents (mock fixture)", () => {
     expect(ss[0].category).toBe("income");
   });
 
-  it("builds one timeline row per event", () => {
-    expect(resolved.timeline).toHaveLength(mockScenario.events.length);
+  it("builds one timeline row per event, plus one per person who retires", () => {
+    // Retirement is not an event any more, but it still earns a timeline row
+    // (and a chart milestone) -- synthesized from the household.
+    expect(resolved.timeline).toHaveLength(mockScenario.events.length + mockScenario.household.people.length);
+    expect(resolved.timeline.filter((r) => r.eventType === "retirement").map((r) => r.name)).toEqual([
+      "Alex retires",
+      "Jordan retires",
+    ]);
   });
 });
 
@@ -218,19 +224,21 @@ describe("resolveEvents -- isExcluded", () => {
     expect(resolved.postings.some((p) => p.label === "Rent")).toBe(false);
   });
 
-  it("an excluded event has no effect (a retire event doesn't trim salary)", () => {
+  it("someone modelled as never retiring keeps their salary all year", () => {
     const personId = nanoid();
     const cash = makeAccount({ class: "cash", name: "Cash" });
     const salary = makeIncome({ name: "Salary", amount: 4_000, ownerId: personId, category: "salary", depositAccountId: cash.id });
     const scenario = makeScenario({
       accounts: [cash],
       incomeSources: [salary],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-06-01", personId, isExcluded: true }],
+      people: [
+        { id: personId, name: "Worker", birthDate: "1965-06-01", retirementAge: 61, skipRetirement: true, planningEndAge: 95 },
+      ],
       horizonEndDate: "2026-12-31",
     });
     const resolved = resolveEvents(scenario);
     const postings = resolved.postings.filter((p) => p.label === "Salary");
-    expect(postings).toHaveLength(12); // not trimmed -- the retire event is excluded
+    expect(postings).toHaveLength(12); // not trimmed -- this person never retires
   });
 
   it("a posting targeting an excluded account is dropped entirely", () => {

@@ -9,7 +9,14 @@ import { makeAccount, makeExpense, makeIncome, makeScenario } from "./testHelper
 
 /** Guards the withdrawal strategy presets, the cash buffer, the plan-wide return, the healthcare model, and the stress presets. */
 
-const person = (birthDate: string, retirementAge = 65) => ({ id: nanoid(), name: "P", birthDate, retirementAge, planningEndAge: 95 });
+const person = (birthDate: string, retirementAge = 65, retirementDate?: string) => ({
+  id: nanoid(),
+  name: "P",
+  birthDate,
+  retirementAge,
+  ...(retirementDate ? { retirementDate } : {}),
+  planningEndAge: 95,
+});
 
 describe("settings: withdrawal strategy default", () => {
   const base = { startDate: "2026-01-01", horizonEndDate: "2087-12-31", inflationRatePct: 0.03 };
@@ -160,13 +167,12 @@ describe("healthcare model", () => {
   });
 
   it("uses the employer premium while a salary runs, and the marketplace once it stops", () => {
-    const p = person("1975-03-01", 51); // retires at 51: 2026-03-01
+    const p = person("1975-03-01", 51, "2026-07-01"); // an exact last day of work, mid-year
     const salary = makeIncome({ name: "Salary", amount: 6_000, ownerId: p.id });
     const scenario = makeScenario({
       accounts: [cashAccount()],
       people: [p],
       incomeSources: [salary],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-07-01", personId: p.id, retirementAge: 51 }],
       healthcare: {
         ...flat,
         workingMonthlyPremiumPerPerson: 100,
@@ -180,12 +186,11 @@ describe("healthcare model", () => {
   });
 
   it("runs COBRA for the set months after the last paycheck, then the marketplace", () => {
-    const p = person("1975-03-01", 51);
+    const p = person("1975-03-01", 51, "2026-04-01");
     const scenario = makeScenario({
       accounts: [cashAccount()],
       people: [p],
       incomeSources: [makeIncome({ name: "Salary", amount: 6_000, ownerId: p.id })],
-      events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2026-04-01", personId: p.id, retirementAge: 51 }],
       healthcare: {
         ...flat,
         retiredCoverage: "cobra_then_marketplace",
@@ -245,14 +250,13 @@ describe("healthcare model", () => {
 });
 
 describe("stress presets", () => {
-  const owner = person("1980-01-01", 60);
+  const owner = person("1980-01-01", 60, "2040-01-01");
   const fund = makeAccount({ class: "taxable_investment", name: "Fund", startingBalance: 500_000, growthRatePct: 0.06 });
   const ss = makeIncome({ name: "SS", amount: 2_500, category: "social_security", ownerId: owner.id, startDate: "2047-01-01" });
   const scenario = makeScenario({
     accounts: [fund],
     people: [owner],
     incomeSources: [ss],
-    events: [{ id: nanoid(), type: "retire", name: "Retire", startDate: "2040-01-01", personId: owner.id, retirementAge: 60 }],
     horizonEndDate: "2050-12-31",
   });
 

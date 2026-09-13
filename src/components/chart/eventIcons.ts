@@ -1,7 +1,9 @@
-import type { EventType, ExpenseCategory, IncomeCategory } from "@/domain";
+import type { ExpenseCategory, IncomeCategory, TimelineEntryType } from "@/domain";
 
-export const EVENT_TYPE_ICONS: Record<EventType, string> = {
-  retire: "🏖️",
+// Keyed by TimelineEntryType, so the synthesized "retirement" row has an
+// icon alongside the real event types.
+export const EVENT_TYPE_ICONS: Record<TimelineEntryType, string> = {
+  retirement: "🏖️",
   buy_home: "🏠",
   sell_home: "🏷️",
   roth_conversion: "🔄",

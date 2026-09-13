@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import type { Account, ISODate, Person, ProjectionResult, PeriodSnapshot, ScenarioEvent } from "@/domain";
+import { retirementsInOrder } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ACCOUNT_CLASS_LABELS, buildAccountColors, displayAccounts, groupAccountsByClass } from "@/lib/accountColors";
 import { ageOn, yearOf } from "@/engine/dateMath";
@@ -72,7 +73,6 @@ export function OverviewBento({
   dollarMode,
   planStartDate,
   people,
-  events,
   compare = null,
   chart,
 }: {
@@ -84,7 +84,6 @@ export function OverviewBento({
   /** Resolved plan start: scenario.settings.startDate ?? todayISO(). */
   planStartDate: ISODate;
   people: Person[];
-  events: ScenarioEvent[];
   compare?: CompareOverview | null;
   chart: React.ReactNode;
 }) {
@@ -98,12 +97,10 @@ export function OverviewBento({
 
   // The first retirement in the plan: which year, whose, at what age.
   const retire = useMemo(() => {
-    const evs = events.filter((e) => e.type === "retire" && !e.isExcluded).sort((a, b) => a.startDate.localeCompare(b.startDate));
-    const first = evs[0];
-    if (!first || first.type !== "retire") return null;
-    const person = people.find((p) => p.id === first.personId);
-    return { year: yearOf(first.startDate), name: person?.name ?? null, age: person ? ageOn(person.birthDate, first.startDate) : null };
-  }, [events, people]);
+    const first = retirementsInOrder(people)[0];
+    if (!first) return null;
+    return { year: yearOf(first.date), name: first.person.name, age: ageOn(first.person.birthDate, first.date) };
+  }, [people]);
   const pastRetirement = retire !== null && planStartYear > retire.year;
 
   const atRetirement = retire && !pastRetirement ? nw(projection.years.find((y) => y.year === retire.year)) : null;

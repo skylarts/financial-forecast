@@ -188,26 +188,27 @@ describe("buildLlmExport", () => {
       expect(out).toContain("ignored while sellingCostsPct is set");
     });
 
-    it("includes temporary adjustment windows on a retirement event's retirementExpense", () => {
-      const retireEvent = mockScenario.events.find((e) => e.type === "retire")!;
+    it("includes temporary adjustment windows on a person's retirement spending", () => {
       const withAdjustment = {
         ...mockScenario,
-        events: mockScenario.events.map((e) =>
-          e.id === retireEvent.id
-            ? {
-                ...e,
-                retirementExpense: {
-                  amount: 12_000,
-                  growthRatePct: 0.03,
-                  paymentAccountId: null,
-                  endDate: null,
-                  adjustments: [
-                    { id: "adj-1", startDate: "2056-01-01", endDate: "2058-01-01", multiplier: 1.5, note: "extra travel" },
-                  ],
-                },
-              }
-            : e
-        ),
+        household: {
+          people: mockScenario.household.people.map((p, i) =>
+            i === 0
+              ? {
+                  ...p,
+                  retirementSpending: {
+                    amount: 12_000,
+                    growthRatePct: 0.03,
+                    paymentAccountId: null,
+                    endDate: null,
+                    adjustments: [
+                      { id: "adj-1", startDate: "2056-01-01", endDate: "2058-01-01", multiplier: 1.5, note: "extra travel" },
+                    ],
+                  },
+                }
+              : p
+          ),
+        },
       };
       const out = buildLlmExport(withAdjustment);
       expect(out).toContain("extra travel");

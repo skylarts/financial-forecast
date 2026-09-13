@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { idSchema, isoDateSchema, recurrenceFrequencySchema } from "./common";
-import { temporaryAdjustmentSchema } from "./adjustment";
 import { dateAnchorFields } from "./anchor";
 
 const baseEventFields = {
@@ -17,33 +16,13 @@ const baseEventFields = {
   isExcluded: z.boolean().optional(),
 };
 
-export const retireEventSchema = z.object({
-  ...baseEventFields,
-  type: z.literal("retire"),
-  personId: idSchema,
-  /** Overrides Person.retirementAge if provided. */
-  retirementAge: z.number().int().positive().optional(),
-  /** Optional recurring annual expense that starts the day retirement begins
-   *  (extra travel, hobbies, etc.) -- same today's-dollars + growth-rate +
-   *  temporary-adjustment shape as a regular Expense, just anchored to this
-   *  event's startDate instead of its own. */
-  retirementExpense: z
-    .object({
-      amount: z.number().nonnegative(),
-      /** Nominal annual growth rate, already includes inflation.
-       *  0 = flat in nominal terms; null/omitted = match the plan's inflation rate. */
-      growthRatePct: z.number().nullable().default(null),
-      /** null = pays automatically from Extra Savings. */
-      paymentAccountId: idSchema.nullable(),
-      /** null/omitted = runs through the end of the plan. */
-      endDate: isoDateSchema.nullable().optional(),
-      /** Temporary scaling windows (e.g. a few extra years of travel budget). */
-      adjustments: z.array(temporaryAdjustmentSchema).optional(),
-    })
-    .nullable()
-    .optional(),
-});
-export type RetireEvent = z.infer<typeof retireEventSchema>;
+/**
+ * Retirement is NOT an event. It lives on the person (see Person.retirementAge
+ * and `retirementDateOf`), because it is a property of someone's life, not a
+ * transaction on a date -- and because two places to say when you retire meant
+ * one of them was always silently wrong. A `retire` event in an older plan is
+ * folded onto its person by migrateV5Plan.
+ */
 
 export const buyHomeEventSchema = z.object({
   ...baseEventFields,
@@ -160,7 +139,6 @@ export type CustomTransferEvent = z.infer<typeof customTransferEventSchema>;
 
 export const scenarioEventSchema = z
   .discriminatedUnion("type", [
-    retireEventSchema,
     buyHomeEventSchema,
     sellHomeEventSchema,
     rothConversionEventSchema,

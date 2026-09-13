@@ -1,25 +1,15 @@
 import type { Scenario, ScenarioEvent, TimelineRow } from "@/domain";
+import { retirementsInOrder } from "@/domain";
 import { ageOn, yearOf } from "./dateMath";
 import { freqLabel } from "@/lib/timelineFormat";
 
 export function buildTimeline(scenario: Scenario): TimelineRow[] {
-  const personName = (id: string | null) =>
-    scenario.household.people.find((p) => p.id === id)?.name ?? "Someone";
   const accountName = (id: string) =>
     scenario.accounts.find((a) => a.id === id)?.name ?? "an account";
 
-  return scenario.events.map((event: ScenarioEvent) => {
+  const eventRows = scenario.events.map((event: ScenarioEvent) => {
     let description: string;
     switch (event.type) {
-      case "retire": {
-        const person = scenario.household.people.find((p) => p.id === event.personId);
-        const age = person ? ageOn(person.birthDate, event.startDate) : null;
-        const expense = event.retirementExpense
-          ? ` · $${event.retirementExpense.amount.toLocaleString()}/yr expense`
-          : "";
-        description = `${personName(event.personId)} retires${age !== null ? ` at age ${age}` : ""}${expense}`;
-        break;
-      }
       case "buy_home": {
         // Rates/mortgage terms now live on the linked real_estate account
         // (and its own linked mortgage account) -- see BuyHomeEvent.realEstateAccountId.
@@ -81,4 +71,24 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
       isExcluded: event.isExcluded,
     };
   });
+
+  // Retirement is a property of a person, not an event, so its rows are built
+  // from the household -- one per person who retires, with the same shape as
+  // an event row so every consumer (the Timeline tab, the chart's milestones)
+  // keeps treating them alike.
+  const retirementRows: TimelineRow[] = retirementsInOrder(scenario.household.people).map(({ person, date }) => {
+    const spending = person.retirementSpending?.amount
+      ? ` · $${person.retirementSpending.amount.toLocaleString()}/yr extra spending`
+      : "";
+    return {
+      eventId: `retirement:${person.id}`,
+      eventType: "retirement" as const,
+      name: `${person.name} retires`,
+      date,
+      year: yearOf(date),
+      description: `${person.name} retires at age ${ageOn(person.birthDate, date)}${spending}. Their salary and paycheck contributions stop here.`,
+    };
+  });
+
+  return [...eventRows, ...retirementRows].sort((a, b) => a.date.localeCompare(b.date));
 }

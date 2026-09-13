@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { usePlanStore, planHasContent } from "./usePlanStore";
 import { listRecoveryCopies, RECOVERY_PREFIX, type KeyValueStorage } from "@/lib/planRecovery";
-import type { ScenarioEvent } from "@/domain";
 
 /**
  * The store persists to `localStorage` and keeps recovery copies there too.
@@ -67,16 +66,15 @@ describe("usePlanStore", () => {
     expect(usePlanStore.getState().pendingUndo).toBeNull();
   });
 
-  it("refuses to delete an account that pays a retire event's retirement expense", () => {
+  it("refuses to delete an account that pays someone's retirement spending", () => {
     const s = usePlanStore.getState();
     const scenario = s.activeScenario();
     const brokerage = scenario.accounts.find((a) => a.name === "Joint Brokerage")!;
-    const retire = scenario.events.find((e) => e.type === "retire")!;
-    if (retire.type !== "retire") throw new Error("expected retire");
-    s.updateEvent(retire.id, {
-      ...retire,
-      retirementExpense: { amount: 5000, growthRatePct: null, paymentAccountId: brokerage.id, endDate: null },
-    } as unknown as Omit<ScenarioEvent, "id">);
+    const person = scenario.household.people[0];
+    s.updatePerson(person.id, {
+      ...person,
+      retirementSpending: { amount: 5000, growthRatePct: null, paymentAccountId: brokerage.id, endDate: null },
+    });
     // Also referenced by the buy_home down payment and the inheritance; strip those first.
     const buy = usePlanStore.getState().activeScenario().events.find((e) => e.type === "buy_home")!;
     usePlanStore.getState().removeEvent(buy.id);

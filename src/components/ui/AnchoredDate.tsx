@@ -7,10 +7,10 @@ import {
   anchorLabel,
   resolveAnchor,
   resolveEndAnchor,
+  retirementDateOf,
   type DateAnchor,
   type ISODate,
   type Person,
-  type ScenarioEvent,
 } from "@/domain";
 import { inputClass } from "./formFields";
 
@@ -29,7 +29,6 @@ export function AnchoredDateInput({
   onAnchorChange,
   onResolve,
   people,
-  events,
   kind,
   defaultPersonId,
 }: {
@@ -39,13 +38,15 @@ export function AnchoredDateInput({
   /** Called with the date the link resolves to, so the caller can write it into the form. */
   onResolve: (date: ISODate) => void;
   people: readonly Person[];
-  events: readonly ScenarioEvent[];
   /** An end date resolves to the day BEFORE the milestone; a start date to the day itself. */
   kind: "start" | "end";
   /** Who the link points at when it is first switched on (the item's owner, when it has one). */
   defaultPersonId?: string | null;
 }) {
-  const resolved = anchor ? (kind === "end" ? resolveEndAnchor(anchor, people, events) : resolveAnchor(anchor, people, events)) : null;
+  const resolved = anchor ? (kind === "end" ? resolveEndAnchor(anchor, people) : resolveAnchor(anchor, people)) : null;
+  // Someone modelled as never retiring has no date to follow, so they are not
+  // offered as a choice -- linking to them would silently resolve to nothing.
+  const retiring = people.filter((p) => retirementDateOf(p) !== null);
 
   // Push the resolved date into the form field whenever the link or the
   // retirement it follows moves. Mirrors how a claiming age already fills in a
@@ -57,7 +58,7 @@ export function AnchoredDateInput({
   }, [resolved]);
 
   if (!anchor) {
-    if (people.length === 0) return <input {...reg} type="date" className={inputClass} />;
+    if (retiring.length === 0) return <input {...reg} type="date" className={inputClass} />;
     return (
       <>
         <input {...reg} type="date" className={inputClass} />
@@ -65,7 +66,7 @@ export function AnchoredDateInput({
           type="button"
           onClick={() =>
             onAnchorChange({
-              personId: defaultPersonId || people[0].id,
+              personId: retiring.some((p) => p.id === defaultPersonId) ? defaultPersonId! : retiring[0].id,
               point: "retirement",
               offsetMonths: 0,
             })
@@ -78,7 +79,7 @@ export function AnchoredDateInput({
     );
   }
 
-  const missingPerson = !people.some((p) => p.id === anchor.personId);
+  const missingPerson = !retiring.some((p) => p.id === anchor.personId);
 
   return (
     <>
@@ -110,8 +111,8 @@ export function AnchoredDateInput({
             onChange={(e) => onAnchorChange({ ...anchor, personId: e.target.value })}
             className={`${inputClass} px-1 py-1 text-xs`}
           >
-            {missingPerson && <option value={anchor.personId}>(someone who was removed)</option>}
-            {people.map((p) => (
+            {missingPerson && <option value={anchor.personId}>(no longer retiring)</option>}
+            {retiring.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
@@ -127,7 +128,7 @@ export function AnchoredDateInput({
                 {kind === "end" ? ", the day before it" : ""}
               </>
             ) : (
-              "That person is no longer in the plan."
+              "That person no longer retires in this plan."
             )}
           </span>
           <button

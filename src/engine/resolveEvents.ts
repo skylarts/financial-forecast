@@ -1,6 +1,7 @@
-import type { Account, Id, ISODate, IncomeSource, Scenario, TemporaryAdjustment } from "@/domain";
+import type { Account, Id, ISODate, IncomeSource, Person, Scenario, TemporaryAdjustment } from "@/domain";
 import { addDays, compareDates, eachMonthStart, elapsedYears, todayISO } from "./dateMath";
 import { deathDateOf, survivorsOn } from "./household";
+import { retirementsInOrder } from "@/domain";
 import { expandOccurrences } from "./occurrences";
 import { growthAdjustedAmount, todaysDollarsAmount } from "./growth";
 import { buildTimeline } from "./timeline";
@@ -320,19 +321,62 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
 
   // --- Income sources: today's-dollars amount, own growth rate, plus any
   //     temporary adjustment windows entered directly on the source. ---
+  // Retirement comes from the PEOPLE, not from events: it is a property of
+  // someone's life, and reading it from one place is what guarantees a person
+  // who retires actually stops working. (It used to be carried by a `retire`
+  // event, so a person added without one drew a salary forever.)
+  /**
+   * The extra spending that starts the day someone retires. It hangs off the
+   * PERSON now (it used to be a field on their retire event), so it posts here
+   * from the household rather than from the event loop below.
+   *
+   * An annual figure spent through the year, so it posts monthly: a single
+   * December lump made the drain order over-draw the IRA for that year and
+   * sweep the excess into the brokerage.
+   */
+  function pushRetirementSpending(person: Person, retireDate: ISODate): void {
+    const spend = person.retirementSpending;
+    if (!spend || spend.amount <= 0) return;
+    const windows = spend.adjustments ?? [];
+    for (const occ of expandOccurrences(retireDate, spend.endDate ?? null, "monthly", horizonEnd)) {
+      // Entered in today's dollars; inflates from plan start to the retirement
+      // date (this spending's own "start"), then grows at its own rate from
+      // there -- the same two-stage pattern as a regular Expense.
+      const base =
+        todaysDollarsAmount(
+          spend.amount,
+          settings.startDate,
+          retireDate,
+          occ,
+          settings.inflationRatePct,
+          spend.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
+        ) / 12;
+      const amount = base * activeMultiplier(windows, occ);
+      if (amount === 0) continue;
+      const accountId = spend.paymentAccountId ?? primarySpendingAccountId;
+      if (!accountId) continue;
+      pushPosting({
+        date: occ,
+        yearMonth: occ.slice(0, 7),
+        accountId,
+        amount: -Math.abs(amount),
+        category: "expense",
+        label: `Retirement spending: ${person.name}`,
+        sourceId: `person:${person.id}:retirement_spending`,
+      });
+    }
+  }
+
   const retirementByPerson = new Map<Id, ISODate>();
   const incomeEndOverrides = new Map<Id, ISODate>();
-  for (const event of events) {
-    if (event.type !== "retire") continue;
-    const existingRetire = retirementByPerson.get(event.personId);
-    if (!existingRetire || compareDates(event.startDate, existingRetire) < 0) {
-      retirementByPerson.set(event.personId, event.startDate);
-    }
+  for (const { person, date } of retirementsInOrder(scenario.household.people)) {
+    retirementByPerson.set(person.id, date);
+    pushRetirementSpending(person, date);
     for (const src of scenario.incomeSources) {
       // Only a salary already running at retirement is trimmed; part-time or
       // consulting income that starts AFTER retirement is left alone.
-      if (src.ownerId === event.personId && src.category === "salary" && compareDates(src.startDate, event.startDate) < 0) {
-        const trimmedEnd = addDays(event.startDate, -1);
+      if (src.ownerId === person.id && src.category === "salary" && compareDates(src.startDate, date) < 0) {
+        const trimmedEnd = addDays(date, -1);
         const existing = incomeEndOverrides.get(src.id);
         if (!existing || compareDates(trimmedEnd, existing) < 0) {
           incomeEndOverrides.set(src.id, trimmedEnd);
@@ -391,7 +435,14 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     if (src.isExcluded) continue;
     const rule = deathRuleFor(src);
     const ownerDeath = src.ownerId ? deathOf.get(src.ownerId) ?? null : null;
-    const effectiveEnd = earliestDate(incomeEndOverrides.get(src.id) ?? src.endDate, rule.endsOn);
+    // Whichever comes FIRST -- the retirement trim, the source's own end date,
+    // or a death -- not "the trim instead of the end date". Every person now
+    // has a retirement date, so `?? src.endDate` here would have let the trim
+    // shadow a salary that was already set to stop earlier.
+    const effectiveEnd = earliestDate(
+      earliestDate(incomeEndOverrides.get(src.id) ?? null, src.endDate ?? null),
+      rule.endsOn
+    );
     const windows = src.adjustments ?? [];
     const occurrences = expandOccurrences(src.startDate, effectiveEnd, src.frequency, horizonEnd, src.intervalYears);
     for (const occ of occurrences) {
@@ -505,7 +556,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       // A joint salary (no owner) is everyone's paycheck.
       if (ownerId && s.ownerId && s.ownerId !== ownerId) return false;
       if (compareDates(date, s.startDate) < 0) return false;
-      const end = incomeEndOverrides.get(s.id) ?? s.endDate;
+      const end = earliestDate(incomeEndOverrides.get(s.id) ?? null, s.endDate ?? null);
       if (end && compareDates(date, end) > 0) return false;
       return activeMultiplier(s.adjustments ?? [], date) > 0;
     });
@@ -729,40 +780,6 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       } else {
         const amount = growthAdjustedAmount(event.amount, elapsedYears(settings.startDate, event.startDate), settings.inflationRatePct);
         pushTransferPair(event.id, event.name, event.startDate, event.fromAccountId, event.loanAccountId, amount, "payoff");
-      }
-    } else if (event.type === "retire" && event.retirementExpense) {
-      const exp = event.retirementExpense;
-      const windows = exp.adjustments ?? [];
-      // An annual figure spent through the year, so it posts monthly: a single
-      // December lump made the drain order over-draw the IRA for that year and
-      // sweep the excess into the brokerage.
-      const occurrences = expandOccurrences(event.startDate, exp.endDate ?? null, "monthly", horizonEnd);
-      for (const occ of occurrences) {
-        // Entered in today's dollars; inflates from plan start to the
-        // retirement date (this expense's own "start"), then grows at its
-        // own rate from there -- same two-stage pattern as a regular Expense.
-        const base =
-          todaysDollarsAmount(
-            exp.amount,
-            settings.startDate,
-            event.startDate,
-            occ,
-            settings.inflationRatePct,
-            exp.growthRatePct ?? settings.inflationRatePct // blank growth = keep pace with inflation
-          ) / 12;
-        const amount = base * activeMultiplier(windows, occ);
-        if (amount === 0) continue;
-        const accountId = exp.paymentAccountId ?? primarySpendingAccountId;
-        if (!accountId) continue;
-        pushPosting({
-          date: occ,
-          yearMonth: occ.slice(0, 7),
-          accountId,
-          amount: -Math.abs(amount),
-          category: "expense",
-          label: `Retirement expense: ${event.name}`,
-          sourceId: `${event.id}:retirement_expense`,
-        });
       }
     } else if (event.type === "custom_transfer") {
       const occurrences = expandOccurrences(event.startDate, event.endDate ?? null, event.frequency, horizonEnd, event.intervalYears);

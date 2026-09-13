@@ -204,9 +204,18 @@ export interface CashFlowPeriodRow {
   acaModifiedAgi: number;
 }
 
+/**
+ * What a timeline row stands for. "retirement" is not an event type -- it is
+ * synthesized from a Person, because retirement lives on the person now. It
+ * still gets a row (and a chart milestone) because it is the single most
+ * important date in the plan.
+ */
+export type TimelineEntryType = EventType | "retirement";
+
 export interface TimelineRow {
+  /** An event's id, or `retirement:<personId>` for a synthesized retirement row. */
   eventId: Id;
-  eventType: EventType;
+  eventType: TimelineEntryType;
   name: string;
   date: ISODate;
   year: number;

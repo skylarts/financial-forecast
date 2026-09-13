@@ -2,11 +2,12 @@
 
 import { useMemo, useState } from "react";
 import type { ForecastSettings, HealthcareSettings, Person, Scenario } from "@/domain";
+import { retirementDateOf } from "@/domain";
 import { personSchema, forecastSettingsSchema, countAnchorsToPerson } from "@/domain";
 import { ageOn } from "@/engine/dateMath";
 import { HEALTHCARE_TABLES_2026, isHealthcareItemId } from "@/engine/healthcare";
 import { Drawer } from "@/components/ui/Drawer";
-import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput, inputClass } from "@/components/ui/formFields";
+import { AdvancedDisclosure, ErrorBanner, InfoTooltip, MoneyInput, PercentInput, inputClass } from "@/components/ui/formFields";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { formatMoney } from "@/lib/format";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -111,13 +112,14 @@ function PersonRow({ person }: { person: Person }) {
           onBlur={save}
         />
       </label>
+      <RetirementDetails person={person} draft={draft} setDraft={setDraft} save={save} />
       <button
         type="button"
         onClick={() => {
           const removed = removePerson(person.id);
           if (!removed) {
             alert(
-              `Can't remove ${person.name || "this person"} -- they're still the owner of an account or income source, or referenced by an event (e.g. Retire, Social Security). Update or delete those first.`
+              `Can't remove ${person.name || "this person"} -- they still own an account or an income source, or a date somewhere follows their retirement. Update or delete those first.`
             );
           }
         }}
@@ -125,6 +127,151 @@ function PersonRow({ person }: { person: Person }) {
       >
         Remove {person.name || "person"}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Everything about this person's retirement beyond the age itself -- the four
+ * things a Retire EVENT used to carry, now where the age is. Folded away by
+ * default: the age is all most plans ever set.
+ */
+function RetirementDetails({
+  person,
+  draft,
+  setDraft,
+  save,
+}: {
+  person: Person;
+  draft: Person;
+  setDraft: (p: Person) => void;
+  save: () => void;
+}) {
+  const accounts = usePlanStore((s) => s.activeScenario().accounts);
+  const [open, setOpen] = useState(
+    !!(person.retirementDate || person.skipRetirement || person.retirementSpending || person.retirementNotes)
+  );
+  const spending = draft.retirementSpending ?? null;
+  const retiresOn = retirementDateOf(draft);
+  const patchSpending = (patch: Partial<NonNullable<Person["retirementSpending"]>>) =>
+    setDraft({
+      ...draft,
+      retirementSpending: { amount: 0, growthRatePct: null, paymentAccountId: null, ...spending, ...patch },
+    });
+
+  return (
+    <div className="col-span-2 flex flex-col gap-2">
+      <AdvancedDisclosure open={open} onToggle={() => setOpen(!open)} label="Retirement details">
+        <label className="flex items-center gap-2 text-xs text-foreground">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={draft.skipRetirement ?? false}
+            onChange={(e) => setDraft({ ...draft, skipRetirement: e.target.checked || undefined })}
+            onBlur={save}
+          />
+          <span className="inline-flex items-center gap-1">
+            Model {draft.name || "them"} working straight through
+            <InfoTooltip text="Keeps the retirement age on file but never acts on it: their salary and paycheck contributions run to the end of the plan. The what-if for 'suppose I never stop'." />
+          </span>
+        </label>
+
+        {!draft.skipRetirement && (
+          <label className="flex flex-col gap-1 text-xs text-dim">
+            <span className="inline-flex items-center gap-1">
+              Exact retirement date (optional)
+              <InfoTooltip text="Leave blank and retirement lands on the birthday at the age above, which is what almost every plan wants. Set it for a real last day of work -- the end of a school year, say -- and the age becomes a label." />
+            </span>
+            <input
+              className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+              type="date"
+              value={draft.retirementDate ?? ""}
+              onChange={(e) => setDraft({ ...draft, retirementDate: e.target.value || null })}
+              onBlur={save}
+            />
+            <span className="text-[11px] text-dim-2">
+              {retiresOn ? `Retires ${retiresOn}` : "Never retires"}
+              {!draft.retirementDate && " — from the age above"}
+            </span>
+          </label>
+        )}
+
+        <label className="flex flex-col gap-1 text-xs text-dim">
+          <span className="inline-flex items-center gap-1">
+            Extra spending in retirement
+            <InfoTooltip text="Per year, in today's dollars, spread through each year -- the travel and hobbies a full week suddenly has room for. Starts the day they retire and moves with it. Leave at 0 for none." />
+          </span>
+          <MoneyInput
+            value={spending?.amount ? String(spending.amount) : ""}
+            placeholder="e.g. 12,000 / yr"
+            onChange={(e) => {
+              const amount = moneyStrToNumber(e.target.value) ?? 0;
+              if (amount === 0 && !spending) return;
+              patchSpending({ amount });
+            }}
+            onBlur={save}
+          />
+        </label>
+
+        {!!spending?.amount && (
+          <div className="flex flex-col gap-2 border-l border-border pl-3">
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              Paid from
+              <select
+                className={inputClass}
+                value={spending.paymentAccountId ?? ""}
+                onChange={(e) => patchSpending({ paymentAccountId: e.target.value || null })}
+                onBlur={save}
+              >
+                <option value="">Extra Savings (default)</option>
+                {accounts
+                  .filter((a) => a.category === "asset" && a.class !== "real_estate" && !a.isExtraSavings)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              <span className="inline-flex items-center gap-1">
+                Grows by
+                <InfoTooltip text="Percent a year. Blank = keeps pace with inflation, so it stays flat in today's dollars. 0 = flat in nominal terms, which shrinks in real terms." />
+              </span>
+              <PercentInput
+                value={fractionToPercentStr(spending.growthRatePct)}
+                placeholder="blank = inflation"
+                onChange={(e) => patchSpending({ growthRatePct: percentStrToFraction(e.target.value) })}
+                onBlur={save}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-dim">
+              <span className="inline-flex items-center gap-1">
+                Stops on (optional)
+                <InfoTooltip text="Leave blank to run through the end of the plan. Set it if the extra spending is only for the early, active years." />
+              </span>
+              <input
+                className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+                type="date"
+                value={spending.endDate ?? ""}
+                onChange={(e) => patchSpending({ endDate: e.target.value || null })}
+                onBlur={save}
+              />
+            </label>
+          </div>
+        )}
+
+        <label className="flex flex-col gap-1 text-xs text-dim">
+          Notes (optional)
+          <input
+            className="rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+            value={draft.retirementNotes ?? ""}
+            placeholder="Why this retirement is planned the way it is"
+            onChange={(e) => setDraft({ ...draft, retirementNotes: e.target.value || undefined })}
+            onBlur={save}
+          />
+        </label>
+      </AdvancedDisclosure>
     </div>
   );
 }

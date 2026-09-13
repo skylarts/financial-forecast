@@ -15,8 +15,7 @@ import { mockScenario } from "@/lib/mockScenario";
 import { makeBlankScenario } from "@/lib/blankScenario";
 import { normalizePlan, normalizeScenario, planHasContent, PLAN_SCHEMA_VERSION, type NormalizeOk } from "@/lib/planIO";
 import { isShrinkingChange, keepBrokenCopy, keepPlanCopy } from "@/lib/planRecovery";
-import { resolveAnchoredDates } from "@/domain/anchor";
-import { birthdayAtAge } from "@/engine/dateMath";
+import { countAnchorsToPerson, resolveAnchoredDates } from "@/domain/anchor";
 
 /**
  * A brand-new browser starts with one empty scenario, not the fictional
@@ -239,39 +238,27 @@ export const usePlanStore = create<PlanState>()(
         })),
 
       /**
-       * A person's retirement age is only meaningful through what it derives,
-       * so changing it derives them here rather than in whichever form made
-       * the edit: their Retire event moves to their birthday at the new age
-       * (that event, not the profile age, is what actually stops a salary and
-       * its payroll contributions), and `withActiveScenario` then moves every
-       * date linked to that retirement. A corrected birth date moves it too --
-       * a new person starts with a placeholder date, and fixing it used to
-       * leave retirement anchored to the placeholder.
+       * Retirement now lives entirely on the person, so this is an ordinary
+       * field update: there is no separate Retire event left to keep in step
+       * (the engine reads `retirementDateOf` directly), and
+       * `withActiveScenario` moves every date linked to that retirement.
        */
       updatePerson: (id, person) =>
-        withActiveScenario(set, (s) => {
-          const previous = s.household.people.find((p) => p.id === id);
-          const people = s.household.people.map((p) => (p.id === id ? { ...person, id } : p));
-          const ageChanged = !!previous && previous.retirementAge !== person.retirementAge;
-          const birthChanged = !!previous && previous.birthDate !== person.birthDate;
-          if (!ageChanged && !birthChanged) return { ...s, household: { people } };
-          const events = s.events.map((e) => {
-            if (e.type !== "retire" || e.personId !== id) return e;
-            // An event carrying its own age override keeps it unless the
-            // profile age itself is what just changed.
-            const age = ageChanged ? person.retirementAge : e.retirementAge ?? person.retirementAge;
-            return { ...e, retirementAge: age, startDate: birthdayAtAge(person.birthDate, age) };
-          });
-          return { ...s, household: { people }, events };
-        }),
+        withActiveScenario(set, (s) => ({
+          ...s,
+          household: { people: s.household.people.map((p) => (p.id === id ? { ...person, id } : p)) },
+        })),
 
       removePerson: (id) => {
         const scenario = get().activeScenario();
         const person = scenario.household.people.find((p) => p.id === id);
+        // No event names a person any more (retirement moved onto the person
+        // itself), but a DATE can now follow their retirement -- removing them
+        // would strand it, so that counts as a reference too.
         const referenced =
           scenario.accounts.some((a) => a.ownerId === id) ||
           scenario.incomeSources.some((i) => i.ownerId === id) ||
-          scenario.events.some((e) => "personId" in e && e.personId === id);
+          countAnchorsToPerson(scenario, id) > 0;
         if (referenced) return false;
         withActiveScenario(set, (s) => ({ ...s, household: { people: s.household.people.filter((p) => p.id !== id) } }), {
           undoLabel: `Removed ${person?.name ?? "a person"}`,
@@ -316,10 +303,9 @@ export const usePlanStore = create<PlanState>()(
         const referenced =
           scenario.expenses.some((e) => e.paymentAccountId === id) ||
           scenario.incomeSources.some((i) => i.depositAccountId === id) ||
+          scenario.household.people.some((p) => p.retirementSpending?.paymentAccountId === id) ||
           scenario.events.some((e) => {
             switch (e.type) {
-              case "retire":
-                return e.retirementExpense?.paymentAccountId === id;
               case "buy_home":
                 // Deliberately NOT checking e.realEstateAccountId here -- that
                 // account is owned by this same event (see removeBoughtHome in
