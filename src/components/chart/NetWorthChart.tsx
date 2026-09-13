@@ -264,14 +264,51 @@ function milestoneYears(people: Person[]): { year: number; label: string }[] {
   const out: { year: number; label: string }[] = [];
   for (const p of people) {
     const rmdAge = rmdStartAgeForBirthYear(yearOf(p.birthDate));
+    // Each label says what changes that year, not just a number: the line is
+    // only worth drawing if it explains itself where it stands.
     const ms: { age: number; text: string }[] = [
-      { age: 59.5, text: "59½" },
-      { age: 65, text: "65" },
-      { age: rmdAge, text: `RMDs ${rmdAge}` },
+      { age: 59.5, text: "59½ · penalty-free" },
+      { age: 65, text: "65 · Medicare" },
+      { age: rmdAge, text: `${rmdAge} · RMDs start` },
     ];
     for (const m of ms) out.push({ year: yearOf(addMonths(p.birthDate, Math.round(m.age * 12))), label: `${p.name} ${m.text}` });
   }
   return out;
+}
+
+/**
+ * A milestone line's caption: rotated to read upward from just above the
+ * x-axis, where there is room for the whole phrase. Passed to Recharts as an
+ * element rather than a label config, so the position and rotation are ours
+ * -- `viewBox` is injected by Recharts when it clones this.
+ */
+function MilestoneLabel({
+  text,
+  color,
+  viewBox,
+}: {
+  text: string;
+  color: string;
+  viewBox?: { x?: number; y?: number; height?: number };
+}) {
+  const box = viewBox ?? {};
+  const x = Number(box.x ?? 0);
+  const baseline = Number(box.y ?? 0) + Number(box.height ?? 0) - 6;
+  return (
+    <text
+      x={x}
+      y={baseline}
+      transform={`rotate(-90 ${x} ${baseline})`}
+      textAnchor="start"
+      dy={-3}
+      fill={color}
+      fontSize={10}
+      opacity={0.75}
+      style={{ pointerEvents: "none" }}
+    >
+      {text}
+    </text>
+  );
 }
 
 export function NetWorthChart({
@@ -816,8 +853,12 @@ export function NetWorthChart({
               <Chip onClick={toggleAllAccounts}>{allHidden ? "Show all" : "Hide all"}</Chip>
             )}
             {people.length > 0 && (
-              <Chip active={showMilestones} onClick={() => setShowMilestones((v) => !v)} title="Mark 59½, 65 and the RMD age for each person">
-                Ages
+              <Chip
+                active={showMilestones}
+                onClick={() => setShowMilestones((v) => !v)}
+                title="Mark the year each person reaches 59½ (tax-deferred withdrawals stop carrying the 10% penalty), 65 (Medicare), and the age required withdrawals begin. Everyone's age is on the axis either way."
+              >
+                Milestones
               </Chip>
             )}
           </div>
@@ -902,7 +943,11 @@ export function NetWorthChart({
                 stroke={theme.axis}
                 strokeDasharray="2 4"
                 strokeOpacity={0.6}
-                label={{ value: m.label, position: "insideTopLeft", fill: theme.axis, fontSize: 10, opacity: 0.8, angle: -90, dx: -4, dy: 6 } as never}
+                /* Drawn from just above the axis and reading upward. Anchored
+                   at the top instead, Recharts clips the rotated text to the
+                   plot's first few pixels -- "Skylar 59½" arrived as "Sky" --
+                   and the top band is where the event markers already sit. */
+                label={<MilestoneLabel text={m.label} color={theme.axis} />}
               />
             ))}
             {viewMode === "net_worth" ? (
