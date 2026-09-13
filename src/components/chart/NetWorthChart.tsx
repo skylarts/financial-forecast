@@ -302,8 +302,9 @@ function MilestoneLabel({
       textAnchor="start"
       dy={-3}
       fill={color}
-      fontSize={10}
-      opacity={0.75}
+      fontSize={12}
+      fontWeight={500}
+      opacity={0.9}
       style={{ pointerEvents: "none" }}
     >
       {text}
