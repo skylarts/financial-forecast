@@ -31,6 +31,7 @@ import { AnchoredDateInput } from "@/components/ui/AnchoredDate";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
+import { LoanDrawer } from "@/components/accounts/LoanDrawer";
 import { treatmentOf } from "@/engine/resolveEvents";
 
 // A temporary raise/pause/cut lives directly on the income or expense it
@@ -47,6 +48,7 @@ const EVENT_TEMPLATES: { type: TemplateType; label: string; hint: string }[] = [
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
   { type: "sell_home", label: "Sell a home", hint: "Sell a home you own: retires its mortgage and credits the proceeds" },
   { type: "roth_conversion", label: "Roth conversion", hint: "Move money from a tax-deferred account to a Roth: taxed as income, never penalized" },
+  { type: "open_loan", label: "Take out a loan", hint: "Finance a car, take a HELOC or a personal loan: creates the debt and starts its payments" },
   { type: "pay_off_loan", label: "Pay off a loan", hint: "Pay a mortgage or loan down, or off, from an account on a date" },
   { type: "rollover", label: "Rollover", hint: "Move money between two tax-deferred accounts, with no tax" },
   { type: "custom_transfer", label: "Custom transfer", hint: "Any other move between two of your accounts" },
@@ -151,6 +153,10 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
         conversionTaxSource: event.taxSource,
         transferGrowthRatePct: fractionToPercentStr(event.growthRatePct),
       };
+    case "open_loan":
+      // Handled entirely by LoanDrawer (see the early return in the component
+      // below) -- never actually reaches this form.
+      return base;
     case "pay_off_loan":
       return {
         ...base,
@@ -264,6 +270,11 @@ export function EventDrawer({
   }
   if (selectedType === "expense") {
     return <ExpenseDrawer open={open} onClose={onClose} expense={undefined} accounts={accounts} />;
+  }
+  if (selectedType === "open_loan") {
+    const loanEvent = event?.type === "open_loan" ? event : undefined;
+    const loanAccount = loanEvent ? accounts.find((a) => a.id === loanEvent.loanAccountId) : undefined;
+    return <LoanDrawer open={open} onClose={onClose} account={loanAccount} event={loanEvent} accounts={accounts} initialMode="new" />;
   }
 
   /**

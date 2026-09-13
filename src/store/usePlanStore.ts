@@ -321,6 +321,12 @@ export const usePlanStore = create<PlanState>()(
                 return e.fromAccountId === id || e.toAccountId === id;
               case "pay_off_loan":
                 return e.fromAccountId === id || e.loanAccountId === id;
+              case "open_loan":
+                // Deliberately NOT checking e.loanAccountId -- that account is
+                // owned by this event (removeOpenedLoan in src/lib/openLoan.ts
+                // removes the account, then the event), the same cascade
+                // buy_home's real-estate account relies on.
+                return e.proceedsAccountId === id;
               default:
                 return false;
             }

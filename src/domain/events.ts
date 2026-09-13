@@ -123,6 +123,31 @@ export const rolloverEventSchema = z.object({
 });
 export type RolloverEvent = z.infer<typeof rolloverEventSchema>;
 
+/**
+ * Take out a loan (a car loan, a student loan, a HELOC, a personal loan) on a
+ * future date. Like buy_home, the event is thin: the `loan` account it created
+ * is a real, permanent Account carrying the balance, rate, and term, and it
+ * amortizes through the ordinary loan machinery from its own origination date.
+ * All this event adds is the one thing an account cannot express -- where the
+ * borrowed money went.
+ */
+export const openLoanEventSchema = z.object({
+  ...baseEventFields,
+  type: z.literal("open_loan"),
+  /** The `loan` account this event created and owns. */
+  loanAccountId: idSchema,
+  /** Today's dollars -- inflated forward to startDate (the origination date),
+   *  the same two-stage convention buy_home uses for a purchase price. */
+  principal: z.number().positive(),
+  /**
+   * Where the borrowed money lands. null = it paid for something the plan
+   * doesn't track (a car, a tuition bill), so no cash ever reaches an
+   * account -- only the debt and its payments show up.
+   */
+  proceedsAccountId: idSchema.nullable().default(null),
+});
+export type OpenLoanEvent = z.infer<typeof openLoanEventSchema>;
+
 export const customTransferEventSchema = z.object({
   ...baseEventFields,
   type: z.literal("custom_transfer"),
@@ -143,6 +168,7 @@ export const scenarioEventSchema = z
     sellHomeEventSchema,
     rothConversionEventSchema,
     payOffLoanEventSchema,
+    openLoanEventSchema,
     rolloverEventSchema,
     customTransferEventSchema,
   ])
@@ -154,6 +180,10 @@ export const scenarioEventSchema = z
   .refine((e) => e.type !== "pay_off_loan" || e.fromAccountId !== e.loanAccountId, {
     message: "The two accounts must differ",
     path: ["loanAccountId"],
+  })
+  .refine((e) => e.type !== "open_loan" || e.proceedsAccountId !== e.loanAccountId, {
+    message: "The borrowed money can't be deposited into the loan itself",
+    path: ["proceedsAccountId"],
   })
   .refine((e) => e.type !== "roth_conversion" || e.amount != null || e.fillToBracketRate != null, {
     message: "Enter an amount, or choose a bracket to fill",

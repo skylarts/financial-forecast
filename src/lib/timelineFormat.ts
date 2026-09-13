@@ -25,6 +25,7 @@ export const EVENT_TYPE_LABELS: Record<TimelineEntryType, string> = {
   sell_home: "Sell a home",
   roth_conversion: "Roth conversion",
   pay_off_loan: "Pay off loan",
+  open_loan: "Take out a loan",
   rollover: "Rollover",
   custom_transfer: "Transfer",
 };

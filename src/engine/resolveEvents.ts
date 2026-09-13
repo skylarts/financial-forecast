@@ -764,6 +764,35 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
         const amount = growthAdjustedAmount(event.amount, elapsedYears(settings.startDate, event.startDate), settings.inflationRatePct);
         pushTransferPair(event.id, event.name, event.startDate, event.fromAccountId, event.toAccountId, amount, "rollover");
       }
+    } else if (event.type === "open_loan") {
+      // The `loan` account this event created is a real Account by now (see
+      // src/lib/openLoan.ts), so the debt appearing on the origination date
+      // and amortizing from there is already handled by the loan loop above,
+      // via the account's own startDate. All that's left is the money the
+      // borrowing put in your pocket -- and only when it actually did: a car
+      // loan or a tuition bill hands the cash straight to the seller
+      // (proceedsAccountId null), so no account ever sees it.
+      if (event.proceedsAccountId) {
+        // Entered in today's dollars and inflated forward to origination, the
+        // same factor openLoan.ts baked into the account's starting balance --
+        // the cash received and the debt taken on must be the same number.
+        const amount = growthAdjustedAmount(
+          event.principal,
+          elapsedYears(settings.startDate, event.startDate),
+          settings.inflationRatePct
+        );
+        if (amount !== 0) {
+          pushPosting({
+            date: event.startDate,
+            yearMonth: event.startDate.slice(0, 7),
+            accountId: event.proceedsAccountId,
+            amount,
+            category: "transfer", // borrowing money isn't income -- the matching debt is booked alongside it
+            label: `Loan proceeds: ${event.name}`,
+            sourceId: `${event.id}:proceeds`,
+          });
+        }
+      }
     } else if (event.type === "pay_off_loan") {
       if (event.amount == null) {
         pushPosting({

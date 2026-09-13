@@ -29,6 +29,7 @@ import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumbe
 import { todayISO } from "@/engine/dateMath";
 import { usePlanStore } from "@/store/usePlanStore";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
+import { LoanDrawer } from "@/components/accounts/LoanDrawer";
 
 const CLASS_OPTIONS: { value: AccountClass; label: string }[] = [
   { value: "cash", label: "Cash" },
@@ -352,6 +353,12 @@ export function AccountDrawer({
   // Add Event's "Buy a home" template delegates to HomeDrawer.
   if (!account && selectedClass === "real_estate") {
     return <HomeDrawer open={open} onClose={onClose} account={undefined} accounts={accounts} initialMode="existing" />;
+  }
+  // Same hand-off for a loan: LoanDrawer owns both "one I already have" and
+  // "one I take out later", so there is a single form behind either door.
+  // Mortgages are excluded on purpose -- they belong to their home.
+  if (!account && selectedClass === "loan") {
+    return <LoanDrawer open={open} onClose={onClose} account={undefined} accounts={accounts} initialMode="existing" />;
   }
 
   const addGrowthRow = () => setGrowthRows((rows) => [...rows, { key: nanoid(), startDate: "", ratePct: "" }]);
