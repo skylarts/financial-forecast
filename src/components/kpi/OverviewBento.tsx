@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { Account, ISODate, Person, ProjectionResult, PeriodSnapshot, ScenarioEvent } from "@/domain";
 import { retirementsInOrder } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
@@ -178,6 +178,18 @@ export function OverviewBento({
     return displayAccounts(compare.projection.accounts).reduce((s, a) => s + balanceToday(a, today), 0);
   }, [compare]);
 
+  // The list reads as one line per account type; an individual account's
+  // balance is a click away rather than always on screen, which keeps the
+  // tile short enough that the whole plan fits without scrolling.
+  const [expandedClasses, setExpandedClasses] = useState<Set<string>>(new Set());
+  const toggleClass = (cls: string) =>
+    setExpandedClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(cls)) next.delete(cls);
+      else next.add(cls);
+      return next;
+    });
+
   const holdsLabel = shortfallYear === null ? "End of plan" : `Runs short in ${shortfallYear}`;
 
   // Grid areas live in globals.css (.bento) rather than as Tailwind arbitrary
@@ -301,18 +313,35 @@ export function OverviewBento({
         <ul className="min-h-0 flex-1 overflow-y-auto">
           {classSections.map((g) => {
             const subtotal = g.accounts.reduce((s, a) => s + (rowById.get(a.id)?.value ?? 0), 0);
+            const expanded = expandedClasses.has(g.cls);
             return (
               <li key={g.cls} className="border-b border-border-soft last:border-b-0">
-                <div className="flex items-center justify-between gap-3 bg-panel-2/60 px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-dim">
-                  <span>{g.label}</span>
-                  <span className={`font-mono tabular-nums ${subtotal < 0 ? "text-negative" : ""}`}>{formatMoney(subtotal)}</span>
-                </div>
-                <ul>
+                <button
+                  type="button"
+                  onClick={() => toggleClass(g.cls)}
+                  aria-expanded={expanded}
+                  title={expanded ? `Hide the ${g.label} accounts` : `Show the ${g.label} accounts`}
+                  className="flex w-full items-center justify-between gap-3 px-4 py-2 text-left text-[12.5px] hover:bg-panel-2/60"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <i
+                      aria-hidden
+                      className="shrink-0 text-[9px] text-dim transition-transform"
+                      style={{ transform: expanded ? "rotate(90deg)" : "none" }}
+                    >
+                      ▶
+                    </i>
+                    <span className="truncate font-medium">{g.label}</span>
+                    <span className="shrink-0 text-[11px] text-dim/70">{g.accounts.length}</span>
+                  </span>
+                  <span className={`shrink-0 font-mono tabular-nums ${subtotal < 0 ? "text-negative" : ""}`}>{formatMoney(subtotal)}</span>
+                </button>
+                <ul hidden={!expanded} className="pb-1">
                   {g.accounts.map((a) => {
                     const r = rowById.get(a.id);
                     if (!r) return null;
                     return (
-                      <li key={r.id} className="flex items-center justify-between gap-3 px-4 py-2 text-[12.5px]">
+                      <li key={r.id} className="flex items-center justify-between gap-3 py-1.5 pl-9 pr-4 text-[12px]">
                         <span className="flex min-w-0 items-center gap-2">
                           <i aria-hidden className="block h-2 w-2 shrink-0 rounded-sm" style={{ background: r.color }} />
                           <span className="truncate">{r.name}</span>
