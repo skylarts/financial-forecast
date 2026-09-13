@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import type { Account, AccountClass, Scenario, ScenarioEvent, IncomeSource, ExpenseBaseline, MoneyFlow } from "@/domain";
+import { DEFAULT_HEALTHCARE_SETTINGS } from "@/domain";
 
 /**
  * Legacy-shaped convenience hints for building a test account's cash-flow
@@ -215,6 +216,10 @@ export function makeScenario(overrides: {
   additionalFlatTaxRatePct?: number;
   surplusRoutingRule?: { mode: "priority_fill" } | { mode: "fixed_split"; splits: { accountId: string; pct: number }[] };
   moneyFlow?: MoneyFlow;
+  withdrawalStrategy?: Scenario["settings"]["withdrawalStrategy"];
+  cashBufferTarget?: number | null;
+  planReturnRatePct?: number | null;
+  healthcare?: Scenario["settings"]["healthcare"];
 }): Scenario {
   const accounts = overrides.accounts.map(cleanAccount);
   // Guarantee exactly one Extra Savings account exists, same invariant
@@ -236,6 +241,11 @@ export function makeScenario(overrides: {
       rmdEnabled: true,
       filingStatus: overrides.filingStatus ?? "marriedFilingJointly",
       additionalFlatTaxRatePct: overrides.additionalFlatTaxRatePct ?? 0,
+      // Tests hand-build their drain order, so the engine must read it as-is.
+      withdrawalStrategy: overrides.withdrawalStrategy ?? "custom",
+      cashBufferTarget: overrides.cashBufferTarget ?? null,
+      planReturnRatePct: overrides.planReturnRatePct ?? null,
+      healthcare: overrides.healthcare ?? DEFAULT_HEALTHCARE_SETTINGS,
     },
   };
 }

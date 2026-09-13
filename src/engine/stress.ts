@@ -1,0 +1,127 @@
+import { nanoid } from "nanoid";
+import type { Scenario } from "@/domain";
+import { addMonths, yearOf } from "./dateMath";
+import type { ProjectionOptions } from "./forecastScenario";
+
+/**
+ * Deterministic stress tests: the same plan run under one bad assumption at a
+ * time. Each preset is a transform of the scenario plus engine options; the
+ * projection itself is unchanged, so a stressed run is exactly comparable to
+ * the base run.
+ */
+
+export type StressKey = "lower_returns" | "bear_at_retirement" | "higher_inflation" | "social_security_cut" | "live_longer" | "all_at_once";
+
+export interface StressParams {
+  /** Added to every investment account's yearly return, e.g. -0.02. */
+  returnDelta: number;
+  /** The investment return in the retirement year, e.g. -0.3. */
+  crashReturn: number;
+  /** Added to the inflation rate, e.g. 0.01. */
+  inflationDelta: number;
+  /** Share of every Social Security benefit lost from `socialSecurityCutYear` on, e.g. 0.23. */
+  socialSecurityCut: number;
+  socialSecurityCutYear: number;
+  /** Years added to everyone's planning end age. */
+  extraYears: number;
+}
+
+export const DEFAULT_STRESS_PARAMS: StressParams = {
+  returnDelta: -0.02,
+  crashReturn: -0.3,
+  inflationDelta: 0.01,
+  socialSecurityCut: 0.23,
+  socialSecurityCutYear: 2034,
+  extraYears: 5,
+};
+
+const pct = (x: number) => `${Math.round(Math.abs(x) * 100)}%`;
+const pts = (x: number) => `${Math.abs(x * 100).toFixed(x * 100 % 1 === 0 ? 0 : 1)} point${Math.abs(x * 100) === 1 ? "" : "s"}`;
+
+export const STRESS_PRESETS: { key: StressKey; label: string; describe: (p: StressParams, retirementYear: number | null) => string }[] = [
+  {
+    key: "lower_returns",
+    label: "Lower returns",
+    describe: (p) => `Every investment account earns ${pts(p.returnDelta)} ${p.returnDelta < 0 ? "less" : "more"} a year, for the whole plan.`,
+  },
+  {
+    key: "bear_at_retirement",
+    label: "Bear market at retirement",
+    describe: (p, y) => `Investments fall ${pct(p.crashReturn)} in ${y ?? "the first year"}, then earn their normal return. No rebound is assumed.`,
+  },
+  {
+    key: "higher_inflation",
+    label: "Higher inflation",
+    describe: (p) => `Inflation runs ${pts(p.inflationDelta)} higher for the whole plan: expenses and benefits rise faster, and fixed returns buy less.`,
+  },
+  {
+    key: "social_security_cut",
+    label: "Social Security cut",
+    describe: (p) => `Every Social Security benefit is cut ${pct(p.socialSecurityCut)} from ${p.socialSecurityCutYear} on (the trust fund's projected shortfall).`,
+  },
+  {
+    key: "live_longer",
+    label: "Live longer",
+    describe: (p) => `Everyone lives ${p.extraYears} years past their planning end age.`,
+  },
+  {
+    key: "all_at_once",
+    label: "All at once",
+    describe: () => "Lower returns, the bear market, higher inflation, and the Social Security cut together.",
+  },
+];
+
+/** The calendar year of the first retirement in the plan, or null when there is no retire event. */
+export function retirementYearOf(scenario: Scenario): number | null {
+  const dates = scenario.events.filter((e) => e.type === "retire" && !e.isExcluded).map((e) => e.startDate).sort();
+  return dates.length ? yearOf(dates[0]) : null;
+}
+
+function cutSocialSecurity(scenario: Scenario, p: StressParams): Scenario {
+  return {
+    ...scenario,
+    incomeSources: scenario.incomeSources.map((src) =>
+      src.category === "social_security"
+        ? {
+            ...src,
+            adjustments: [
+              ...(src.adjustments ?? []),
+              { id: nanoid(), startDate: `${p.socialSecurityCutYear}-01-01`, endDate: null, multiplier: 1 - p.socialSecurityCut, note: "Stress test" },
+            ],
+          }
+        : src
+    ),
+  };
+}
+
+function liveLonger(scenario: Scenario, p: StressParams): Scenario {
+  return {
+    ...scenario,
+    household: { people: scenario.household.people.map((person) => ({ ...person, planningEndAge: person.planningEndAge + p.extraYears })) },
+    settings: { ...scenario.settings, horizonEndDate: addMonths(scenario.settings.horizonEndDate, p.extraYears * 12) },
+  };
+}
+
+/** The scenario and engine options a stress preset runs with. */
+export function applyStress(scenario: Scenario, key: StressKey, params: StressParams = DEFAULT_STRESS_PARAMS): { scenario: Scenario; options: ProjectionOptions } {
+  const crashYear = retirementYearOf(scenario) ?? yearOf(scenario.settings.startDate ?? new Date().toISOString().slice(0, 10));
+  switch (key) {
+    case "lower_returns":
+      return { scenario, options: { returnAdjustment: params.returnDelta } };
+    case "bear_at_retirement":
+      return { scenario, options: { yearReturnOverride: { year: crashYear, ratePct: params.crashReturn } } };
+    case "higher_inflation":
+      return { scenario: { ...scenario, settings: { ...scenario.settings, inflationRatePct: scenario.settings.inflationRatePct + params.inflationDelta } }, options: {} };
+    case "social_security_cut":
+      return { scenario: cutSocialSecurity(scenario, params), options: {} };
+    case "live_longer":
+      return { scenario: liveLonger(scenario, params), options: {} };
+    case "all_at_once": {
+      const withInflation = { ...scenario, settings: { ...scenario.settings, inflationRatePct: scenario.settings.inflationRatePct + params.inflationDelta } };
+      return {
+        scenario: cutSocialSecurity(withInflation, params),
+        options: { returnAdjustment: params.returnDelta, yearReturnOverride: { year: crashYear, ratePct: params.crashReturn } },
+      };
+    }
+  }
+}

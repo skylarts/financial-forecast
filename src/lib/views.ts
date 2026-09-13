@@ -6,7 +6,7 @@
  * Flattening them into one tab set means only one thing is on screen at a
  * time, so each view gets the full window height.
  */
-export const VIEWS = ["Overview", "Cash Flow", "Accounts", "Timeline", "Routing"] as const;
+export const VIEWS = ["Overview", "Cash Flow", "Accounts", "Timeline", "Routing", "Stress test"] as const;
 
 export type View = (typeof VIEWS)[number];
 

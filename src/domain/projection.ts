@@ -193,6 +193,15 @@ export interface CashFlowPeriodRow {
   grossPension: number;
   /** The taxable portion of grossSocialSecurity, per the IRS provisional-income rule. */
   taxableSocialSecurityAmount: number;
+  /**
+   * Adjusted gross income for the year: gross salary (where entered) +
+   * tax-deferred withdrawals + Roth conversions + pension + taxable Social
+   * Security + realized gains. Drives Medicare's income surcharges two years
+   * later. Year-end only (0 on January-November monthly rows, like the tax block).
+   */
+  adjustedGrossIncome: number;
+  /** adjustedGrossIncome plus the untaxed part of Social Security: what the marketplace premium credit is measured against. Year-end only. */
+  acaModifiedAgi: number;
 }
 
 export interface TimelineRow {

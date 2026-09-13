@@ -223,6 +223,7 @@ export function AccountDrawer({
   const removeAccount = usePlanStore((s) => s.removeAccount);
   const planStartDate = usePlanStore((s) => s.activeScenario().settings.startDate) ?? todayISO();
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
+  const planReturnRatePct = usePlanStore((s) => s.activeScenario().settings.planReturnRatePct);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [growthRows, setGrowthRows] = useState<GrowthRow[]>(() => toGrowthRows(account));
@@ -256,6 +257,10 @@ export function AccountDrawer({
 
   const selectedClass = watch("class");
   const selectedTaxTreatment = watch("taxTreatment");
+  // The plan-wide expected return (Assumptions) replaces an investment
+  // account's own rate while it is on -- say so next to the field.
+  const planReturnOverrides =
+    planReturnRatePct != null && ["taxable_investment", "tax_deferred", "tax_free", "hsa", "education_529"].includes(selectedClass);
   const showRmdCheckbox = isEffectivelyTaxDeferred(selectedClass, selectedTaxTreatment);
   const showCostBasis = isEffectivelyTaxable(selectedClass, selectedTaxTreatment);
   const showContributions =
@@ -641,6 +646,12 @@ export function AccountDrawer({
             }
           >
             <PercentInput reg={register("growthRatePct")} placeholder={selectedClass === "cash" ? "0" : `blank = inflation (${inflationPctLabel}%)`} />
+            {planReturnOverrides && (
+              <span className="text-[11px] text-gold">
+                Overridden: the plan-wide expected return of {fractionToPercentStr(planReturnRatePct)}% applies to this account while it is on
+                (Assumptions › Expected return). The rate here is kept for when it is turned off.
+              </span>
+            )}
           </Field>
         )}
         <Field label="Owner">
@@ -697,7 +708,10 @@ export function AccountDrawer({
 
             {!isAmortized && (
               <div className="flex flex-col gap-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-dim">Scheduled growth-rate changes</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-dim">
+                  Scheduled growth-rate changes
+                  {planReturnOverrides && <span className="ml-2 normal-case tracking-normal text-gold">ignored while the plan-wide return is on</span>}
+                </div>
                 {growthRows.map((row) => (
                   <div key={row.key} className="flex items-end gap-2 rounded-md border border-border p-2">
                     <label className={`${labelClass} min-w-0`}>
