@@ -39,7 +39,6 @@ function RollforwardRows({ accountId, periods, mode }: { accountId: Id; periods:
   const { col, setCol } = useContext(ColHoverContext);
   const fields: { label: string; get: (p: PeriodSnapshot) => number; strong?: boolean }[] = [
     { label: "Starting balance", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.startingBalance ?? 0 },
-    { label: "Inflation adjustment", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.inflationAdjustment ?? 0 },
     { label: "Growth", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.growth ?? 0 },
     { label: "Deposits", get: (p) => p.rollforwards.find((r) => r.accountId === accountId)?.deposits ?? 0 },
     { label: "Withdrawals", get: (p) => -(p.rollforwards.find((r) => r.accountId === accountId)?.withdrawals ?? 0) },
@@ -255,6 +254,7 @@ export function AccountsTable({
   dollarMode,
   events,
   granularity,
+  readOnly = false,
 }: {
   accounts: Account[];
   /** One column per period -- calendar years or months, depending on `granularity`. */
@@ -264,8 +264,11 @@ export function AccountsTable({
   dollarMode: DollarMode;
   events: ScenarioEvent[];
   granularity: Granularity;
+  /** True while showing the compared scenario: no adding or editing here. */
+  readOnly?: boolean;
 }) {
   const isMonthly = granularity === "month";
+  const editableIds = readOnly ? new Set<Id>() : editableAccountIds;
   const [drawerAccount, setDrawerAccount] = useState<Account | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [homeDrawer, setHomeDrawer] = useState<{ open: boolean; account?: Account }>({ open: false });
@@ -308,18 +311,20 @@ export function AccountsTable({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            setDrawerAccount(undefined);
-            setDrawerOpen(true);
-          }}
-          className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg"
-        >
-          + Add Account
-        </button>
-      </div>
+      {!readOnly && (
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerAccount(undefined);
+              setDrawerOpen(true);
+            }}
+            className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg"
+          >
+            + Add Account
+          </button>
+        </div>
+      )}
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <div className="max-h-[85vh] overflow-auto">
         <ColHoverContext.Provider value={{ col: hoveredCol, setCol: setHoveredCol }}>
@@ -365,7 +370,7 @@ export function AccountsTable({
               accounts={accounts.filter((a) => a.category === "asset")}
               periods={periods}
               groups={ASSET_CLASS_GROUPS}
-              editableIds={editableAccountIds}
+              editableIds={editableIds}
               onEdit={(a) => {
                 if (a.class === "real_estate" && openHomeDrawer(a)) return;
                 setDrawerAccount(a);
@@ -381,7 +386,7 @@ export function AccountsTable({
               accounts={accounts.filter((a) => a.category === "liability")}
               periods={periods}
               groups={LIABILITY_CLASS_GROUPS}
-              editableIds={editableAccountIds}
+              editableIds={editableIds}
               onEdit={(a) => {
                 if (a.class === "mortgage" && openHomeDrawer(a)) return;
                 setDrawerAccount(a);

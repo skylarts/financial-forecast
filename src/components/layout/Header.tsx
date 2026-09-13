@@ -171,12 +171,27 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
                     setName(s.name);
                     setRenamingId(s.id);
                   }}
-                  title="Double-click to rename"
+                  title="Switch to this scenario"
                   className={`flex-1 rounded px-2 py-1.5 text-left text-[12.5px] ${
                     s.id === scenario.id ? "bg-accent/15 font-semibold text-foreground" : "text-dim hover:text-foreground"
                   }`}
                 >
                   {s.name}
+                </button>
+              )}
+              {renamingId !== s.id && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setName(s.name);
+                    setRenamingId(s.id);
+                  }}
+                  className="px-1 text-[11px] text-dim opacity-70 hover:opacity-100"
+                  title="Rename scenario"
+                  aria-label={`Rename ${s.name}`}
+                >
+                  ✎
                 </button>
               )}
               {scenarios.length > 1 && renamingId !== s.id && (
@@ -186,7 +201,7 @@ function ScenarioSwitcher({ scenario }: { scenario: Scenario }) {
                     e.stopPropagation();
                     if (confirm(`Delete scenario "${s.name}"?`)) deleteScenario(s.id);
                   }}
-                  className="hidden px-1 text-[11px] text-dim opacity-70 hover:opacity-100 group-hover:inline"
+                  className="px-1 text-[11px] text-dim opacity-70 hover:opacity-100"
                   title="Delete scenario"
                 >
                   ✕

@@ -5,6 +5,7 @@ import type { Granularity, Id } from "@/domain";
 import type { DollarMode } from "@/lib/format";
 import { Chip, Segmented } from "@/components/ui/controls";
 import { SyncChip } from "@/components/layout/SyncChip";
+import type { View } from "@/lib/views";
 
 const PRESETS = [5, 10, 20, 40] as const;
 
@@ -17,9 +18,9 @@ const MONTH_PRESETS = [
   { months: 60, label: "5y" },
 ] as const;
 
-const DOLLAR_OPTIONS = [
-  { value: "nominal" as const, label: "Nominal" },
-  { value: "real" as const, label: "Real" },
+export const DOLLAR_OPTIONS = [
+  { value: "real" as const, label: "Today’s $" },
+  { value: "nominal" as const, label: "Future $" },
 ];
 
 const GRANULARITY_OPTIONS = [
@@ -42,6 +43,7 @@ export interface MonthOption {
  * or you'd be unable to change dollar mode while reading Cash Flow.
  */
 export function ViewBar({
+  view,
   minYear,
   maxYear,
   rangeStart,
@@ -60,6 +62,8 @@ export function ViewBar({
   compareScenarioId,
   onCompareChange,
 }: {
+  /** The active view: the year range only applies to the projection views, and the dollar toggle to those plus the stress test. */
+  view: View;
   minYear: number;
   maxYear: number;
   rangeStart: number;
@@ -80,6 +84,9 @@ export function ViewBar({
   compareScenarioId: Id | null;
   onCompareChange: (id: Id | null) => void;
 }) {
+  const showRange = view === "Overview" || view === "Cash Flow" || view === "Accounts";
+  const showDollar = showRange || view === "Stress test";
+  const showCompareControl = view !== "Stress test";
   const years = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
   const isFullRange = rangeStart === minYear && rangeEnd === maxYear;
   const activePreset = PRESETS.find((n) => rangeEnd - rangeStart + 1 === n && !isFullRange) ?? null;
@@ -118,7 +125,8 @@ export function ViewBar({
           stays on one line and scrolls sideways, bled to the screen edge; from
           `sm` up there's room to wrap as before. */}
       <div className="scroll-strip -mx-3 flex w-full flex-nowrap items-center gap-2 px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0">
-        {granularityAvailable && (
+        {!showRange && <span className="text-[11.5px] text-dim-2">{view === "Stress test" ? "Every test runs the whole plan." : "The whole plan, whatever the year range."}</span>}
+        {showRange && granularityAvailable && (
           <Segmented
             ariaLabel="Show one column per year or per month"
             options={GRANULARITY_OPTIONS}
@@ -127,7 +135,7 @@ export function ViewBar({
             size="sm"
           />
         )}
-        {showMonths ? (
+        {!showRange ? null : showMonths ? (
           <>
             <label className="flex shrink-0 items-center gap-1.5 text-[11.5px] text-dim-2">
               From
@@ -226,14 +234,16 @@ export function ViewBar({
 
       <div className="scroll-strip -mx-3 flex w-full flex-nowrap items-center gap-2 px-3 sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0">
         <SyncChip />
-        <Segmented
-          ariaLabel="Show figures in future or today's dollars"
-          options={DOLLAR_OPTIONS}
-          value={dollarMode}
-          onChange={onDollarModeChange}
-          size="sm"
-        />
-        {compareOptions.length > 0 && (
+        {showDollar && (
+          <Segmented
+            ariaLabel="Show figures in today's or future dollars"
+            options={DOLLAR_OPTIONS}
+            value={dollarMode}
+            onChange={onDollarModeChange}
+            size="sm"
+          />
+        )}
+        {showCompareControl && compareOptions.length > 0 && (
           <div className="relative" ref={compareRef}>
             <button
               type="button"
