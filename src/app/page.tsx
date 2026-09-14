@@ -26,7 +26,7 @@ import { JoyConfetti } from "@/components/joy/JoyConfetti";
 import { JoyQuote } from "@/components/joy/JoyQuote";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { todayISO } from "@/engine/dateMath";
-import { STRESS_PRESETS } from "@/engine/stress";
+import { applicableStressPresets } from "@/engine/stress";
 import { useStressProjection } from "@/store/useStress";
 
 /**
@@ -221,7 +221,7 @@ function HomeContent() {
                 scenarioName={scenario.name}
                 compareOptions={compareOptions}
                 compareScenarioId={compareScenarioId}
-                stressOptions={STRESS_PRESETS.map((p) => ({ key: p.key, label: p.label }))}
+                stressOptions={applicableStressPresets(scenario).map((p) => ({ key: p.key, label: p.label }))}
                 stressKey={stressOverlay}
                 onStressChange={setStressOverlay}
                 onOpenStressTab={() => setView("Stress test")}
