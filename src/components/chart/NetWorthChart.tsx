@@ -16,7 +16,6 @@ import {
 import { addMonths, yearOf } from "@/engine/dateMath";
 import { rmdStartAgeForBirthYear } from "@/engine/rmd";
 import type { Account, ExpenseBaseline, IncomeSource, Person, ScenarioEvent, PeriodSnapshot } from "@/domain";
-import type { StressKey } from "@/engine/stress";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { useUiStore } from "@/store/useUiStore";
 import { usePlanStore } from "@/store/usePlanStore";
@@ -45,8 +44,8 @@ const JOY_CHART_COLORS = ["#ff7a59", "#f4a63b", "#2fb98d", "#3ec7cf", "#ff9d6f",
 // Recharts needs concrete color strings, so mirror the two palettes here.
 // These must stay in sync with the theme tokens in globals.css.
 const CHART_THEME = {
-  dark: { grid: "#172d34", axis: "#8399a0", tooltipBg: "#0e2027", tooltipBorder: "#1f3a42", label: "#e7e7de", stress: "#db7a6e" },
-  joy: { grid: "#f4e5d3", axis: "#a68a72", tooltipBg: "#ffffff", tooltipBorder: "#ffe0c7", label: "#4a3729", stress: "#e8555a" },
+  dark: { grid: "#172d34", axis: "#8399a0", tooltipBg: "#0e2027", tooltipBorder: "#1f3a42", label: "#e7e7de" },
+  joy: { grid: "#f4e5d3", axis: "#a68a72", tooltipBg: "#ffffff", tooltipBorder: "#ffe0c7", label: "#4a3729" },
 } as const;
 
 type ViewMode = "net_worth" | "by_account";
@@ -189,102 +188,6 @@ interface CompareScenarioData {
   people: Person[];
 }
 
-/** A stress preset's run, drawn as a dashed second line. */
-interface StressOverlayData {
-  label: string;
-  description: string;
-  years: PeriodSnapshot[];
-}
-
-/** The "Stress ▾" menu: one preset at a time, or none. */
-function StressMenu({
-  options,
-  value,
-  onChange,
-  onOpenTab,
-}: {
-  options: { key: StressKey; label: string }[];
-  value: StressKey | null;
-  onChange: (key: StressKey | null) => void;
-  /** Opens the Stress test tab, where every preset runs side by side and the severity is editable. */
-  onOpenTab?: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
-  }, [open]);
-  const active = options.find((o) => o.key === value) ?? null;
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="Draw the plan under a bad assumption"
-        className={`rounded-md border bg-panel-2 px-2.5 py-1 text-[11.5px] font-medium transition-colors ${
-          active ? "border-accent text-accent" : "border-border text-dim hover:text-foreground"
-        }`}
-      >
-        {active ? `Stress: ${active.label}` : "Stress test"} ▾
-      </button>
-      {open && (
-        <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-56 rounded-md border border-border bg-panel p-1 shadow-lg">
-          {options.map((o) => (
-            <button
-              key={o.key}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onChange(o.key === value ? null : o.key);
-                setOpen(false);
-              }}
-              className={`block w-full rounded px-3 py-2 text-left text-sm hover:bg-accent/15 ${o.key === value ? "text-foreground" : "text-dim"}`}
-            >
-              {o.label}
-            </button>
-          ))}
-          {active && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onChange(null);
-                setOpen(false);
-              }}
-              className="mt-1 block w-full rounded px-3 py-2 text-left text-sm text-dim hover:bg-accent/15"
-            >
-              Clear
-            </button>
-          )}
-          {/* This menu draws one preset over the plan; the tab runs them all
-              together and is where the severity of each is set. */}
-          {onOpenTab && (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                onOpenTab();
-              }}
-              className="mt-1 flex w-full items-center justify-between gap-2 rounded border-t border-border px-3 py-2 pt-2 text-left text-sm text-dim hover:bg-accent/15 hover:text-foreground"
-            >
-              <span>Compare all, set severity</span>
-              <span aria-hidden>→</span>
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const RANGE_PRESETS = [5, 10, 20, 40] as const;
 
 const DOLLAR_OPTIONS = [
@@ -371,11 +274,6 @@ export function NetWorthChart({
   compareOptions,
   compareScenarioId,
   compareScenario,
-  stressOptions,
-  stressKey,
-  onStressChange,
-  onOpenStressTab,
-  stressScenario,
 }: {
   accounts: Account[];
   /** Accounts selectable in the drawers opened by clicking a marker -- excludes the mandatory Extra Savings account etc. */
@@ -399,12 +297,6 @@ export function NetWorthChart({
   compareOptions: { id: string; name: string }[];
   compareScenarioId: string | null;
   compareScenario: CompareScenarioData | null;
-  stressOptions: { key: StressKey; label: string }[];
-  stressKey: StressKey | null;
-  onStressChange: (key: StressKey | null) => void;
-  /** Switches to the Stress test tab from the chart's own menu. */
-  onOpenStressTab?: () => void;
-  stressScenario: StressOverlayData | null;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("net_worth");
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -485,12 +377,6 @@ export function NetWorthChart({
     for (const y of compareScenario.years) map.set(y.year, y);
     return map;
   }, [compareScenario]);
-  const stressByYear = useMemo(() => {
-    if (!stressScenario) return null;
-    const map = new Map<number, PeriodSnapshot>();
-    for (const y of stressScenario.years) map.set(y.year, y);
-    return map;
-  }, [stressScenario]);
 
   const data = useMemo(() => {
     return years.map((y) => {
@@ -500,8 +386,6 @@ export function NetWorthChart({
         row.value = (dollarMode === "real" ? y.netWorthReal : y.netWorthNominal);
         const cy = compareByYear?.get(y.year);
         if (cy) row.compareValue = dollarMode === "real" ? cy.netWorthReal : cy.netWorthNominal;
-        const sy = stressByYear?.get(y.year);
-        if (sy) row.stressValue = dollarMode === "real" ? sy.netWorthReal : sy.netWorthNominal;
       } else {
         // Stacked areas: assets up, debts below zero, net worth on top.
         row.value = dollarMode === "real" ? y.netWorthReal : y.netWorthNominal;
@@ -512,7 +396,7 @@ export function NetWorthChart({
       }
       return row;
     });
-  }, [years, viewMode, dollarMode, accounts, compareByYear, stressByYear]);
+  }, [years, viewMode, dollarMode, accounts, compareByYear]);
 
   const dataYears = useMemo(() => data.map((d) => d.year as number), [data]);
   const milestones = useMemo(() => {
@@ -886,11 +770,6 @@ export function NetWorthChart({
           <h2 className="text-sm font-semibold text-dim">
             {viewMode === "net_worth" ? "Net Worth Projection" : "Balance by Account"}
             {compareName && <span className="ml-2 font-normal text-dim-2">vs {compareName}</span>}
-            {viewMode === "net_worth" && stressScenario && (
-              <span className="ml-2 font-normal text-dim-2" title={stressScenario.description}>
-                · {stressScenario.label}
-              </span>
-            )}
           </h2>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Segmented
@@ -925,9 +804,6 @@ export function NetWorthChart({
                 value={dollarMode}
                 onChange={onDollarModeChange}
               />
-            )}
-            {viewMode === "net_worth" && (
-              <StressMenu options={stressOptions} value={stressKey} onChange={onStressChange} onOpenTab={onOpenStressTab} />
             )}
             <button
               type="button"
@@ -984,14 +860,14 @@ export function NetWorthChart({
                   return [formatMoney(Number(value)), accounts.find((a) => a.id === name)?.name ?? String(name)];
                 }
                 const label =
-                  name === "compareValue" ? (compareName ?? "Compare") : name === "stressValue" ? (stressScenario?.label ?? "Stress") : scenarioName;
+                  name === "compareValue" ? (compareName ?? "Compare") : scenarioName;
                 return [formatMoney(Number(value)), label];
               }}
             />
             {viewMode === "net_worth" && (
               <Legend
                 formatter={(value: string) =>
-                  value === "compareValue" ? (compareName ?? "Compare") : value === "stressValue" ? (stressScenario?.label ?? "Stress") : scenarioName
+                  value === "compareValue" ? (compareName ?? "Compare") : scenarioName
                 }
                 wrapperStyle={{ fontSize: 12 }}
               />
@@ -1030,17 +906,6 @@ export function NetWorthChart({
                     dot={false}
                     strokeWidth={2}
                     strokeDasharray="6 4"
-                    isAnimationActive={false}
-                  />
-                )}
-                {stressScenario && (
-                  <Line
-                    type="monotone"
-                    dataKey="stressValue"
-                    stroke={theme.stress}
-                    dot={false}
-                    strokeWidth={2}
-                    strokeDasharray="4 3"
                     isAnimationActive={false}
                   />
                 )}

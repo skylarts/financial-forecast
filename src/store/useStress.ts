@@ -1,33 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectionResult, Scenario } from "@/domain";
-import { projectScenario, type ProjectionOptions } from "@/engine/forecastScenario";
-import { applicableStressPresets, stressPreset, type StressGroup, type StressKey, type StressParams, type StressPreset } from "@/engine/stress";
+import type { Scenario } from "@/domain";
+import type { ProjectionOptions } from "@/engine/forecastScenario";
+import { applicableStressPresets, type StressGroup, type StressKey, type StressParams, type StressPreset } from "@/engine/stress";
 import { findBreakingPoint, findFixes, SEARCH_STEPS, type BreakingPoint, type Fix, type Runner } from "@/engine/stressSolver";
 import type { StressSummary } from "@/engine/stressSummary";
 import { CancelledError, runProjection } from "./projectionPool";
-
-export interface StressRun {
-  key: StressKey;
-  label: string;
-  group: StressGroup;
-  description: string;
-  result: ProjectionResult;
-}
-
-/**
- * One stressed projection on the main thread, or null when no preset is
- * chosen -- the Overview chart's overlay, which needs the full result for
- * its line. Memoized on the scenario and the parameters.
- */
-export function useStressProjection(scenario: Scenario, key: StressKey | null, params: StressParams): StressRun | null {
-  return useMemo(() => {
-    if (!key) return null;
-    const preset = stressPreset(key);
-    if (!preset || !preset.applies(scenario)) return null;
-    const { scenario: stressed, options } = preset.apply(scenario, params);
-    return { key, label: preset.label, group: preset.group, description: preset.describe(params, scenario), result: projectScenario(stressed, options) };
-  }, [scenario, key, params]);
-}
 
 export interface StressRow {
   key: StressKey;
