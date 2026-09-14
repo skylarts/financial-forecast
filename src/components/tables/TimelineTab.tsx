@@ -179,7 +179,7 @@ export function TimelineTab({
             onClick={() => setEventDrawer({ open: true, item: undefined })}
             className="rounded-md bg-pri px-3 py-1.5 text-sm font-semibold text-pri-fg"
           >
-            + Event
+            + Life event
           </button>
         </div>
       )}
@@ -260,6 +260,7 @@ export function TimelineTab({
         event={eventDrawer.item}
         accounts={editableAccounts}
         people={people}
+        incomeSources={incomeSources}
       />
     </div>
   );

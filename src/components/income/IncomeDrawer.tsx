@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { DateAnchor, IncomeCategory, IncomeSource, Person, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
+import type { ResolvedIncomeSeed } from "@/lib/lifeEventTemplates";
 import { incomeSourceSchema } from "@/domain";
 import { birthdayAtAge } from "@/engine/dateMath";
 import { Drawer } from "@/components/ui/Drawer";
@@ -63,7 +64,27 @@ interface FormValues {
   survivorPct: string;
 }
 
-function toFormValues(income?: IncomeSource): FormValues {
+function toFormValues(income?: IncomeSource, seed?: ResolvedIncomeSeed): FormValues {
+  // A life-event template seeds a NEW income: everything but the amount is
+  // filled in, so the person types one number. Never applied when editing.
+  if (!income && seed) {
+    return {
+      name: seed.name,
+      ownerId: seed.ownerId ?? "",
+      amount: "",
+      grossAmount: "",
+      frequency: seed.frequency,
+      startDate: seed.startDate,
+      endDate: seed.endDate ?? "",
+      growthRatePct: fractionToPercentStr(seed.growthRatePct),
+      intervalYears: seed.intervalYears?.toString() ?? "",
+      depositAccountId: seed.depositAccountId ?? "",
+      category: seed.category,
+      isExcluded: false,
+      claimAge: seed.claimAge != null ? String(seed.claimAge) : "",
+      survivorPct: "",
+    };
+  }
   return {
     name: income?.name ?? "",
     ownerId: income?.ownerId ?? "",
@@ -91,28 +112,37 @@ export function IncomeDrawer({
   income,
   people,
   accounts,
+  seed,
+  seedAdjustment,
 }: {
   open: boolean;
   onClose: () => void;
   income?: IncomeSource;
   people: Person[];
   accounts: Account[];
+  /** A life-event template's pre-filled values for a NEW income (ignored when editing). */
+  seed?: ResolvedIncomeSeed;
+  /** A life-event template's temporary change (a career break) to add to an EXISTING income. */
+  seedAdjustment?: TemporaryAdjustment;
 }) {
   const addIncomeSource = usePlanStore((s) => s.addIncomeSource);
   const updateIncomeSource = usePlanStore((s) => s.updateIncomeSource);
   const removeIncomeSource = usePlanStore((s) => s.removeIncomeSource);
   const [error, setError] = useState<string | null>(null);
-  const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(income?.adjustments ?? []);
+  const seededAdjustments = () => [...(income?.adjustments ?? []), ...(income && seedAdjustment ? [seedAdjustment] : [])];
+  const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(seededAdjustments);
   const [adjustmentsKey, setAdjustmentsKey] = useState(() => JSON.stringify(income?.adjustments ?? []));
   // The two date links live outside react-hook-form (like `adjustments`): they
   // are structured values, and the date inputs they drive are already
   // registered fields that they write into.
-  const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(income?.startAnchor ?? null);
-  const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(income?.endAnchor ?? null);
+  const seedStartAnchor = () => income?.startAnchor ?? (income ? null : seed?.startAnchor ?? null);
+  const seedEndAnchor = () => income?.endAnchor ?? (income ? null : seed?.endAnchor ?? null);
+  const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(seedStartAnchor);
+  const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(seedEndAnchor);
   const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([income?.startAnchor ?? null, income?.endAnchor ?? null]));
-  const [advancedOpen, setAdvancedOpen] = useState(
-    !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.grossAmount != null)
-  );
+  const advancedInitially = () =>
+    (!!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.grossAmount != null)) || !!seedAdjustment;
+  const [advancedOpen, setAdvancedOpen] = useState(advancedInitially);
   const inflationRatePct = usePlanStore((s) => s.activeScenario().settings.inflationRatePct);
   const inflationPctLabel = fractionToPercentStr(inflationRatePct) || "0";
 
@@ -125,7 +155,7 @@ export function IncomeDrawer({
     getValues,
     formState: { isDirty },
   } = useForm<FormValues>({
-    defaultValues: toFormValues(income),
+    defaultValues: toFormValues(income, seed),
   });
   const category = watch("category");
   const ownerId = watch("ownerId");
@@ -138,17 +168,16 @@ export function IncomeDrawer({
   // Re-sync the form whenever the drawer opens on a different income item --
   // without this, a reused drawer instance shows the previous item's values.
   useEffect(() => {
-    reset(toFormValues(income));
-    setAdjustments(income?.adjustments ?? []);
+    reset(toFormValues(income, seed));
+    setAdjustments(seededAdjustments());
     setAdjustmentsKey(JSON.stringify(income?.adjustments ?? []));
-    setStartAnchor(income?.startAnchor ?? null);
-    setEndAnchor(income?.endAnchor ?? null);
+    setStartAnchor(seedStartAnchor());
+    setEndAnchor(seedEndAnchor());
     setAnchorsKey(JSON.stringify([income?.startAnchor ?? null, income?.endAnchor ?? null]));
     setError(null);
-    setAdvancedOpen(
-      !!income && ((income.adjustments?.length ?? 0) > 0 || income.isExcluded === true || income.grossAmount != null)
-    );
-  }, [income, open, reset]);
+    setAdvancedOpen(advancedInitially());
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [income, open, reset, seed, seedAdjustment]);
 
   /** The start date for a claiming age: the owner's birthday at that age. */
   const syncStartDateFromAge = (ageStr: string, ownerIdNow: string) => {
@@ -230,6 +259,10 @@ export function IncomeDrawer({
     <Drawer open={open} onClose={onClose} title={income ? "Edit Income" : "Add Income"} dirty={dirty}>
       <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-3">
         <ErrorBanner message={error} />
+        {!income && seed?.note && <FieldNote tone="info">{seed.note} Change anything below.</FieldNote>}
+        {income && seedAdjustment && (
+          <FieldNote tone="info">A {seedAdjustment.note?.toLowerCase() ?? "change"} has been added under Advanced -- set its dates and save.</FieldNote>
+        )}
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Alex Salary" />
         </Field>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import type { DateAnchor, ExpenseCategory, ExpenseBaseline, RecurrenceFrequency, Account, TemporaryAdjustment } from "@/domain";
 import { expenseBaselineSchema } from "@/domain";
+import type { ResolvedExpenseSeed } from "@/lib/lifeEventTemplates";
 import { Drawer } from "@/components/ui/Drawer";
 import {
   AdvancedDisclosure,
@@ -56,7 +57,23 @@ interface FormValues {
   isExcluded: boolean;
 }
 
-function toFormValues(expense?: ExpenseBaseline): FormValues {
+function toFormValues(expense?: ExpenseBaseline, seed?: ResolvedExpenseSeed): FormValues {
+  // A life-event template seeds a NEW expense: everything but the amount is
+  // filled in, so the person types one number. Never applied when editing.
+  if (!expense && seed) {
+    return {
+      name: seed.name,
+      amount: "",
+      frequency: seed.frequency,
+      startDate: seed.startDate,
+      endDate: seed.endDate ?? "",
+      growthRatePct: fractionToPercentStr(seed.growthRatePct),
+      intervalYears: seed.intervalYears?.toString() ?? "",
+      paymentAccountId: seed.paymentAccountId ?? "",
+      category: seed.category,
+      isExcluded: false,
+    };
+  }
   return {
     name: expense?.name ?? "",
     amount: expense ? moneyToStr(expense.amount) : "",
@@ -76,11 +93,14 @@ export function ExpenseDrawer({
   onClose,
   expense,
   accounts,
+  seed,
 }: {
   open: boolean;
   onClose: () => void;
   expense?: ExpenseBaseline;
   accounts: Account[];
+  /** A life-event template's pre-filled values for a NEW expense (ignored when editing). */
+  seed?: ResolvedExpenseSeed;
 }) {
   const addExpense = usePlanStore((s) => s.addExpense);
   const updateExpense = usePlanStore((s) => s.updateExpense);
@@ -91,8 +111,10 @@ export function ExpenseDrawer({
   const [adjustments, setAdjustments] = useState<TemporaryAdjustment[]>(expense?.adjustments ?? []);
   const [adjustmentsKey, setAdjustmentsKey] = useState(() => JSON.stringify(expense?.adjustments ?? []));
   // Structured values that live outside react-hook-form, like `adjustments`.
-  const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(expense?.startAnchor ?? null);
-  const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(expense?.endAnchor ?? null);
+  const seedStartAnchor = () => expense?.startAnchor ?? (expense ? null : seed?.startAnchor ?? null);
+  const seedEndAnchor = () => expense?.endAnchor ?? (expense ? null : seed?.endAnchor ?? null);
+  const [startAnchor, setStartAnchor] = useState<DateAnchor | null>(seedStartAnchor);
+  const [endAnchor, setEndAnchor] = useState<DateAnchor | null>(seedEndAnchor);
   const [anchorsKey, setAnchorsKey] = useState(() => JSON.stringify([expense?.startAnchor ?? null, expense?.endAnchor ?? null]));
   const [advancedOpen, setAdvancedOpen] = useState(
     !!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true)
@@ -108,7 +130,7 @@ export function ExpenseDrawer({
     setValue,
     formState: { isDirty },
   } = useForm<FormValues>({
-    defaultValues: toFormValues(expense),
+    defaultValues: toFormValues(expense, seed),
   });
   const category = watch("category");
   const isOneTime = watch("frequency") === "one_time";
@@ -117,15 +139,16 @@ export function ExpenseDrawer({
   // Re-sync the form whenever the drawer opens on a different expense --
   // without this, a reused drawer instance shows the previous item's values.
   useEffect(() => {
-    reset(toFormValues(expense));
+    reset(toFormValues(expense, seed));
     setAdjustments(expense?.adjustments ?? []);
     setAdjustmentsKey(JSON.stringify(expense?.adjustments ?? []));
-    setStartAnchor(expense?.startAnchor ?? null);
-    setEndAnchor(expense?.endAnchor ?? null);
+    setStartAnchor(seedStartAnchor());
+    setEndAnchor(seedEndAnchor());
     setAnchorsKey(JSON.stringify([expense?.startAnchor ?? null, expense?.endAnchor ?? null]));
     setError(null);
     setAdvancedOpen(!!expense && ((expense.adjustments?.length ?? 0) > 0 || expense.isExcluded === true));
-  }, [expense, open, reset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expense, open, reset, seed]);
 
   const onSubmit = (values: FormValues) => {
     if (!values.category) {
@@ -184,6 +207,7 @@ export function ExpenseDrawer({
     <Drawer open={open} onClose={onClose} title={expense ? "Edit Expense" : "Add Expense"} dirty={dirty}>
       <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-3">
         <ErrorBanner message={error} />
+        {!expense && seed?.note && <FieldNote tone="info">{seed.note} Change anything below.</FieldNote>}
         <Field label="Name">
           <TextInput reg={register("name", { required: true })} placeholder="e.g. Rent" />
         </Field>

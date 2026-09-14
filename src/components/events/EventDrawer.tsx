@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import type { Account, DateAnchor, EventType, Person, RecurrenceFrequency, ScenarioEvent } from "@/domain";
+import type { Account, DateAnchor, EventType, IncomeSource, Person, RecurrenceFrequency, ScenarioEvent, TemporaryAdjustment } from "@/domain";
 import {
   sellHomeEventSchema,
   rothConversionEventSchema,
@@ -13,6 +13,7 @@ import {
 import { Drawer } from "@/components/ui/Drawer";
 import {
   ANCHOR_HINT,
+  inputClass,
   DrawerFooter,
   ErrorBanner,
   Field,
@@ -33,6 +34,17 @@ import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { LoanDrawer } from "@/components/accounts/LoanDrawer";
 import { treatmentOf } from "@/engine/resolveEvents";
+import { todayISO } from "@/engine/dateMath";
+import { useAssumptionsStore } from "@/store/useAssumptionsStore";
+import {
+  LIFE_EVENT_GROUPS,
+  LIFE_EVENT_TEMPLATES,
+  resolveTemplate,
+  searchTemplates,
+  type LifeEventTemplate,
+  type ResolvedExpenseSeed,
+  type ResolvedIncomeSeed,
+} from "@/lib/lifeEventTemplates";
 
 // A temporary raise/pause/cut lives directly on the income or expense it
 // affects, and Social Security is a plain Income entry -- so Income and
@@ -42,18 +54,18 @@ import { treatmentOf } from "@/engine/resolveEvents";
 // "have a kid" template any more.
 type TemplateType = EventType | "income" | "expense" | "heloc";
 
-const EVENT_TEMPLATES: { type: TemplateType; label: string; hint: string }[] = [
-  { type: "income", label: "Income", hint: "Salary, Social Security, pension, rental, or a one-time payment" },
-  { type: "expense", label: "Expense", hint: "A recurring or one-time cost, including childcare or a car every few years" },
-  { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
-  { type: "sell_home", label: "Sell a home", hint: "Sell a home you own: retires its mortgage and credits the proceeds" },
-  { type: "roth_conversion", label: "Roth conversion", hint: "Move money from a tax-deferred account to a Roth: taxed as income, never penalized" },
-  { type: "open_loan", label: "Take out a loan", hint: "Finance a car, a student or personal loan: creates the debt and starts its payments" },
-  { type: "heloc", label: "Home equity line (HELOC)", hint: "Borrow against a home you own: interest-only while you draw, then paid back over the repayment period" },
-  { type: "pay_off_loan", label: "Pay off a loan", hint: "Pay a mortgage or loan down, or off, from an account on a date" },
-  { type: "rollover", label: "Rollover", hint: "Move money between two tax-deferred accounts, with no tax" },
-  { type: "custom_transfer", label: "Custom transfer", hint: "Any other move between two of your accounts" },
-];
+/**
+ * What a picked life-event template hands off to. The generic income/expense
+ * drawers open pre-filled; a temporary adjustment opens the salary it
+ * changes with the change already added; Assumptions opens for the things
+ * that live there (retirement age, healthcare, planning-end age).
+ */
+type Handoff =
+  | { kind: "income"; seed: ResolvedIncomeSeed }
+  | { kind: "expense"; seed: ResolvedExpenseSeed }
+  | { kind: "adjust"; income: IncomeSource; adjustment: TemporaryAdjustment }
+  /** More than one salary to choose between: the picker asks first. */
+  | { kind: "choose-income"; template: LifeEventTemplate; candidates: IncomeSource[] };
 
 const BRACKET_OPTIONS = [
   { value: "0.1", label: "10% bracket" },
@@ -203,13 +215,20 @@ export function EventDrawer({
   event,
   accounts,
   people,
+  incomeSources = [],
 }: {
   open: boolean;
   onClose: () => void;
   event?: ScenarioEvent;
   accounts: Account[];
   people: Person[];
+  /** Existing incomes, for templates that change a salary (a career break). Optional: the chart's marker editor never adds. */
+  incomeSources?: IncomeSource[];
 }) {
+  const openAssumptions = useAssumptionsStore((s) => s.openAssumptions);
+  const planStartDate = usePlanStore((s) => s.activeScenario().settings.startDate) ?? todayISO();
+  const [handoff, setHandoff] = useState<Handoff | null>(null);
+  const [query, setQuery] = useState("");
   const addEvent = usePlanStore((s) => s.addEvent);
   const updateEvent = usePlanStore((s) => s.updateEvent);
   const removeEvent = usePlanStore((s) => s.removeEvent);
@@ -236,6 +255,8 @@ export function EventDrawer({
   const dirty = isDirty || JSON.stringify([startAnchor, endAnchor]) !== anchorsKey;
 
   useEffect(() => {
+    setHandoff(null);
+    setQuery("");
     setSelectedType(event?.type ?? null);
     reset(event ? eventToFormValues(event) : DEFAULTS);
     setStartAnchor(event?.startAnchor ?? null);
@@ -259,6 +280,17 @@ export function EventDrawer({
   // buy_home, income, and expense are each handled entirely by their own
   // drawer (see the early returns below), so none of them ever reach the
   // generic form further down.
+  if (handoff?.kind === "income") {
+    return <IncomeDrawer open={open} onClose={onClose} income={undefined} people={people} accounts={accounts} seed={handoff.seed} />;
+  }
+  if (handoff?.kind === "expense") {
+    return <ExpenseDrawer open={open} onClose={onClose} expense={undefined} accounts={accounts} seed={handoff.seed} />;
+  }
+  if (handoff?.kind === "adjust") {
+    return (
+      <IncomeDrawer open={open} onClose={onClose} income={handoff.income} people={people} accounts={accounts} seedAdjustment={handoff.adjustment} />
+    );
+  }
   if (selectedType === "buy_home") {
     const buyEvent = event?.type === "buy_home" ? event : undefined;
     const linkedAccount = buyEvent ? accounts.find((a) => a.id === buyEvent.realEstateAccountId) : undefined;
@@ -294,6 +326,35 @@ export function EventDrawer({
    * Roth to convert into, and so on -- so a fresh form is submittable as-is
    * instead of failing a silent "required" check on a blank select.
    */
+  const pickLifeEvent = (template: LifeEventTemplate, income?: IncomeSource) => {
+    const resolved = resolveTemplate(template, { people, accounts, planStartDate });
+    switch (resolved.kind) {
+      case "event":
+        chooseTemplate(resolved.type);
+        return;
+      case "income":
+      case "expense":
+        setHandoff(resolved);
+        return;
+      case "assumptions":
+        onClose();
+        openAssumptions();
+        return;
+      case "adjustment": {
+        const salaries = incomeSources.filter((i) => i.category === "salary" && !i.isExcluded);
+        const target = income ?? (salaries.length === 1 ? salaries[0] : undefined);
+        if (target) {
+          setHandoff({ kind: "adjust", income: target, adjustment: resolved.adjustment });
+        } else if (salaries.length === 0) {
+          setError("There is no salary to pause yet -- add one first (Work & income → New job or raise).");
+        } else {
+          setHandoff({ kind: "choose-income", template, candidates: salaries });
+        }
+        return;
+      }
+    }
+  };
+
   const chooseTemplate = (type: TemplateType) => {
     setSelectedType(type);
     setError(null);
@@ -437,20 +498,73 @@ export function EventDrawer({
   const isWholeBalanceKind = selectedType === "pay_off_loan" || selectedType === "rollover";
 
   return (
-    <Drawer open={open} onClose={onClose} title={event ? "Edit Event" : "Add Event"} dirty={selectedType !== null && dirty}>
+    <Drawer open={open} onClose={onClose} title={event ? "Edit Event" : "Add a life event"} dirty={selectedType !== null && dirty}>
       {!selectedType ? (
-        <div className="flex flex-col gap-2">
-          {EVENT_TEMPLATES.map((t) => (
-            <button
-              key={t.type}
-              type="button"
-              onClick={() => chooseTemplate(t.type)}
-              className="rounded-md border border-border bg-background px-3 py-2 text-left hover:border-accent"
-            >
-              <div className="text-sm font-medium">{t.label}</div>
-              <div className="text-xs text-dim">{t.hint}</div>
-            </button>
-          ))}
+        <div className="flex flex-col gap-3">
+          <ErrorBanner message={error} />
+          {handoff?.kind === "choose-income" ? (
+            <>
+              <p className="text-sm text-dim">Which salary does this apply to?</p>
+              {handoff.candidates.map((i) => (
+                <button
+                  key={i.id}
+                  type="button"
+                  onClick={() => pickLifeEvent(handoff.template, i)}
+                  className="rounded-md border border-border bg-background px-3 py-2 text-left hover:border-accent"
+                >
+                  <div className="text-sm font-medium">{i.name}</div>
+                </button>
+              ))}
+              <button type="button" onClick={() => setHandoff(null)} className="text-left text-xs text-dim hover:text-foreground">
+                ← Back
+              </button>
+            </>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search life events -- baby, college, car, retire..."
+                className={inputClass}
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <button type="button" onClick={() => chooseTemplate("income")} className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-left hover:border-accent">
+                  <div className="text-sm font-medium">Income</div>
+                  <div className="text-xs text-dim">Blank -- any money coming in</div>
+                </button>
+                <button type="button" onClick={() => chooseTemplate("expense")} className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-left hover:border-accent">
+                  <div className="text-sm font-medium">Expense</div>
+                  <div className="text-xs text-dim">Blank -- any money going out</div>
+                </button>
+              </div>
+              {(() => {
+                const matches = searchTemplates(query, LIFE_EVENT_TEMPLATES);
+                if (matches.length === 0) return <p className="text-sm text-dim">Nothing matches. Try a plain Income or Expense above.</p>;
+                return LIFE_EVENT_GROUPS.map((group) => {
+                  const items = matches.filter((t) => t.group === group);
+                  if (items.length === 0) return null;
+                  return (
+                    <div key={group} className="flex flex-col gap-1.5">
+                      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-dim/70">{group}</div>
+                      {items.map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => pickLifeEvent(t)}
+                          className="rounded-md border border-border bg-background px-3 py-2 text-left hover:border-accent"
+                        >
+                          <div className="text-sm font-medium">{t.label}</div>
+                          <div className="text-xs text-dim">{t.hint}</div>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                });
+              })()}
+            </>
+          )}
         </div>
       ) : (
         <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-3">
