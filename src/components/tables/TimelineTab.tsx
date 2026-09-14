@@ -6,7 +6,7 @@ import { retirementsInOrder } from "@/domain";
 import { useAssumptionsStore } from "@/store/useAssumptionsStore";
 import { AnchorChip } from "@/components/ui/AnchoredDate";
 import { formatMoney } from "@/lib/format";
-import { eventBadgeLabel, INCOME_CATEGORY_BADGES, freqLabel } from "@/lib/timelineFormat";
+import { eventBadgeLabel, templateBadge, INCOME_CATEGORY_BADGES, freqLabel } from "@/lib/timelineFormat";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { EventDrawer } from "@/components/events/EventDrawer";
@@ -82,7 +82,7 @@ export function TimelineTab({
       key: `inc-${inc.id}`,
       date: inc.startDate,
       tone: "income",
-      badge: INCOME_CATEGORY_BADGES[inc.category] ?? "Income",
+      badge: templateBadge(inc.templateId) ?? INCOME_CATEGORY_BADGES[inc.category] ?? "Income",
       name: inc.name,
       detail: `${formatMoney(inc.amount)}${freqLabel(inc.frequency, inc.intervalYears)} · ${ownerName(inc.ownerId)}`,
       excluded: inc.isExcluded ?? false,
@@ -108,7 +108,7 @@ export function TimelineTab({
       key: `exp-${exp.id}`,
       date: exp.startDate,
       tone: "expense",
-      badge: "Expense",
+      badge: templateBadge(exp.templateId) ?? "Expense",
       name: exp.name,
       detail: `${formatMoney(exp.amount)}${freqLabel(exp.frequency, exp.intervalYears)}`,
       excluded: exp.isExcluded ?? false,

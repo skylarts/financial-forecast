@@ -188,6 +188,8 @@ export function ExpenseDrawer({
       category: values.category,
       adjustments,
       isExcluded: values.isExcluded,
+      // Display only -- see IncomeDrawer.
+      templateId: expense?.templateId ?? seed?.templateId,
     };
 
     const result = expenseBaselineSchema.omit({ id: true }).safeParse(candidate);

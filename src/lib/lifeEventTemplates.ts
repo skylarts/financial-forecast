@@ -317,6 +317,8 @@ export interface TemplateContext {
 
 /** The drawer-facing shape of a seeded income: plain field values, already resolved. */
 export interface ResolvedIncomeSeed {
+  /** The template this came from, kept on the record so the chart can show its own icon. */
+  templateId: string;
   name: string;
   category: IncomeCategory;
   ownerId: string | null;
@@ -333,6 +335,8 @@ export interface ResolvedIncomeSeed {
 }
 
 export interface ResolvedExpenseSeed {
+  /** The template this came from, kept on the record so the chart can show its own icon. */
+  templateId: string;
   name: string;
   category: ExpenseCategory;
   frequency: RecurrenceFrequency;
@@ -349,7 +353,7 @@ export interface ResolvedExpenseSeed {
 export type ResolvedTemplate =
   | { kind: "income"; seed: ResolvedIncomeSeed }
   | { kind: "expense"; seed: ResolvedExpenseSeed }
-  | { kind: "event"; type: Extract<LifeEventTarget, { kind: "event" }>["type"] }
+  | { kind: "event"; type: Extract<LifeEventTarget, { kind: "event" }>["type"]; templateId: string }
   | { kind: "adjustment"; adjustment: TemporaryAdjustment; note: string }
   | { kind: "assumptions"; note: string };
 
@@ -402,6 +406,7 @@ export function resolveTemplate(template: LifeEventTemplate, ctx: TemplateContex
       return {
         kind: "income",
         seed: {
+          templateId: template.id,
           name: s.name,
           category: s.category,
           ownerId: owner?.id ?? null,
@@ -424,6 +429,7 @@ export function resolveTemplate(template: LifeEventTemplate, ctx: TemplateContex
       return {
         kind: "expense",
         seed: {
+          templateId: template.id,
           name: s.name,
           category: s.category,
           frequency: s.frequency ?? "monthly",
@@ -448,7 +454,7 @@ export function resolveTemplate(template: LifeEventTemplate, ctx: TemplateContex
         note: t.note,
       };
     case "event":
-      return { kind: "event", type: t.type };
+      return { kind: "event", type: t.type, templateId: template.id };
     case "assumptions":
       return { kind: "assumptions", note: t.note };
   }

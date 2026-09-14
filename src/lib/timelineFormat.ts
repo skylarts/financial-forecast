@@ -1,3 +1,4 @@
+import { LIFE_EVENT_TEMPLATES } from "@/lib/lifeEventTemplates";
 import type { ScenarioEvent, IncomeCategory, LedgerEvent, TimelineEntryType } from "@/domain";
 
 export const FREQUENCY_LABELS: Record<string, string> = {
@@ -19,9 +20,19 @@ export const INCOME_CATEGORY_BADGES: Record<IncomeCategory, string> = {
   other: "Income",
 };
 
+/** A life-event template's own label, for the badge on a record it created.
+ *  Undefined when the record was entered by hand, which keeps the plain
+ *  "Income"/"Expense" badge those have always had. */
+export function templateBadge(templateId: string | undefined): string | undefined {
+  if (!templateId) return undefined;
+  return LIFE_EVENT_TEMPLATES.find((t) => t.id === templateId)?.label;
+}
+
 /** The Timeline/chart badge for an event. Mostly the type's label; a HELOC is
  *  an open_loan underneath but reads as its own thing to the person who took it. */
-export function eventBadgeLabel(event: Pick<ScenarioEvent, "type"> & { loanKind?: "fixed" | "heloc" }): string {
+export function eventBadgeLabel(event: Pick<ScenarioEvent, "type"> & { loanKind?: "fixed" | "heloc"; templateId?: string }): string {
+  const fromTemplate = templateBadge(event.templateId);
+  if (fromTemplate) return fromTemplate;
   if (event.type === "open_loan" && event.loanKind === "heloc") return "HELOC";
   return EVENT_TYPE_LABELS[event.type] ?? event.type;
 }

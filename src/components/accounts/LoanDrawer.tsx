@@ -113,6 +113,7 @@ export function LoanDrawer({
   accounts,
   initialMode = "existing",
   initialKind = "fixed",
+  templateId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -126,6 +127,8 @@ export function LoanDrawer({
   initialMode?: Mode;
   /** Only consulted when account is omitted (creating new). */
   initialKind?: LoanKind;
+  /** The life-event template that opened this, if any -- display only (its chart icon). */
+  templateId?: string;
 }) {
   const settings = usePlanStore((s) => s.activeScenario().settings);
   const effectiveStartDate = settings.startDate ?? todayISO();
@@ -231,6 +234,7 @@ export function LoanDrawer({
         kind,
         drawYears: v.drawYears,
         securedByAccountId: v.securedByAccountId,
+        templateId,
       };
       result = event
         ? updateOpenedLoan(event.id, input, { ...settings, startDate: effectiveStartDate })
