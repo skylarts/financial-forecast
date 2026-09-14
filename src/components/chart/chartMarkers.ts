@@ -166,6 +166,14 @@ export function buildChartMarkers({
         if (ev.frequency !== "one_time") rows.push({ label: "End year", value: ev.endDate ? String(yearOf(ev.endDate)) : "Ongoing" });
         rows.push({ label: "Tax paid from", value: ev.taxSource === "withhold" ? "The conversion" : "Cash" });
         break;
+      case "open_loan":
+        rows.push({ label: "Loan", value: accountName(ev.loanAccountId) });
+        rows.push({ label: "Amount borrowed", value: formatMoney(ev.principal) });
+        rows.push({
+          label: "Money goes to",
+          value: ev.proceedsAccountId ? accountName(ev.proceedsAccountId) : "Something outside the plan",
+        });
+        break;
       case "pay_off_loan":
         rows.push({ label: "Loan", value: accountName(ev.loanAccountId) });
         rows.push({ label: "Paid from", value: accountName(ev.fromAccountId) });

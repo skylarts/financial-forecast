@@ -8,6 +8,7 @@ export const EVENT_TYPE_ICONS: Record<TimelineEntryType, string> = {
   sell_home: "🏷️",
   roth_conversion: "🔄",
   pay_off_loan: "✅",
+  open_loan: "🏦",
   rollover: "📦",
   custom_transfer: "🔁",
 };

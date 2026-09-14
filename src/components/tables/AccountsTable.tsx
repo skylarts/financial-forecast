@@ -1,11 +1,12 @@
 "use client";
 
 import { createContext, Fragment, useContext, useState } from "react";
-import type { Account, BuyHomeEvent, Granularity, Id, PeriodSnapshot, Person, ScenarioEvent } from "@/domain";
+import type { Account, BuyHomeEvent, Granularity, Id, OpenLoanEvent, PeriodSnapshot, Person, ScenarioEvent } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { ASSET_CLASS_GROUPS, LIABILITY_CLASS_GROUPS, type AccountClassGroup } from "@/lib/labels";
 import { AccountDrawer } from "@/components/accounts/AccountDrawer";
 import { HomeDrawer } from "@/components/accounts/HomeDrawer";
+import { LoanDrawer } from "@/components/accounts/LoanDrawer";
 import { useUiStore } from "@/store/useUiStore";
 
 /** Deflate a nominal dollar amount to today's dollars when in real mode. */
@@ -292,6 +293,14 @@ export function AccountsTable({
     setHomeDrawer({ open: true, account: homeAccount });
     return true;
   };
+  /** A loan account edited via the pencil opens LoanDrawer, together with its
+   *  open_loan event when the loan is one the plan takes out later -- so the
+   *  form comes up in the right mode whichever door you came through. */
+  const [loanDrawer, setLoanDrawer] = useState<{ open: boolean; account?: Account }>({ open: false });
+  const loanDrawerEvent: OpenLoanEvent | undefined = loanDrawer.account
+    ? (events.find((e) => e.type === "open_loan" && e.loanAccountId === loanDrawer.account!.id) as OpenLoanEvent | undefined)
+    : undefined;
+
   const homeDrawerEvent: BuyHomeEvent | undefined = homeDrawer.account
     ? (events.find((e) => e.type === "buy_home" && e.realEstateAccountId === homeDrawer.account!.id) as
         | BuyHomeEvent
@@ -389,6 +398,10 @@ export function AccountsTable({
               editableIds={editableIds}
               onEdit={(a) => {
                 if (a.class === "mortgage" && openHomeDrawer(a)) return;
+                if (a.class === "loan") {
+                  setLoanDrawer({ open: true, account: a });
+                  return;
+                }
                 setDrawerAccount(a);
                 setDrawerOpen(true);
               }}
@@ -406,6 +419,14 @@ export function AccountsTable({
         </p>
       </div>
       <AccountDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} account={drawerAccount} people={people} accounts={accounts} />
+      <LoanDrawer
+        open={loanDrawer.open}
+        onClose={() => setLoanDrawer({ open: false })}
+        account={loanDrawer.account}
+        event={loanDrawerEvent}
+        accounts={accounts}
+        initialMode="existing"
+      />
       <HomeDrawer
         open={homeDrawer.open}
         onClose={() => setHomeDrawer({ open: false })}

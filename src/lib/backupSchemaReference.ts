@@ -310,6 +310,18 @@ Ordinary income in the year it happens, never the 10% penalty.
 }
 \`\`\`
 
+**type: "open_loan"**
+\`\`\`
+{
+  ...base,
+  "type": "open_loan",
+  "loanAccountId": string,                   // the \`loan\` account this event created and owns
+  "principal": number > 0,                   // today's dollars; inflated forward to startDate (origination)
+  "proceedsAccountId": string | null         // where the borrowed cash lands; null = it paid for something the plan doesn't track
+}
+\`\`\`
+Takes a new non-mortgage loan on (a car loan, HELOC, student or personal loan). The \`loan\` account carries the balance, rate and term and amortizes from its own origination date, exactly like a mortgage created by \`buy_home\`; deleting this event deletes that account with it. Borrowing is not income -- when \`proceedsAccountId\` is set the cash is credited as a transfer alongside the matching debt, and when it is null no account ever sees the money.
+
 **type: "rollover"**
 \`\`\`
 {

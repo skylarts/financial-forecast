@@ -52,7 +52,7 @@ Each month, in this exact order:
 
 **Money sent to a liability pays it down.** A transfer (or income) directed at a mortgage/loan/credit-card account reduces the amount owed, capped at the remaining balance; any excess returns to Extra Savings. Money taken FROM a liability is borrowing and grows the amount owed.
 
-**Roth conversions and rollovers are their own events.** A \`roth_conversion\` moves money from a tax-deferred account to a Roth: the amount is ordinary income in that year, never subject to the 10% penalty, and its tax is paid from Extra Savings (or withheld from the conversion when \`taxSource\` is \`withhold\`). A "fill to the top of a bracket" conversion runs each December and converts just enough to bring that year's ordinary taxable income up to the top of the named bracket. A \`rollover\` between two tax-deferred accounts is not a taxable event. A \`pay_off_loan\` event pays a loan down or off from an asset account on a date.
+**Roth conversions and rollovers are their own events.** A \`roth_conversion\` moves money from a tax-deferred account to a Roth: the amount is ordinary income in that year, never subject to the 10% penalty, and its tax is paid from Extra Savings (or withheld from the conversion when \`taxSource\` is \`withhold\`). A "fill to the top of a bracket" conversion runs each December and converts just enough to bring that year's ordinary taxable income up to the top of the named bracket. A \`rollover\` between two tax-deferred accounts is not a taxable event. A \`pay_off_loan\` event pays a loan down or off from an asset account on a date, and an \`open_loan\` event is its mirror image: it takes a new non-mortgage loan on, creating the debt and starting its payments (borrowing is not income -- only the cash, if any, that lands in an account).
 
 **Death is modelled.** Each person's \`planningEndAge\` is the age they are modelled as passing. From that date their salary, rental, and other income stop; a pension continues at its \`survivorPct\` share (else stops); of two Social Security benefits the survivor keeps the larger; their accounts pass to the survivor for age-based rules; and a married household files single from the following calendar year.
 
@@ -429,6 +429,15 @@ export function buildLlmExport(scenario: Scenario): string {
             ev.fillToBracketRate != null
               ? `  - Each December${ev.frequency === "one_time" ? " of the start year only" : ""}, convert from ${accountName(ev.fromAccountId)} to ${accountName(ev.toAccountId)} just enough to fill ordinary taxable income to the top of the ${fmtPct(ev.fillToBracketRate)} bracket. Tax ${ev.taxSource === "withhold" ? "withheld from the conversion" : "paid from Extra Savings"}.`
               : `  - Convert ${formatMoney(ev.amount ?? 0)} ${ev.frequency === "one_time" ? "once" : "per year"} from ${accountName(ev.fromAccountId)} to ${accountName(ev.toAccountId)}, ${fmtGrowth(ev.growthRatePct)}. Ordinary income, no penalty; tax ${ev.taxSource === "withhold" ? "withheld from the conversion" : "paid from Extra Savings"}.`
+          );
+          break;
+        case "open_loan":
+          lines.push(
+            `  - Take out ${formatMoney(ev.principal)} as ${accountName(ev.loanAccountId)} (today's dollars, inflated to the start date). ${
+              ev.proceedsAccountId == null
+                ? "The money paid for something outside the plan, so no account receives it -- only the debt and its monthly payments appear."
+                : `The money is deposited into ${accountName(ev.proceedsAccountId)}.`
+            } Payments amortize from the spending hub.`
           );
           break;
         case "pay_off_loan":

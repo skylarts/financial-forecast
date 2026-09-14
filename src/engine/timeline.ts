@@ -44,6 +44,14 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
         }`;
         break;
       }
+      case "open_loan": {
+        const where =
+          event.proceedsAccountId == null
+            ? "paid for something outside the plan"
+            : `deposited into ${accountName(event.proceedsAccountId)}`;
+        description = `Borrow $${event.principal.toLocaleString()} as ${accountName(event.loanAccountId)}, ${where}`;
+        break;
+      }
       case "pay_off_loan": {
         description = `Pay ${event.amount == null ? "off" : `$${event.amount.toLocaleString()} toward`} ${accountName(event.loanAccountId)} from ${accountName(event.fromAccountId)}`;
         break;

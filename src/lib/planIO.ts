@@ -142,6 +142,19 @@ export function repairReferences(scenario: Scenario): { scenario: Scenario; repa
           return [];
         }
         return [e];
+      case "open_loan":
+        // The loan account belongs to this event; without it there is no debt
+        // left to describe, so the event goes too. A missing proceeds account
+        // is survivable -- drop the deposit, keep the borrowing.
+        if (!accountIds.has(e.loanAccountId)) {
+          repairs.push(`${e.name}: the loan account it created no longer exists, so the event was removed.`);
+          return [];
+        }
+        if (e.proceedsAccountId && !accountIds.has(e.proceedsAccountId)) {
+          repairs.push(`${e.name}: the account the borrowed money was paid into no longer exists, so it now pays for something outside the plan.`);
+          return [{ ...e, proceedsAccountId: null }];
+        }
+        return [e];
       case "pay_off_loan":
         if (!accountIds.has(e.fromAccountId) || !accountIds.has(e.loanAccountId)) {
           repairs.push(`${e.name}: the loan or the paying account no longer exists, so the event was removed.`);
