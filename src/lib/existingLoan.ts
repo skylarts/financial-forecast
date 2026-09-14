@@ -9,10 +9,15 @@ export interface ExistingLoanInput {
   /** What is still owed today -- not the amount originally borrowed. */
   balance: string;
   annualInterestRatePct: string;
-  /** Years left to run, not the original term. */
+  /** A fixed loan: years left to run. A HELOC: the repayment period once the draw ends. */
   yearsRemaining: string;
   monthlyPayment: string;
   extraPrincipalMonthly: string;
+  kind: "fixed" | "heloc";
+  /** HELOC only: years of interest-only draw still left. 0 = already repaying. */
+  drawYearsRemaining: string;
+  /** HELOC only: the home it is secured by. */
+  securedByAccountId: string;
 }
 
 export const EXISTING_LOAN_DEFAULTS: ExistingLoanInput = {
@@ -22,6 +27,9 @@ export const EXISTING_LOAN_DEFAULTS: ExistingLoanInput = {
   yearsRemaining: "5",
   monthlyPayment: "",
   extraPrincipalMonthly: "",
+  kind: "fixed",
+  drawYearsRemaining: "",
+  securedByAccountId: "",
 };
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -33,6 +41,11 @@ function validate(input: ExistingLoanInput): string | null {
   // A blank term is what turns a loan into a one-month balloon payment: the
   // whole balance charged the month after it starts, with no error shown.
   if (!Number.isFinite(years) || years <= 0) return "Enter how many years are left on this loan.";
+  if (input.kind === "heloc") {
+    const draw = Number(input.drawYearsRemaining);
+    if (!Number.isFinite(draw) || draw < 0) return "Enter how many years of the draw period are left (0 if it's already repaying).";
+    if (!input.securedByAccountId) return "Choose the home this line of credit is secured by.";
+  }
   const rate = percentStrToFraction(input.annualInterestRatePct) ?? 0;
   const payment = moneyStrToNumber(input.monthlyPayment);
   if (payment != null && payment <= (balance * rate) / 12) {
@@ -64,6 +77,12 @@ function candidateFor(input: ExistingLoanInput, planStartDate: string, existing?
       termMonths: Math.max(1, Math.round(years * 12)),
       monthlyPayment: moneyStrToNumber(input.monthlyPayment) ?? undefined,
       extraPrincipalMonthly: moneyStrToNumber(input.extraPrincipalMonthly) ?? undefined,
+      ...(input.kind === "heloc"
+        ? {
+            interestOnlyMonths: Math.max(0, Math.round(Number(input.drawYearsRemaining) * 12)),
+            linkedAssetId: input.securedByAccountId,
+          }
+        : {}),
     },
   };
 }

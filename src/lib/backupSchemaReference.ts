@@ -136,7 +136,8 @@ Every scenario must contain exactly one account with \`"isExtraSavings": true\` 
   "termMonths": integer > 0,
   "monthlyPayment": number >= 0,                 // optional; computed by standard amortization if omitted
   "extraPrincipalMonthly": number >= 0,          // optional; extra principal each month, shortens the term
-  "linkedAssetId": string                        // optional; e.g. a mortgage's linked real_estate account id
+  "linkedAssetId": string,                       // optional; e.g. a mortgage's linked real_estate account id. A HELOC points at its home this way and is paid off when the home sells
+  "interestOnlyMonths": number                   // optional; a line of credit's draw period -- interest-only, balance untouched, then termMonths of repayment
 }
 \`\`\`
 
@@ -316,6 +317,7 @@ Ordinary income in the year it happens, never the 10% penalty.
   ...base,
   "type": "open_loan",
   "loanAccountId": string,                   // the \`loan\` account this event created and owns
+  "loanKind": "fixed" | "heloc",             // default "fixed". A heloc's account carries loanTerms.interestOnlyMonths (draw period) and loanTerms.linkedAssetId (the home)
   "principal": number > 0,                   // today's dollars; inflated forward to startDate (origination)
   "proceedsAccountId": string | null         // where the borrowed cash lands; null = it paid for something the plan doesn't track
 }

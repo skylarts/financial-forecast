@@ -136,6 +136,13 @@ export const openLoanEventSchema = z.object({
   type: z.literal("open_loan"),
   /** The `loan` account this event created and owns. */
   loanAccountId: idSchema,
+  /**
+   * What kind of borrowing this is. Both are one `loan` account underneath;
+   * the kind decides how the form reads and how the Timeline labels it. A
+   * "heloc" is secured by a home (loanTerms.linkedAssetId) and starts with an
+   * interest-only draw period (loanTerms.interestOnlyMonths).
+   */
+  loanKind: z.enum(["fixed", "heloc"]).default("fixed"),
   /** Today's dollars -- inflated forward to startDate (the origination date),
    *  the same two-stage convention buy_home uses for a purchase price. */
   principal: z.number().positive(),

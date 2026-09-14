@@ -40,8 +40,19 @@ export const loanTermsSchema = z.object({
   /** Extra principal paid on top of the scheduled payment each month --
    *  shortens the term (the loan pays off early). */
   extraPrincipalMonthly: z.number().nonnegative().optional(),
-  /** e.g. a mortgage's linked real_estate account. */
+  /** e.g. a mortgage's linked real_estate account. A second lien (a HELOC)
+   *  points at the same home this way, and a home sale pays off every
+   *  liability that points at it -- not only the one the home itself links
+   *  back to via linkedLiabilityId. */
   linkedAssetId: idSchema.optional(),
+  /**
+   * A line of credit's draw period, in months from origination: payments
+   * cover interest only and the balance stands still. When it ends, whatever
+   * is owed amortizes over `termMonths` (which for such a loan is the
+   * REPAYMENT period, not the whole life). Omitted/0 = an ordinary loan that
+   * amortizes from its first payment.
+   */
+  interestOnlyMonths: z.number().int().nonnegative().optional(),
 });
 export type LoanTerms = z.infer<typeof loanTermsSchema>;
 

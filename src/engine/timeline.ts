@@ -49,7 +49,10 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
           event.proceedsAccountId == null
             ? "paid for something outside the plan"
             : `deposited into ${accountName(event.proceedsAccountId)}`;
-        description = `Borrow $${event.principal.toLocaleString()} as ${accountName(event.loanAccountId)}, ${where}`;
+        description =
+          event.loanKind === "heloc"
+            ? `Draw $${event.principal.toLocaleString()} on ${accountName(event.loanAccountId)}, ${where}`
+            : `Borrow $${event.principal.toLocaleString()} as ${accountName(event.loanAccountId)}, ${where}`;
         break;
       }
       case "pay_off_loan": {

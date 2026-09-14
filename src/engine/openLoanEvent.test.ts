@@ -24,7 +24,7 @@ function loanAccount(startDate: string, principal: number) {
 }
 
 function openLoanEvent(loanAccountId: string, startDate: string, principal: number, proceedsAccountId: string | null): ScenarioEvent {
-  return { id: nanoid(), type: "open_loan", name: "Car loan", startDate, loanAccountId, principal, proceedsAccountId };
+  return { id: nanoid(), type: "open_loan", name: "Car loan", startDate, loanAccountId, loanKind: "fixed", principal, proceedsAccountId };
 }
 
 describe("open_loan", () => {
@@ -156,5 +156,82 @@ describe("open_loan", () => {
     ).years.find((y) => y.year === 2030)!;
 
     expect(y2030.accountBalances[checking.id]! - baseline.accountBalances[checking.id]!).toBeCloseTo(inflated, 0);
+  });
+});
+
+describe("open_loan as a HELOC", () => {
+  function heloc(startDate: string, drawn: number, homeId: string) {
+    return makeAccount({
+      class: "loan",
+      category: "liability",
+      name: "HELOC",
+      startDate,
+      startingBalance: drawn,
+      growthRatePct: 0,
+      loanTerms: {
+        originalPrincipal: drawn,
+        originationDate: startDate,
+        annualInterestRatePct: 0.06,
+        termMonths: 240, // 20-year repayment
+        interestOnlyMonths: 24, // 2-year draw period, kept short so the test can see both phases
+        linkedAssetId: homeId,
+      },
+    });
+  }
+
+  it("stands still through the draw period, then amortizes what was drawn", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 200_000 });
+    const home = makeAccount({ class: "real_estate", name: "Home", startingBalance: 500_000, growthRatePct: 0 });
+    const line = heloc("2027-01-01", 50_000, home.id);
+    const result = forecastScenario(
+      makeScenario({
+        accounts: [checking, home, line],
+        incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5_000 })],
+        events: [{ id: nanoid(), type: "open_loan", name: "HELOC", startDate: "2027-01-01", loanAccountId: line.id, loanKind: "heloc", principal: 50_000, proceedsAccountId: checking.id }],
+        startDate: "2026-01-01",
+        horizonEndDate: "2032-12-31",
+        inflationRatePct: 0,
+      })
+    );
+    const at = (y: number) => result.years.find((r) => r.year === y)!;
+    // Draw period (2027, 2028): interest only, balance exactly unchanged.
+    expect(at(2027).accountBalances[line.id]).toBeCloseTo(50_000, 0);
+    expect(at(2028).accountBalances[line.id]).toBeCloseTo(50_000, 0);
+    // Repayment starts 2029: the balance finally falls.
+    expect(at(2029).accountBalances[line.id]).toBeLessThan(50_000);
+    expect(at(2029).accountBalances[line.id]).toBeGreaterThan(47_000);
+    // Interest-only year costs less than an amortizing year.
+    const cost = (y: number) => at(y - 1).accountBalances[checking.id]! + 60_000 - at(y).accountBalances[checking.id]!;
+    expect(cost(2028)).toBeCloseTo(50_000 * 0.06, -1); // ~$3,000 of interest
+    expect(cost(2030)).toBeGreaterThan(cost(2028));
+  });
+
+  it("is paid off out of the proceeds when the home it is secured by sells", () => {
+    const checking = makeAccount({ class: "cash", name: "Checking", isSpendingAccount: true, startingBalance: 100_000 });
+    const home = makeAccount({ class: "real_estate", name: "Home", startingBalance: 500_000, growthRatePct: 0 });
+    const line = heloc("2027-01-01", 50_000, home.id);
+    const base = {
+      accounts: [checking, home, line],
+      incomeSources: [makeIncome({ depositAccountId: checking.id, amount: 5_000 })],
+      startDate: "2026-01-01",
+      horizonEndDate: "2031-12-31",
+      inflationRatePct: 0,
+    };
+    const withSale = forecastScenario(
+      makeScenario({
+        ...base,
+        events: [
+          { id: nanoid(), type: "open_loan", name: "HELOC", startDate: "2027-01-01", loanAccountId: line.id, loanKind: "heloc", principal: 50_000, proceedsAccountId: null },
+          { id: nanoid(), type: "sell_home", name: "Sell", startDate: "2028-06-01", realEstateAccountId: home.id, sellingCostsPct: 0, netProceeds: 0, proceedsAccountId: checking.id },
+        ],
+      })
+    );
+    const y = withSale.years.find((r) => r.year === 2028)!;
+    // Both the home and the line are gone the year of the sale...
+    expect(y.accountBalances[home.id] ?? 0).toBe(0);
+    expect(y.accountBalances[line.id] ?? 0).toBe(0);
+    // ...and the cash credited is the equity NET of the line, not the full value.
+    const sale = withSale.ledger.find((l) => l.kind === "home_sale")!;
+    expect(sale.amount).toBeCloseTo(500_000 - 50_000, 0);
   });
 });

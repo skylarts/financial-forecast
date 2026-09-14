@@ -336,7 +336,14 @@ export const usePlanStore = create<PlanState>()(
           set,
           (s) => ({
             ...s,
-            accounts: s.accounts.filter((a) => a.id !== id),
+            // A lien that pointed at the deleted asset (a HELOC on a deleted
+            // home) keeps its balance and payments, just unsecured -- the
+            // dangling link is cleared so nothing ever looks up a ghost.
+            accounts: s.accounts
+              .filter((a) => a.id !== id)
+              .map((a) =>
+                a.loanTerms?.linkedAssetId === id ? { ...a, loanTerms: { ...a.loanTerms, linkedAssetId: undefined } } : a
+              ),
             // A deleted account's role in the money-flow waterfall is routing
             // metadata, not a hard reference -- drop it from either list.
             settings: {

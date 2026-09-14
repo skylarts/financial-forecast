@@ -8,8 +8,8 @@ import type {
 } from "@/domain";
 import { retirementsInOrder } from "@/domain";
 import { formatMoney } from "@/lib/format";
-import { EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES } from "@/lib/timelineFormat";
-import { EVENT_TYPE_ICONS, EXPENSE_CATEGORY_ICONS, INCOME_CATEGORY_ICONS, type MarkerKind } from "./eventIcons";
+import { eventBadgeLabel, EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES } from "@/lib/timelineFormat";
+import { eventIconFor, EVENT_TYPE_ICONS, EXPENSE_CATEGORY_ICONS, INCOME_CATEGORY_ICONS, type MarkerKind } from "./eventIcons";
 
 export interface MarkerRow {
   label: string;
@@ -200,8 +200,8 @@ export function buildChartMarkers({
       kind: "event",
       year: yearOf(ev.startDate),
       startDate: ev.startDate,
-      icon: EVENT_TYPE_ICONS[ev.type],
-      badge: EVENT_TYPE_LABELS[ev.type] ?? ev.type,
+      icon: eventIconFor(ev),
+      badge: eventBadgeLabel(ev),
       title: ev.name,
       rows,
     });

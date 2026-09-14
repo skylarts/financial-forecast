@@ -32,6 +32,9 @@ const INPUT = {
   termYears: "5",
   extraPrincipalMonthly: "",
   proceedsAccountId: "",
+  kind: "fixed" as const,
+  drawYears: "",
+  securedByAccountId: "",
 };
 
 function scenario() {
@@ -129,5 +132,50 @@ describe("openNewLoan", () => {
     openNewLoan({ ...INPUT, proceedsAccountId: checking.id }, SETTINGS);
     const event = theEvent()!;
     expect(event.type === "open_loan" && event.proceedsAccountId).toBe(checking.id);
+  });
+});
+
+describe("openNewLoan as a HELOC", () => {
+  beforeEach(() => {
+    usePlanStore.setState({ pendingUndo: null, loadIssue: null, compareScenarioId: null });
+    usePlanStore.getState().loadSamplePlan();
+    usePlanStore.setState({ pendingUndo: null });
+  });
+
+  it("writes the draw period and the home it is secured by onto the loan account", () => {
+    const home = scenario().accounts.find((a) => a.class === "real_estate");
+    // The sample plan buys its home later; a HELOC needs one to exist, so add one.
+    const homeId =
+      home?.id ??
+      (() => {
+        usePlanStore.getState().addAccount({
+          name: "Home",
+          class: "real_estate",
+          category: "asset",
+          ownerId: null,
+          startingBalance: 400_000,
+          growthRatePct: 0.03,
+          taxTreatment: "n/a",
+          subjectToRMD: false,
+        });
+        const accts = scenario().accounts;
+        return accts[accts.length - 1].id;
+      })();
+    const result = openNewLoan(
+      { ...INPUT, name: "HELOC", kind: "heloc", drawYears: "10", termYears: "20", securedByAccountId: homeId, principal: "60,000" },
+      SETTINGS
+    );
+    expect(result).toEqual({ ok: true });
+    const line = scenario().accounts.find((a) => a.class === "loan" && a.name === "HELOC")!;
+    expect(line.loanTerms?.interestOnlyMonths).toBe(120);
+    expect(line.loanTerms?.termMonths).toBe(240);
+    expect(line.loanTerms?.linkedAssetId).toBe(homeId);
+    const ev = scenario().events.find((e) => e.type === "open_loan")!;
+    expect(ev.type === "open_loan" && ev.loanKind).toBe("heloc");
+  });
+
+  it("refuses a HELOC with no home or no draw period", () => {
+    expect(openNewLoan({ ...INPUT, kind: "heloc", drawYears: "10", securedByAccountId: "" }, SETTINGS).ok).toBe(false);
+    expect(openNewLoan({ ...INPUT, kind: "heloc", drawYears: "", securedByAccountId: "x" }, SETTINGS).ok).toBe(false);
   });
 });
