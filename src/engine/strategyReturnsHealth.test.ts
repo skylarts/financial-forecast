@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { nanoid } from "nanoid";
 import { forecastSettingsSchema, DEFAULT_HEALTHCARE_SETTINGS, type Account } from "@/domain";
-import { forecastScenario, projectScenario } from "./forecastScenario";
+import { forecastScenario, projectScenario, projectScenarioWithRates } from "./forecastScenario";
 import { deriveDrainOrder, unreachableAccounts, accountsInStrategyOrder } from "./strategy";
 import { applyStress } from "./stress";
 import { firstShortfallYear, holdsThroughLabel } from "./planHealth";
@@ -145,6 +145,55 @@ describe("plan-wide expected return", () => {
     const afterCrash = firstYear(100_000, -0.3);
     expect(crash.years[0].accountBalances[fund.id]).toBeCloseTo(afterCrash, 0);
     expect(crash.years[1].accountBalances[fund.id]).toBeCloseTo(afterCrash * 1.05, 0);
+  });
+  it("takes a per-year return map: listed years earn exactly that, the rest their normal (adjusted) return", () => {
+    const s = makeScenario({ accounts: [cash, fund], horizonEndDate: "2029-12-31" });
+    const r = forecastScenario(s, undefined, { yearReturnOverrides: { 2026: -0.1, 2027: -0.2 }, returnAdjustment: -0.01 });
+    const y0 = firstYear(100_000, -0.1);
+    expect(r.years[0].accountBalances[fund.id]).toBeCloseTo(y0, 0);
+    expect(r.years[1].accountBalances[fund.id]).toBeCloseTo(y0 * 0.8, 0);
+    expect(r.years[2].accountBalances[fund.id]).toBeCloseTo(y0 * 0.8 * 1.04, 0);
+    expect(r.years[0].accountBalances[cash.id]).toBeCloseTo(firstYear(10_000, 0.02), 0);
+  });
+});
+
+describe("tax-rate convergence seeding", () => {
+  const owner = person("1970-01-01", 60);
+  const build = () =>
+    makeScenario({
+      accounts: [
+        makeAccount({ class: "cash", name: "Checking", startingBalance: 20_000, isSpendingAccount: true }),
+        makeAccount({ class: "tax_deferred", name: "IRA", startingBalance: 900_000, growthRatePct: 0.05, ownerId: owner.id, withdrawalPriority: 1 }),
+      ],
+      people: [owner],
+      expenses: [makeExpense({ amount: 5_000 })],
+      horizonEndDate: "2045-12-31",
+      inflationRatePct: 0.03,
+    });
+  it("returns the settled rates, and a run seeded from them lands on the same answer", () => {
+    const base = projectScenarioWithRates(build());
+    expect(base.ratesByYear.get(2030)?.ordinaryMarginalRate).toBeGreaterThan(0);
+    const seeded = projectScenario(build(), { seedTaxRates: base.ratesByYear });
+    expect(seeded.kpis.netWorthAtEnd).toBeCloseTo(base.result.kpis.netWorthAtEnd, -1);
+    for (let i = 0; i < seeded.years.length; i++) {
+      expect(seeded.years[i].cashFlow.federalTaxTotal).toBeCloseTo(base.result.years[i].cashFlow.federalTaxTotal, -1);
+    }
+  });
+  it("with zero refinement passes, runs once on the seeded rates and still charges the exact bill", () => {
+    const base = projectScenarioWithRates(build());
+    const single = projectScenario(build(), { seedTaxRates: base.ratesByYear, maxConvergencePasses: 0 });
+    // Withholding was sized from the seeded rates and the December true-up
+    // settles the difference, so the year's tax matches the converged run.
+    for (let i = 0; i < single.years.length; i++) {
+      expect(single.years[i].cashFlow.federalTaxTotal).toBeCloseTo(base.result.years[i].cashFlow.federalTaxTotal, -2);
+    }
+  });
+  it("seeds a year the seed does not cover from the seed table (a longer horizon than the base)", () => {
+    const base = projectScenarioWithRates(build());
+    const longer = { ...build(), settings: { ...build().settings, horizonEndDate: "2050-12-31" } };
+    const r = projectScenarioWithRates(longer, { seedTaxRates: base.ratesByYear });
+    expect(r.result.years[r.result.years.length - 1].year).toBe(2050);
+    expect(r.ratesByYear.has(2050)).toBe(true);
   });
 });
 

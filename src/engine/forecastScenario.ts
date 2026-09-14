@@ -241,14 +241,41 @@ const INVESTMENT_CLASSES = new Set<EngineAccount["class"]>(["taxable_investment"
 
 /**
  * Knobs a caller can turn without editing the plan -- what the stress tests
- * are built from (see stress.ts). Both act on investment accounts only.
+ * are built from (see stress.ts). The return knobs act on investment
+ * accounts only; the tax knobs trade a little convergence for speed when
+ * the same plan is being run hundreds of times.
  */
 export interface ProjectionOptions {
   /** Added to every investment account's yearly return (e.g. -0.02 for "two points lower"). */
   returnAdjustment?: number;
   /** Investment accounts earn exactly this in one calendar year, whatever they would otherwise have earned. */
   yearReturnOverride?: { year: number; ratePct: number };
+  /**
+   * The same, for many years at once: calendar year -> the return every
+   * investment account earns that year. A multi-year bear market, a replay
+   * of a historical decade, one Monte Carlo path. Years not listed keep
+   * their normal return (plus `returnAdjustment`).
+   */
+  yearReturnOverrides?: Record<number, number>;
+  /**
+   * Start the tax-rate convergence from another run's settled rates instead
+   * of the seed table. A stressed run's brackets barely differ from its base
+   * run's, so seeding from the base cuts the passes from three or four to
+   * one or two. Read only by `projectScenario`.
+   */
+  seedTaxRates?: TaxRatesByYear;
+  /**
+   * How many refinement passes `projectScenario` may run after the first
+   * (default `MAX_TAX_CONVERGENCE_ITERATIONS`). 0 = a single pass, trusting
+   * `seedTaxRates` as-is -- withholding is sized from the seeded rates, but
+   * the exact December bill is still computed from the year's real income,
+   * so taxes paid stay exact; only their timing within the year can drift.
+   */
+  maxConvergencePasses?: number;
 }
+
+/** Each plan year's settled tax-rate estimates -- what one converged run can hand the next. */
+export type TaxRatesByYear = Map<number, YearTaxRates>;
 
 function effectiveAnnualRate(
   account: EngineAccount,
@@ -258,9 +285,12 @@ function effectiveAnnualRate(
   options: ProjectionOptions
 ): number {
   if (INVESTMENT_CLASSES.has(account.class)) {
-    if (options.yearReturnOverride && Number(month.slice(0, 4)) === options.yearReturnOverride.year) {
+    const year = Number(month.slice(0, 4));
+    if (options.yearReturnOverride && year === options.yearReturnOverride.year) {
       return options.yearReturnOverride.ratePct;
     }
+    const override = options.yearReturnOverrides?.[year];
+    if (override !== undefined) return override;
     const own = planReturnRatePct ?? scheduledOrBaseRate(account, month, inflationRatePct);
     return own + (options.returnAdjustment ?? 0);
   }
@@ -2296,6 +2326,19 @@ const RATE_CONVERGENCE_TOLERANCE = 0.001;
  * bracket-computed `federalTaxTotal` per year -- is returned as-is.
  */
 export function projectScenario(scenario: Scenario, options: ProjectionOptions = {}): ProjectionResult {
+  return projectScenarioWithRates(scenario, options).result;
+}
+
+/**
+ * `projectScenario`, also returning the tax rates it settled on -- so a batch
+ * of near-identical runs (the stress suite, a breaking-point search, Monte
+ * Carlo paths) can seed each run from the base run via
+ * `ProjectionOptions.seedTaxRates` instead of converging from scratch.
+ */
+export function projectScenarioWithRates(
+  scenario: Scenario,
+  options: ProjectionOptions = {}
+): { result: ProjectionResult; ratesByYear: TaxRatesByYear } {
   // Same null-means-today resolution as forecastScenario -- needed here too
   // since startYear/endYear (for the tax-rate map below) are computed
   // before forecastScenario ever runs.
@@ -2306,12 +2349,15 @@ export function projectScenario(scenario: Scenario, options: ProjectionOptions =
   // so a plan that models healthcare also iterates until income settles.
   const incomeMatters = settings.healthcare.enabled;
 
-  let ratesByYear = new Map<number, YearTaxRates>();
-  for (let y = startYear; y <= endYear; y++) ratesByYear.set(y, SEED_TAX_RATES);
+  let ratesByYear: TaxRatesByYear = new Map();
+  // A seeded year outside the seed (a "live longer" run outlasts its base)
+  // falls back to the seed table like an unseeded run would.
+  for (let y = startYear; y <= endYear; y++) ratesByYear.set(y, options.seedTaxRates?.get(y) ?? SEED_TAX_RATES);
 
   let result = forecastScenario(scenario, ratesByYear, options);
+  const maxPasses = options.maxConvergencePasses ?? MAX_TAX_CONVERGENCE_ITERATIONS;
 
-  for (let iteration = 0; iteration < MAX_TAX_CONVERGENCE_ITERATIONS; iteration++) {
+  for (let iteration = 0; iteration < maxPasses; iteration++) {
     const nextRates = new Map<number, YearTaxRates>();
     let maxDelta = 0;
 
@@ -2371,5 +2417,5 @@ export function projectScenario(scenario: Scenario, options: ProjectionOptions =
     result = forecastScenario(scenario, ratesByYear, options);
   }
 
-  return result;
+  return { result, ratesByYear };
 }
