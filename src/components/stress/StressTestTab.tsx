@@ -1,26 +1,33 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { ProjectionResult, Scenario } from "@/domain";
 import { formatMoney, type DollarMode } from "@/lib/format";
 import { DEFAULT_STRESS_PARAMS, STRESS_GROUP_LABELS, retirementYearOf, type StressGroup, type StressKey, type StressParams } from "@/engine/stress";
-import { netWorthIn, summarizeProjection, yearsOfSpendingCovered, type StressSummary } from "@/engine/stressSummary";
+import { netWorthIn, summarizeProjection, yearsOfSpendingCovered } from "@/engine/stressSummary";
 import { useStressAnalysis, type StressRow } from "@/store/useStress";
-import { MonteCarloPanel } from "./MonteCarloPanel";
 import { useUiStore } from "@/store/useUiStore";
 import { InfoTooltip, inputClass } from "@/components/ui/formFields";
+import { Segmented } from "@/components/ui/controls";
+import { MonteCarloPanel } from "./MonteCarloPanel";
+import { knobsFor, type StressKnob } from "./stressKnobs";
 
 const CHART_THEME = {
   dark: { grid: "#172d34", axis: "#8399a0", tooltipBg: "#0e2027", tooltipBorder: "#1f3a42", label: "#e7e7de", base: "#3fb8a4" },
   joy: { grid: "#f4e5d3", axis: "#a68a72", tooltipBg: "#ffffff", tooltipBorder: "#ffe0c7", label: "#4a3729", base: "#2fb98d" },
 } as const;
 
-/** One colour per stressed line, cycled in preset order; the base plan keeps the theme's own colour. */
-const STRESS_PALETTE = ["#c9a063", "#db7a6e", "#e8555a", "#9c8cd6", "#d98bb0", "#7fb3d5", "#6fbf9a", "#e0a458", "#b48ead", "#8fa1c9", "#d4a5a5", "#a3be8c", "#ebcb8b", "#bf616a", "#88c0d0"];
+/** One colour per stressed line, fixed per test so a line keeps its colour when others are hidden. */
+const STRESS_PALETTE = ["#c9a063", "#db7a6e", "#e8555a", "#9c8cd6", "#d98bb0", "#7fb3d5", "#6fbf9a", "#e0a458", "#b48ead", "#8fa1c9", "#d4a5a5", "#a3be8c", "#ebcb8b", "#bf616a", "#88c0d0", "#c98ac9", "#8ac9b8", "#c9b58a"];
 
 const BASE_KEY = "base";
 const GROUPS: StressGroup[] = ["markets", "life", "costs"];
+
+const VIEW_OPTIONS = [
+  { value: "scenarios", label: "Scenarios" },
+  { value: "monte_carlo", label: "Monte Carlo" },
+] as const;
 
 function Delta({ value, base }: { value: number | null; base: number | null }) {
   if (value === null || base === null) return <span className="text-dim-2">—</span>;
@@ -38,54 +45,31 @@ function Pending({ label = "…" }: { label?: string }) {
   );
 }
 
-/** A small numeric box with a unit suffix, committing on blur. */
-function NumberField({
-  label,
-  hint,
-  value,
-  unit,
-  step = 1,
-  onCommit,
-}: {
-  label: string;
-  hint?: string;
-  value: number;
-  unit: string;
-  step?: number;
-  onCommit: (n: number) => void;
-}) {
+function KnobField({ knob, params, onChange }: { knob: StressKnob; params: StressParams; onChange: (p: Partial<StressParams>) => void }) {
+  const value = knob.toInput(params[knob.param]);
   return (
     <label className="flex flex-col gap-1 text-xs text-dim">
       <span className="inline-flex items-center gap-1">
-        {label}
-        {hint && <InfoTooltip text={hint} />}
+        {knob.label}
+        {knob.hint && <InfoTooltip text={knob.hint} />}
       </span>
       <span className="relative block">
         <input
           key={value}
           type="number"
-          step={step}
+          step={knob.step ?? 1}
           inputMode="decimal"
           defaultValue={value}
           onBlur={(e) => {
             const n = Number(e.target.value);
-            if (Number.isFinite(n)) onCommit(n);
+            if (Number.isFinite(n)) onChange({ [knob.param]: knob.fromInput(n) });
           }}
-          className={`${inputClass} pr-9`}
+          className={`${inputClass} pr-12`}
         />
-        <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-dim">{unit}</span>
+        <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-xs text-dim">{knob.unit}</span>
       </span>
     </label>
   );
-}
-
-/** The years of spending the investable accounts cover, at a few ages along the plan, as "31 / 18 / 6". */
-function coverageLabel(summary: StressSummary, checkpoints: number[]): string {
-  const parts = checkpoints.map((year) => {
-    const n = yearsOfSpendingCovered(summary, year);
-    return n === null ? "—" : n >= 99 ? "99+" : n < 0 ? "0" : String(Math.round(n));
-  });
-  return parts.join(" / ");
 }
 
 function BreakingPointCell({ row }: { row: StressRow }) {
@@ -98,9 +82,9 @@ function BreakingPointCell({ row }: { row: StressRow }) {
 
 function FixesCell({ row }: { row: StressRow }) {
   if (!row.summary) return <span className="text-dim-2">—</span>;
-  if (row.summary.firstShortfallYear === null) return <span className="text-dim-2">Nothing needed</span>;
+  if (row.summary.firstShortfallYear === null) return <span className="text-dim-2">—</span>;
   if (row.fixes === undefined) return row.breakingPoint === undefined ? <span className="text-dim-2">—</span> : <Pending label="searching" />;
-  if (row.fixes === null) return <span className="text-dim-2">Nothing needed</span>;
+  if (row.fixes === null) return <span className="text-dim-2">—</span>;
   if (row.fixes.length === 0) return <span className="text-negative">No single change within reach mends it</span>;
   return (
     <ul className="flex flex-col gap-0.5">
@@ -112,22 +96,25 @@ function FixesCell({ row }: { row: StressRow }) {
 }
 
 /**
- * The Stress test view: the plan re-run under each bad assumption, side by
- * side with the base run; for each, where its lever breaks the plan and
- * the smallest single change that mends it; plus the knobs that set how
- * bad. Everything is deterministic, so a row answers "what if" exactly, not
- * on average. The runs happen in a worker pool and land as they finish.
+ * The Stress test view, in two halves behind a toggle: the deterministic
+ * scenarios (each one bad assumption over the same plan, with where it
+ * breaks and what mends it) and Monte Carlo (hundreds of random futures).
+ * The scenarios read as one line each; a row opens to show what it does,
+ * its own knobs, and the secondary figures. The chart draws only the rows
+ * that are ticked, so it is a comparison you chose rather than every line.
  */
 export function StressTestTab({ scenario, projection, dollarMode }: { scenario: Scenario; projection: ProjectionResult; dollarMode: DollarMode }) {
   const params = useUiStore((s) => s.stressParams);
   const setParams = useUiStore((s) => s.setStressParams);
-  const overlay = useUiStore((s) => s.stressOverlay);
-  const setOverlay = useUiStore((s) => s.setStressOverlay);
+  const view = useUiStore((s) => s.stressView);
+  const setView = useUiStore((s) => s.setStressView);
+  const chartKeys = useUiStore((s) => s.stressChartKeys);
+  const setChartKeys = useUiStore((s) => s.setStressChartKeys);
   const isJoy = useUiStore((s) => s.theme) === "joy";
   const theme = isJoy ? CHART_THEME.joy : CHART_THEME.dark;
   const real = dollarMode === "real";
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
-  const [knobsOpen, setKnobsOpen] = useState(false);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<StressGroup>>(new Set());
 
   const base = useMemo(() => summarizeProjection(projection), [projection]);
   const { rows, progress, running, error } = useStressAnalysis(scenario, params, true);
@@ -135,27 +122,26 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
   // The engine's own definition, not a second copy of it: retirement lives on
   // the person now, and one place to ask keeps this row honest.
   const retirementYear = useMemo(() => retirementYearOf(scenario), [scenario]);
-  const baseRetire = netWorthIn(base, retirementYear, real);
   const baseEnd = real ? base.netWorthAtEndReal : base.netWorthAtEnd;
   // "vs plan" compares every run in the base plan's final year, so a run
   // that lasts longer (Live longer) is not credited for its extra years.
   const baseEndYear = base.endYear;
-  // Years of spending covered, checked at three points along the retirement.
   const checkpoints = useMemo(() => {
     const start = retirementYear ?? base.years[0]?.year ?? baseEndYear;
     return [start + 5, start + 15, start + 25].filter((y) => y <= baseEndYear);
   }, [retirementYear, base.years, baseEndYear]);
 
+  const colorOf = useMemo(() => new Map(rows.map((r, i) => [r.key as string, STRESS_PALETTE[i % STRESS_PALETTE.length]])), [rows]);
+  const onChart = useMemo(() => new Set<string>(chartKeys), [chartKeys]);
   const lines = useMemo(
     () => [
       { key: BASE_KEY, label: scenario.name, summary: base, color: theme.base },
-      ...rows.filter((r) => r.summary).map((r, i) => ({ key: r.key as string, label: r.label, summary: r.summary!, color: STRESS_PALETTE[i % STRESS_PALETTE.length] })),
+      ...rows.filter((r) => r.summary && onChart.has(r.key)).map((r) => ({ key: r.key as string, label: r.label, summary: r.summary!, color: colorOf.get(r.key)! })),
     ],
-    [rows, base, scenario.name, theme.base]
+    [rows, base, scenario.name, theme.base, onChart, colorOf]
   );
-  const colorOf = useMemo(() => new Map(lines.map((l) => [l.key, l.color])), [lines]);
 
-  // One row per year across every run (a "live longer" run outlasts the base).
+  // One row per year across every drawn run (a "live longer" run outlasts the base).
   const data = useMemo(() => {
     const years = new Set<number>();
     for (const l of lines) for (const y of l.summary.years) years.add(y.year);
@@ -171,97 +157,120 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
       });
   }, [lines, real]);
 
-  const toggle = (key: string) =>
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
+  const toggleChart = (key: StressKey) => setChartKeys(onChart.has(key) ? chartKeys.filter((k) => k !== key) : [...chartKeys, key]);
+  const toggleIn = <T,>(set: Set<T>, key: T): Set<T> => {
+    const next = new Set(set);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  };
   const set = (p: Partial<StressParams>) => setParams({ ...params, ...p });
   const isDefault = JSON.stringify(params) === JSON.stringify(DEFAULT_STRESS_PARAMS);
 
   const finished = rows.filter((r) => r.summary);
   const holding = finished.filter((r) => r.summary!.firstShortfallYear === null).length;
-  const weakest = finished
-    .filter((r) => r.summary!.firstShortfallYear !== null)
-    .sort((a, b) => (a.summary!.firstShortfallYear ?? 0) - (b.summary!.firstShortfallYear ?? 0))[0];
+  const weakest = finished.filter((r) => r.summary!.firstShortfallYear !== null).sort((a, b) => (a.summary!.firstShortfallYear ?? 0) - (b.summary!.firstShortfallYear ?? 0))[0];
   const pctDone = progress.total > 0 ? Math.min(100, Math.round((100 * progress.done) / progress.total)) : 0;
 
-  const renderRow = (r: { key: string; label: string; description: string; summary: StressSummary | null; row?: StressRow }) => {
-    const isBase = r.key === BASE_KEY;
+  const renderRow = (r: StressRow) => {
     const s = r.summary;
-    const color = colorOf.get(r.key);
-    const lineHidden = hidden.has(r.key);
+    const color = colorOf.get(r.key)!;
+    const isOpen = open.has(r.key);
+    const drawn = onChart.has(r.key);
     const shortfall = s?.firstShortfallYear ?? null;
     const depth = s ? (real ? s.shortfallDepthReal : s.shortfallDepthNominal) : 0;
+    const knobs = knobsFor(r.key);
+    const retire = s ? netWorthIn(s, retirementYear, real) : null;
     return (
-      <tr
-        key={r.key}
-        onClick={() => s && toggle(r.key)}
-        className={`border-b border-border-soft last:border-b-0 hover:bg-panel-2/60 ${s ? "cursor-pointer" : ""} ${lineHidden ? "opacity-50" : ""}`}
-      >
-        <td className="px-4 py-2.5">
-          <div className="flex items-start gap-2">
-            <i aria-hidden className="mt-1.5 block h-2 w-2 shrink-0 rounded-sm" style={{ background: color ?? "transparent", outline: color ? undefined : "1px dashed currentColor" }} />
-            <div className="min-w-0">
-              <div className="font-medium">{r.label}</div>
-              <div className="max-w-[34rem] text-[11px] text-dim-2">{r.description}</div>
+      <Fragment key={r.key}>
+        <tr onClick={() => setOpen((prev) => toggleIn(prev, r.key))} className={`cursor-pointer border-b border-border-soft hover:bg-panel-2/60 ${isOpen ? "bg-panel-2/40" : ""}`}>
+          <td className="px-4 py-2">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-3 text-[10px] text-dim-2">{isOpen ? "▾" : "▸"}</span>
+              <span className="font-medium">{r.label}</span>
             </div>
-          </div>
-        </td>
-        <td className="px-3 py-2.5 text-right font-mono tabular-nums">{!s ? <Pending /> : netWorthIn(s, retirementYear, real) === null ? "—" : formatMoney(netWorthIn(s, retirementYear, real)!)}</td>
-        <td className="px-3 py-2.5 text-right font-mono tabular-nums">{!s ? <Pending /> : formatMoney(real ? s.netWorthAtEndReal : s.netWorthAtEnd)}</td>
-        <td className="px-3 py-2.5 text-right font-mono tabular-nums">{isBase || !s ? <span className="text-dim-2">—</span> : <Delta value={netWorthIn(s, baseEndYear, real)} base={baseEnd} />}</td>
-        <td className={`px-3 py-2.5 whitespace-nowrap ${!s ? "" : shortfall === null ? "text-positive" : "text-negative"}`}>
-          {!s ? <Pending /> : shortfall === null ? "End of plan" : `Runs short in ${shortfall}`}
-          {s && shortfall !== null && depth > 0 && <div className="text-[11px] text-dim-2">by {formatMoney(depth)}</div>}
-        </td>
-        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-dim">{!s ? "—" : coverageLabel(s, checkpoints)}</td>
-        <td className="px-3 py-2.5 text-[12px]">{isBase || !r.row ? <span className="text-dim-2">—</span> : <BreakingPointCell row={r.row} />}</td>
-        <td className="px-3 py-2.5 text-[12px]">{isBase || !r.row ? <span className="text-dim-2">—</span> : <FixesCell row={r.row} />}</td>
-        <td className="px-3 py-2.5 text-right">
-          {!isBase && s && (
+          </td>
+          <td className={`px-3 py-2 whitespace-nowrap ${!s ? "" : shortfall === null ? "text-positive" : "text-negative"}`}>
+            {!s ? <Pending /> : shortfall === null ? "End of plan" : `Short in ${shortfall}`}
+            {s && shortfall !== null && depth > 0 && <span className="ml-1 text-[11px] text-dim-2">by {formatMoney(depth)}</span>}
+          </td>
+          <td className="px-3 py-2 text-right font-mono tabular-nums">{!s ? <Pending /> : <Delta value={netWorthIn(s, baseEndYear, real)} base={baseEnd} />}</td>
+          <td className="px-3 py-2 text-[12px]">
+            <BreakingPointCell row={r} />
+          </td>
+          <td className="px-3 py-2 text-[12px]">
+            <FixesCell row={r} />
+          </td>
+          <td className="px-3 py-2 text-right">
             <button
               type="button"
+              disabled={!s}
               onClick={(e) => {
                 e.stopPropagation();
-                setOverlay(overlay === r.key ? null : (r.key as StressKey));
+                toggleChart(r.key);
               }}
-              className={`whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] ${overlay === r.key ? "border-accent text-accent" : "border-border text-dim hover:text-foreground"}`}
-              title="Draw this test on the Overview chart"
+              aria-pressed={drawn}
+              className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border px-2 py-0.5 text-[11px] ${drawn ? "border-accent text-foreground" : "border-border text-dim hover:text-foreground"} disabled:opacity-40`}
+              title={drawn ? "Remove this test from the chart" : "Draw this test on the chart"}
             >
-              {overlay === r.key ? "On Overview" : "Show on Overview"}
+              <i aria-hidden className="block h-2 w-2 rounded-sm" style={{ background: drawn ? color : "transparent", outline: drawn ? undefined : "1px solid currentColor" }} />
+              {drawn ? "On chart" : "Chart"}
             </button>
-          )}
-        </td>
-      </tr>
+          </td>
+        </tr>
+        {isOpen && (
+          <tr className="border-b border-border-soft bg-panel-2/25">
+            <td colSpan={6} className="px-4 py-3">
+              <div className="flex flex-col gap-3 pl-5">
+                <p className="max-w-3xl text-[12px] text-dim">{r.description}</p>
+                {knobs.length > 0 && (
+                  <div className="grid max-w-3xl gap-3 sm:grid-cols-3">
+                    {knobs.map((k) => (
+                      <KnobField key={k.param} knob={k} params={params} onChange={set} />
+                    ))}
+                  </div>
+                )}
+                {s && (
+                  <dl className="flex flex-wrap gap-x-6 gap-y-1 text-[11.5px] text-dim-2">
+                    <div>
+                      <dt className="inline">At retirement{retirementYear ? ` (${retirementYear})` : ""}: </dt>
+                      <dd className="inline font-mono text-dim">{retire === null ? "—" : formatMoney(retire)}</dd>
+                    </div>
+                    <div>
+                      <dt className="inline">At end of plan: </dt>
+                      <dd className="inline font-mono text-dim">{formatMoney(real ? s.netWorthAtEndReal : s.netWorthAtEnd)}</dd>
+                    </div>
+                    {checkpoints.length > 0 && (
+                      <div>
+                        <dt className="inline">
+                          Years of spending covered in {checkpoints.join(" / ")}:{" "}
+                          <InfoTooltip text="How many years of that year's spending the investable accounts (cash, investments, HSA) would cover at its end." />
+                        </dt>
+                        <dd className="inline font-mono text-dim">
+                          {checkpoints
+                            .map((year) => {
+                              const n = yearsOfSpendingCovered(s, year);
+                              return n === null ? "—" : n >= 99 ? "99+" : n < 0 ? "0" : String(Math.round(n));
+                            })
+                            .join(" / ")}
+                        </dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
+              </div>
+            </td>
+          </tr>
+        )}
+      </Fragment>
     );
   };
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-panel px-4 py-3">
-        <div className="text-sm">
-          {finished.length === 0 ? (
-            <span className="text-dim">Running every test…</span>
-          ) : (
-            <>
-              <span className="font-semibold">
-                {holding} of {rows.length} tests hold
-              </span>
-              {weakest && (
-                <span className="text-dim">
-                  {" "}
-                  · weakest: {weakest.label}, short in {weakest.summary!.firstShortfallYear}
-                </span>
-              )}
-              {finished.length < rows.length && <span className="text-dim-2"> · {rows.length - finished.length} still running</span>}
-            </>
-          )}
-        </div>
-        <div className="flex min-w-[12rem] flex-1 items-center justify-end gap-2 text-[11px] text-dim-2 sm:flex-none">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Segmented ariaLabel="Which half of the stress test to show" options={VIEW_OPTIONS} value={view} onChange={setView} />
+        <div className="flex items-center gap-2 text-[11px] text-dim-2">
           {running && (
             <>
               <span className="whitespace-nowrap">
@@ -272,145 +281,119 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
               </span>
             </>
           )}
-          {!running && !error && <span>Every test runs the whole plan; the searches are exact, not averages.</span>}
           {error && <span className="text-negative">{error}</span>}
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-panel p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-dim">Net worth under each test</h2>
-          <span className="text-[11px] text-dim-2">{real ? "Today’s dollars" : "Future dollars"} · click a row to hide or show its line</span>
-        </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart data={data} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
-            <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
-            <XAxis dataKey="year" stroke={theme.axis} tick={{ fontSize: 12 }} />
-            <YAxis stroke={theme.axis} tick={{ fontSize: 12 }} tickFormatter={(v) => formatMoney(v)} width={80} />
-            <Tooltip
-              contentStyle={{ background: theme.tooltipBg, border: `1px solid ${theme.tooltipBorder}`, borderRadius: 8 }}
-              labelStyle={{ color: theme.label }}
-              itemSorter={(item) => -(Number(item.value) || 0)}
-              formatter={(value, name) => [formatMoney(Number(value)), lines.find((l) => l.key === name)?.label ?? String(name)]}
-            />
-            {lines.map((l) => (
-              <Line
-                key={l.key}
-                type="monotone"
-                dataKey={l.key}
-                stroke={l.color}
-                strokeWidth={l.key === BASE_KEY ? 2.5 : 1.5}
-                strokeDasharray={l.key === BASE_KEY ? undefined : "5 3"}
-                dot={false}
-                hide={hidden.has(l.key)}
-                isAnimationActive={false}
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-border bg-panel">
-        <table className="w-full text-[12.5px]">
-          <thead>
-            <tr className="border-b border-border text-[10.5px] font-medium uppercase tracking-[0.08em] text-dim">
-              <th className="px-4 py-2.5 text-left">Test</th>
-              <th className="px-3 py-2.5 text-right">{retirementYear ? `At retirement (${retirementYear})` : "At retirement"}</th>
-              <th className="px-3 py-2.5 text-right">At end of plan</th>
-              <th className="px-3 py-2.5 text-right">{baseEndYear ? `vs plan in ${baseEndYear}` : "vs plan"}</th>
-              <th className="px-3 py-2.5 text-left">Holds through</th>
-              <th className="px-3 py-2.5 text-right">
-                <span className="inline-flex items-center gap-1">
-                  Years covered
-                  <InfoTooltip
-                    text={`How many years of that year's spending the investable accounts would cover, checked ${checkpoints.length} times along the plan: in ${checkpoints.join(", ")}.`}
-                  />
-                </span>
-              </th>
-              <th className="px-3 py-2.5 text-left">
-                <span className="inline-flex items-center gap-1">
-                  Breaking point
-                  <InfoTooltip text="How far this test's one number can go before the plan first runs short: the largest value it survives. Found by re-running the plan and narrowing in." />
-                </span>
-              </th>
-              <th className="px-3 py-2.5 text-left">
-                <span className="inline-flex items-center gap-1">
-                  What would fix it
-                  <InfoTooltip text="For a test that runs short: the smallest single change that makes the plan hold under it. Spend less (every entered expense), work longer (every retirement still ahead), or have more saved today." />
-                </span>
-              </th>
-              <th className="px-3 py-2.5 text-right">On chart</th>
-            </tr>
-          </thead>
-          <tbody>
-            {renderRow({ key: BASE_KEY, label: scenario.name, description: "The plan as entered.", summary: base })}
-            {GROUPS.map((group) => {
-              const members = rows.filter((r) => r.group === group);
-              if (members.length === 0) return null;
-              return [
-                <tr key={`group:${group}`} className="border-b border-border-soft bg-panel-2/40">
-                  <td colSpan={9} className="px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-dim">
-                    {STRESS_GROUP_LABELS[group]}
-                  </td>
-                </tr>,
-                ...members.map((r) => renderRow({ key: r.key, label: r.label, description: r.description, summary: r.summary, row: r })),
-              ];
-            })}
-          </tbody>
-        </table>
-        {baseRetire === null && <p className="border-t border-border px-4 py-2 text-[11px] text-dim-2">Set a retirement age on a person to see each test at retirement.</p>}
-      </div>
-
-      <MonteCarloPanel scenario={scenario} base={base} real={real} ready={!running} retirementYear={retirementYear} />
-
-      <div className="rounded-xl border border-border bg-panel p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <button type="button" onClick={() => setKnobsOpen((v) => !v)} aria-expanded={knobsOpen} className="text-sm font-semibold text-dim hover:text-foreground">
-            <span className="mr-1 inline-block w-3">{knobsOpen ? "▾" : "▸"}</span>How hard each test hits
-          </button>
-          {!isDefault && (
-            <button type="button" onClick={() => setParams(DEFAULT_STRESS_PARAMS)} className="text-[11.5px] text-dim hover:text-foreground">
-              Reset to defaults
-            </button>
-          )}
-        </div>
-        {knobsOpen && (
-          <div className="mt-3 flex flex-col gap-4">
-            <div>
-              <h3 className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-dim-2">Markets</h3>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <NumberField label="Lower returns: change in return" hint="Added to every investment account's yearly return for the whole plan. Negative = worse." value={Math.round(params.returnDelta * 1000) / 10} unit="pts" step={0.5} onCommit={(n) => set({ returnDelta: n / 100 })} />
-                <NumberField label="Bear market: return in the first year" hint="Investments earn exactly this in the year the shock begins, then their normal return. No rebound is assumed." value={Math.round(params.crashReturn * 100)} unit="%" onCommit={(n) => set({ crashReturn: n / 100 })} />
-                <NumberField label="Long bear: total fall" hint="The total loss across the bear years, spread evenly." value={Math.round(params.bearTotalDrop * 100)} unit="%" onCommit={(n) => set({ bearTotalDrop: n / 100 })} />
-                <NumberField label="Long bear: years" hint="How many consecutive years the market falls." value={params.bearYears} unit="yrs" onCommit={(n) => set({ bearYears: Math.max(1, Math.round(n)) })} />
-                <NumberField label="Shock begins: years after retirement" hint="Every bear market and historical replay starts this many years after the first retirement (0 = the retirement year). Year five is often worse than year one: contributions have stopped and Social Security has not started." value={params.sequenceOffsetYears} unit="yrs" onCommit={(n) => set({ sequenceOffsetYears: Math.max(0, Math.round(n)) })} />
-                <NumberField label="Historical replays: share in stocks" hint="The replays lay real history over the plan for a portfolio this much in U.S. stocks, the rest in 10-year Treasuries, after inflation." value={Math.round(params.equityShare * 100)} unit="%" onCommit={(n) => set({ equityShare: Math.min(1, Math.max(0, n / 100)) })} />
-                <NumberField label="Higher inflation: change in inflation" hint="Added to the plan's inflation rate for the whole plan." value={Math.round(params.inflationDelta * 1000) / 10} unit="pts" step={0.5} onCommit={(n) => set({ inflationDelta: n / 100 })} />
+      {view === "monte_carlo" ? (
+        <MonteCarloPanel scenario={scenario} base={base} real={real} ready={!running} retirementYear={retirementYear} />
+      ) : (
+        <>
+          <div className="rounded-xl border border-border bg-panel p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm">
+                {finished.length === 0 ? (
+                  <span className="text-dim">Running every test…</span>
+                ) : (
+                  <>
+                    <span className="font-semibold">
+                      {holding} of {rows.length} tests hold
+                    </span>
+                    {weakest && (
+                      <span className="text-dim">
+                        {" "}
+                        · weakest: {weakest.label}, short in {weakest.summary!.firstShortfallYear}
+                      </span>
+                    )}
+                  </>
+                )}
+              </h2>
+              <div className="flex items-center gap-3 text-[11px] text-dim-2">
+                <span>{real ? "Today’s dollars" : "Future dollars"}</span>
+                <span>·</span>
+                <button type="button" onClick={() => setChartKeys(rows.map((r) => r.key))} className="text-dim hover:text-foreground">
+                  Show all
+                </button>
+                <button type="button" onClick={() => setChartKeys([])} className="text-dim hover:text-foreground">
+                  Hide all
+                </button>
               </div>
             </div>
-            <div>
-              <h3 className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-dim-2">Life</h3>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <NumberField label="Live longer: extra years" hint="Added to everyone's planning end age." value={params.extraYears} unit="yrs" onCommit={(n) => set({ extraYears: Math.max(0, Math.round(n)) })} />
-                <NumberField label="Spouse dies early: at age" hint="The household member the plan leans on most is modelled as dying at this age." value={params.earlyDeathAge} unit="age" onCommit={(n) => set({ earlyDeathAge: Math.max(1, Math.round(n)) })} />
-                <NumberField label="Forced early exit: years early" hint="Everyone still working retires this many years before they planned to." value={params.earlyExitYears} unit="yrs" onCommit={(n) => set({ earlyExitYears: Math.max(0, Math.round(n)) })} />
-                <NumberField label="Long-term care: monthly cost" hint="Today's dollars. A private room in a nursing home runs $9,000-$12,000 a month in most of the country; assisted living about half that." value={params.ltcMonthly} unit="$/mo" step={500} onCommit={(n) => set({ ltcMonthly: Math.max(0, n) })} />
-                <NumberField label="Long-term care: years of care" hint="The average stay is two to three years; one in five lasts five or more." value={params.ltcYears} unit="yrs" onCommit={(n) => set({ ltcYears: Math.max(1, Math.round(n)) })} />
-                <NumberField label="Long-term care: starts at age" hint="Care begins on the oldest person's birthday at this age (pulled earlier if it would fall past their planning end age)." value={params.ltcStartAge} unit="age" onCommit={(n) => set({ ltcStartAge: Math.max(1, Math.round(n)) })} />
-              </div>
-            </div>
-            <div>
-              <h3 className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-dim-2">Costs and benefits</h3>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <NumberField label="Spending runs over: by" hint="Every entered expense and retirement spending runs this much higher, for the whole plan." value={Math.round(params.spendingOverrunPct * 100)} unit="%" onCommit={(n) => set({ spendingOverrunPct: n / 100 })} />
-                <NumberField label="Healthcare: extra cost growth" hint="Added to the healthcare model's yearly cost growth. The marketplace premium credit is also removed." value={Math.round(params.healthcareExtraGrowthPct * 1000) / 10} unit="pts" step={0.5} onCommit={(n) => set({ healthcareExtraGrowthPct: n / 100 })} />
-                <NumberField label="Higher taxes: extra rate" hint="Added to the flat tax rate on retirement income: withdrawals, pension, taxable Social Security and gains." value={Math.round(params.taxDeltaPct * 1000) / 10} unit="pts" step={0.5} onCommit={(n) => set({ taxDeltaPct: n / 100 })} />
-                <NumberField label="Social Security pays less: by" hint="Every Social Security benefit is cut by this share from its first check." value={Math.round(params.benefitCutPct * 100)} unit="%" onCommit={(n) => set({ benefitCutPct: n / 100 })} />
-              </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={data} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
+                <CartesianGrid stroke={theme.grid} strokeDasharray="3 3" />
+                <XAxis dataKey="year" stroke={theme.axis} tick={{ fontSize: 12 }} />
+                <YAxis stroke={theme.axis} tick={{ fontSize: 12 }} tickFormatter={(v) => formatMoney(v)} width={80} />
+                <Tooltip
+                  contentStyle={{ background: theme.tooltipBg, border: `1px solid ${theme.tooltipBorder}`, borderRadius: 8 }}
+                  labelStyle={{ color: theme.label }}
+                  itemSorter={(item) => -(Number(item.value) || 0)}
+                  formatter={(value, name) => [formatMoney(Number(value)), lines.find((l) => l.key === name)?.label ?? String(name)]}
+                />
+                {lines.map((l) => (
+                  <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.color} strokeWidth={l.key === BASE_KEY ? 2.5 : 1.5} strokeDasharray={l.key === BASE_KEY ? undefined : "5 3"} dot={false} isAnimationActive={false} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+            {lines.length === 1 && <p className="mt-2 text-center text-[11px] text-dim-2">Tick a test below to draw it against the plan.</p>}
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-border bg-panel">
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="border-b border-border text-[10.5px] font-medium uppercase tracking-[0.08em] text-dim">
+                  <th className="px-4 py-2.5 text-left">Test</th>
+                  <th className="px-3 py-2.5 text-left">Holds through</th>
+                  <th className="px-3 py-2.5 text-right">{baseEndYear ? `vs plan in ${baseEndYear}` : "vs plan"}</th>
+                  <th className="px-3 py-2.5 text-left">
+                    <span className="inline-flex items-center gap-1">
+                      Breaking point
+                      <InfoTooltip text="How far this test's one number can go before the plan first runs short: the largest value it survives. Found by re-running the plan and narrowing in." />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2.5 text-left">
+                    <span className="inline-flex items-center gap-1">
+                      What would fix it
+                      <InfoTooltip text="For a test that runs short: the smallest single change that makes the plan hold under it. Spend less (every entered expense), work longer (every retirement still ahead), or have more saved today." />
+                    </span>
+                  </th>
+                  <th className="px-3 py-2.5 text-right">Chart</th>
+                </tr>
+              </thead>
+              <tbody>
+                {GROUPS.map((group) => {
+                  const members = rows.filter((r) => r.group === group);
+                  if (members.length === 0) return null;
+                  const isCollapsed = collapsed.has(group);
+                  const groupHolding = members.filter((r) => r.summary && r.summary.firstShortfallYear === null).length;
+                  return (
+                    <Fragment key={group}>
+                      <tr onClick={() => setCollapsed((prev) => toggleIn(prev, group))} className="cursor-pointer border-b border-border-soft bg-panel-2/40 hover:bg-panel-2/70">
+                        <td colSpan={6} className="px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-dim">
+                          <span className="mr-1 inline-block w-3">{isCollapsed ? "▸" : "▾"}</span>
+                          {STRESS_GROUP_LABELS[group]}
+                          <span className="ml-2 font-normal normal-case tracking-normal text-dim-2">
+                            {members.length} tests{members.some((r) => r.summary) ? `, ${groupHolding} hold` : ""}
+                          </span>
+                        </td>
+                      </tr>
+                      {!isCollapsed && members.map(renderRow)}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2 text-[11px] text-dim-2">
+              <span>Click a test to see what it does and change how hard it hits. Every test runs the whole plan; the searches are exact, not averages.</span>
+              {!isDefault && (
+                <button type="button" onClick={() => setParams(DEFAULT_STRESS_PARAMS)} className="text-dim hover:text-foreground">
+                  Reset every test to defaults
+                </button>
+              )}
             </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

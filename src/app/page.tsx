@@ -26,8 +26,6 @@ import { JoyConfetti } from "@/components/joy/JoyConfetti";
 import { JoyQuote } from "@/components/joy/JoyQuote";
 import { ThemeSync } from "@/components/layout/ThemeToggle";
 import { todayISO } from "@/engine/dateMath";
-import { applicableStressPresets } from "@/engine/stress";
-import { useStressProjection } from "@/store/useStress";
 
 /**
  * Recharts is a sizeable chunk of JS that the rest of the Overview page
@@ -86,16 +84,6 @@ function HomeContent() {
     [hasCompare, compareProjection.years, range]
   );
 
-  // A stress preset drawn as a second line on the Overview chart; chosen
-  // from the chart's own menu or the Stress test tab.
-  const stressOverlay = useUiStore((s) => s.stressOverlay);
-  const setStressOverlay = useUiStore((s) => s.setStressOverlay);
-  const stressParams = useUiStore((s) => s.stressParams);
-  const stressRun = useStressProjection(scenario, view === "Overview" ? stressOverlay : null, stressParams);
-  const stressYears = useMemo(
-    () => (stressRun ? stressRun.result.years.filter((y) => y.year >= range[0] && y.year <= range[1]) : []),
-    [stressRun, range]
-  );
 
   // --- Monthly drill-down -------------------------------------------------
   // The Cash Flow and Accounts tables can show one column per MONTH over the
@@ -221,11 +209,6 @@ function HomeContent() {
                 scenarioName={scenario.name}
                 compareOptions={compareOptions}
                 compareScenarioId={compareScenarioId}
-                stressOptions={applicableStressPresets(scenario).map((p) => ({ key: p.key, label: p.label }))}
-                stressKey={stressOverlay}
-                onStressChange={setStressOverlay}
-                onOpenStressTab={() => setView("Stress test")}
-                stressScenario={stressRun ? { label: stressRun.label, description: stressRun.description, years: stressYears } : null}
                 compareScenario={
                   hasCompare
                     ? {

@@ -29,16 +29,21 @@ interface UiState {
   /** Bumped by the empty first-run state to open the Data menu's file picker; not persisted. */
   restoreRequest: number;
   requestRestore: () => void;
-  /** The stress preset drawn as a second line on the Overview chart, if any. */
-  stressOverlay: StressKey | null;
-  setStressOverlay: (key: StressKey | null) => void;
   /** How hard each stress preset hits; shared by the chart overlay and the Stress test tab. */
   stressParams: StressParams;
   setStressParams: (params: StressParams) => void;
   /** How the Monte Carlo panel draws its random futures. */
   monteCarloParams: MonteCarloParams;
   setMonteCarloParams: (params: MonteCarloParams) => void;
+  /** Which half of the Stress test tab is showing. */
+  stressView: StressView;
+  setStressView: (view: StressView) => void;
+  /** The stress tests drawn on the tab's own chart (the base plan is always drawn). */
+  stressChartKeys: StressKey[];
+  setStressChartKeys: (keys: StressKey[]) => void;
 }
+
+export type StressView = "scenarios" | "monte_carlo";
 
 /** UI-only preferences (not part of a financial plan), persisted separately. */
 export const useUiStore = create<UiState>()(
@@ -55,12 +60,14 @@ export const useUiStore = create<UiState>()(
       toggleAccountsExpanded: (key) => set((s) => ({ accountsExpanded: toggleInArray(s.accountsExpanded, key) })),
       restoreRequest: 0,
       requestRestore: () => set((s) => ({ restoreRequest: s.restoreRequest + 1 })),
-      stressOverlay: null,
-      setStressOverlay: (key) => set({ stressOverlay: key }),
       stressParams: DEFAULT_STRESS_PARAMS,
       setStressParams: (params) => set({ stressParams: params }),
       monteCarloParams: DEFAULT_MONTE_CARLO_PARAMS,
       setMonteCarloParams: (params) => set({ monteCarloParams: params }),
+      stressView: "scenarios",
+      setStressView: (view) => set({ stressView: view }),
+      stressChartKeys: [],
+      setStressChartKeys: (keys) => set({ stressChartKeys: keys }),
     }),
     {
       name: "forecast-ui",
@@ -69,9 +76,10 @@ export const useUiStore = create<UiState>()(
         cashFlowTaxesOpen: s.cashFlowTaxesOpen,
         cashFlowExpanded: s.cashFlowExpanded,
         accountsExpanded: s.accountsExpanded,
-        stressOverlay: s.stressOverlay,
         stressParams: s.stressParams,
         monteCarloParams: s.monteCarloParams,
+        stressView: s.stressView,
+        stressChartKeys: s.stressChartKeys,
       }),
       /**
        * A saved copy of the stress parameters may be missing one a newer
@@ -98,8 +106,9 @@ export const useUiStore = create<UiState>()(
         }
         if (savedMc.model === "history" || savedMc.model === "normal") monteCarloParams.model = savedMc.model;
         // A preset that no longer exists can't be drawn on the chart.
-        const overlay = p.stressOverlay && STRESS_PRESETS.some((x) => x.key === p.stressOverlay) ? p.stressOverlay : null;
-        return { ...current, ...p, stressOverlay: overlay, stressParams, monteCarloParams };
+        const stressChartKeys = (Array.isArray(p.stressChartKeys) ? p.stressChartKeys : []).filter((k) => STRESS_PRESETS.some((x) => x.key === k));
+        const stressView = p.stressView === "monte_carlo" ? "monte_carlo" : "scenarios";
+        return { ...current, ...p, stressParams, monteCarloParams, stressChartKeys, stressView };
       },
     }
   )
