@@ -15,13 +15,8 @@ const CHART_THEME = {
   joy: { grid: "#f4e5d3", axis: "#a68a72", tooltipBg: "#ffffff", tooltipBorder: "#ffe0c7", label: "#4a3729", base: "#2fb98d" },
 } as const;
 
-const STRESS_COLORS: Record<StressKey, string> = {
-  lower_returns: "#c9a063",
-  bear_at_retirement: "#db7a6e",
-  higher_inflation: "#9c8cd6",
-  live_longer: "#d98bb0",
-  all_at_once: "#e8555a",
-};
+/** One colour per stressed line, cycled in preset order; the base plan keeps the theme's own colour. */
+const STRESS_PALETTE = ["#c9a063", "#db7a6e", "#e8555a", "#9c8cd6", "#d98bb0", "#7fb3d5", "#6fbf9a", "#e0a458", "#b48ead", "#8fa1c9", "#d4a5a5", "#a3be8c", "#ebcb8b", "#bf616a", "#88c0d0"];
 
 const BASE_KEY = "base";
 
@@ -112,7 +107,7 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
   const rows = useMemo(
     () => [
       { key: BASE_KEY, label: scenario.name, description: "The plan as entered.", result: projection, color: theme.base },
-      ...runs.map((r: StressRun) => ({ ...r, color: STRESS_COLORS[r.key] })),
+      ...runs.map((r: StressRun, i: number) => ({ ...r, color: STRESS_PALETTE[i % STRESS_PALETTE.length] })),
     ],
     [runs, projection, scenario.name, theme.base]
   );

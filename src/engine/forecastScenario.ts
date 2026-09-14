@@ -237,7 +237,7 @@ function diffAccumulator(before: YearAccumulator, after: YearAccumulator): YearA
 }
 
 /** Account classes the plan-wide expected return and the stress presets apply to. */
-const INVESTMENT_CLASSES = new Set<EngineAccount["class"]>(["taxable_investment", "tax_deferred", "tax_free", "hsa", "education_529"]);
+export const INVESTMENT_CLASSES = new Set<EngineAccount["class"]>(["taxable_investment", "tax_deferred", "tax_free", "hsa", "education_529"]);
 
 /**
  * Knobs a caller can turn without editing the plan -- what the stress tests
