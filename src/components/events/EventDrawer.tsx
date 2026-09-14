@@ -7,6 +7,7 @@ import {
   sellHomeEventSchema,
   rothConversionEventSchema,
   payOffLoanEventSchema,
+  refinanceEventSchema,
   rolloverEventSchema,
   customTransferEventSchema,
 } from "@/domain";
@@ -78,6 +79,13 @@ interface FormValues {
   name: string;
   startDate: string;
   endDate: string;
+  /** Refinance: percent string ("5.5"), years, money strings. */
+  refiRatePct: string;
+  refiTermYears: string;
+  refiCashOut: string;
+  refiCashOutAccountId: string;
+  refiClosingCosts: string;
+  refiClosingCostsFinanced: boolean;
   isExcluded: boolean;
   notes: string;
   sellRealEstateAccountId: string;
@@ -110,6 +118,12 @@ const DEFAULTS: FormValues = {
   name: "",
   startDate: "",
   endDate: "",
+  refiRatePct: "",
+  refiTermYears: "30",
+  refiCashOut: "",
+  refiCashOutAccountId: "",
+  refiClosingCosts: "",
+  refiClosingCostsFinanced: true,
   isExcluded: false,
   notes: "",
   sellRealEstateAccountId: "",
@@ -170,6 +184,17 @@ function eventToFormValues(event: ScenarioEvent): FormValues {
       // Handled entirely by LoanDrawer (see the early return in the component
       // below) -- never actually reaches this form.
       return base;
+    case "refinance":
+      return {
+        ...base,
+        loanAccountId: event.loanAccountId,
+        refiRatePct: fractionToPercentStr(event.annualInterestRatePct),
+        refiTermYears: String(Math.round(event.termMonths / 12)),
+        refiCashOut: event.cashOutAmount > 0 ? moneyToStr(event.cashOutAmount) : "",
+        refiCashOutAccountId: event.cashOutAccountId ?? "",
+        refiClosingCosts: event.closingCosts > 0 ? moneyToStr(event.closingCosts) : "",
+        refiClosingCostsFinanced: event.closingCostsFinanced,
+      };
     case "pay_off_loan":
       return {
         ...base,
@@ -372,6 +397,9 @@ export function EventDrawer({
         setValue("loanAccountId", first(loanOptions));
         setValue("fromAccountId", first(assetOptions));
         break;
+      case "refinance":
+        setValue("loanAccountId", first(loanOptions));
+        break;
       case "rollover":
         setValue("fromAccountId", first(deferredOptions));
         setValue("toAccountId", second(deferredOptions));
@@ -447,6 +475,32 @@ export function EventDrawer({
         };
         schema = rothConversionEventSchema.omit({ id: true });
         break;
+      case "refinance": {
+        const termYears = Number(v.refiTermYears);
+        if (!Number.isFinite(termYears) || termYears <= 0) {
+          setError("Enter the new term in years.");
+          return;
+        }
+        const rate = percentStrToFraction(v.refiRatePct);
+        if (rate == null) {
+          setError("Enter the new interest rate.");
+          return;
+        }
+        candidate = {
+          ...base,
+          type: "refinance",
+          loanAccountId: v.loanAccountId,
+          annualInterestRatePct: rate,
+          termMonths: Math.round(termYears * 12),
+          cashOutAmount: moneyStrToNumber(v.refiCashOut) ?? 0,
+          cashOutAccountId: v.refiCashOutAccountId || null,
+          closingCosts: moneyStrToNumber(v.refiClosingCosts) ?? 0,
+          closingCostsFinanced: v.refiClosingCostsFinanced,
+          extraPrincipalMonthly: null,
+        };
+        schema = refinanceEventSchema.omit({ id: true });
+        break;
+      }
       case "pay_off_loan":
         candidate = {
           ...base,
@@ -724,6 +778,46 @@ export function EventDrawer({
                 <Field label="Amount grows by" hint={`Percent per year. Blank = matches inflation (${inflationPctLabel}%); 0 = the same dollar amount every year.`}>
                   <PercentInput reg={register("transferGrowthRatePct")} placeholder={`blank = inflation (${inflationPctLabel}%)`} />
                 </Field>
+              )}
+            </>
+          )}
+
+          {selectedType === "refinance" && (
+            <>
+              {loanOptions.length === 0 ? (
+                <p className="text-sm text-dim">No loans or mortgages in this plan yet.</p>
+              ) : (
+                <>
+                  <Field label="Loan" hint="Its balance carries over -- only the rate and term change.">
+                    <SelectInput reg={register("loanAccountId", { required: true })} options={loanOptions} />
+                  </Field>
+                  <FieldRow>
+                    <Field label="New Interest Rate (per year)">
+                      <PercentInput reg={register("refiRatePct", { required: true })} placeholder="e.g. 5.5" />
+                    </Field>
+                    <Field label="New Term (years)" hint="Counted from the closing date above.">
+                      <TextInput reg={register("refiTermYears", { required: true })} type="number" step="1" min="1" />
+                    </Field>
+                  </FieldRow>
+                  <FieldRow>
+                    <Field label="Cash Out (optional)" hint="Added to what you owe and paid to you. Today's dollars.">
+                      <MoneyInput reg={register("refiCashOut")} placeholder="e.g. 50,000" />
+                    </Field>
+                    <Field label="Closing Costs (optional)" hint="Lender fees, title, points. Today's dollars.">
+                      <MoneyInput reg={register("refiClosingCosts")} placeholder="e.g. 6,000" />
+                    </Field>
+                  </FieldRow>
+                  <CheckboxInput
+                    reg={register("refiClosingCostsFinanced")}
+                    label="Roll the closing costs into the loan (uncheck to pay them at closing)"
+                  />
+                  <Field label="Cash Goes To" hint="Where a cash-out lands, and where closing costs are paid from when you don't roll them in.">
+                    <SelectInput
+                      reg={register("refiCashOutAccountId")}
+                      options={[{ value: "", label: "Extra Savings (Default)" }, ...assetOptions]}
+                    />
+                  </Field>
+                </>
               )}
             </>
           )}

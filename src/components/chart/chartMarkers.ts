@@ -174,6 +174,14 @@ export function buildChartMarkers({
           value: ev.proceedsAccountId ? accountName(ev.proceedsAccountId) : "Something outside the plan",
         });
         break;
+      case "refinance":
+        rows.push({ label: "Loan", value: accountName(ev.loanAccountId) });
+        rows.push({ label: "New rate", value: `${(ev.annualInterestRatePct * 100).toFixed(2)}%` });
+        rows.push({ label: "New term", value: `${Math.round(ev.termMonths / 12)} years` });
+        if (ev.cashOutAmount > 0) rows.push({ label: "Cash out", value: formatMoney(ev.cashOutAmount) });
+        if (ev.closingCosts > 0)
+          rows.push({ label: "Closing costs", value: `${formatMoney(ev.closingCosts)} (${ev.closingCostsFinanced ? "rolled in" : "at closing"})` });
+        break;
       case "pay_off_loan":
         rows.push({ label: "Loan", value: accountName(ev.loanAccountId) });
         rows.push({ label: "Paid from", value: accountName(ev.fromAccountId) });

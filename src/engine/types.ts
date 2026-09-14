@@ -125,6 +125,14 @@ export interface MortgageSpec {
    *  "replace existing housing expenses" retiring an already-owned home's
    *  mortgage) -- the remaining balance simply stops amortizing. */
   paymentEndDate?: ISODate;
+  /**
+   * Rate/term replacements that take effect on a date (refinance events),
+   * earliest first. From each one's month the loan amortizes on the new rate,
+   * and its payment is re-sized from whatever is owed at that moment over the
+   * new term -- which is the whole point: the balance is what it is, and the
+   * refinance decides what it costs from here.
+   */
+  refinances?: { date: ISODate; annualInterestRatePct: number; termMonths: number; extraPrincipalMonthly?: number }[];
 }
 
 export interface ResolvedSchedule {

@@ -155,6 +155,18 @@ export function repairReferences(scenario: Scenario): { scenario: Scenario; repa
           return [{ ...e, proceedsAccountId: null }];
         }
         return [e];
+      case "refinance":
+        // Without the loan there are no terms to replace; a missing cash-out
+        // account is survivable -- fall back to the spending hub.
+        if (!accountIds.has(e.loanAccountId)) {
+          repairs.push(`${e.name}: the loan it refinances no longer exists, so the event was removed.`);
+          return [];
+        }
+        if (e.cashOutAccountId && !accountIds.has(e.cashOutAccountId)) {
+          repairs.push(`${e.name}: the account the cash-out was paid into no longer exists, so it now lands in Extra Savings.`);
+          return [{ ...e, cashOutAccountId: null }];
+        }
+        return [e];
       case "pay_off_loan":
         if (!accountIds.has(e.fromAccountId) || !accountIds.has(e.loanAccountId)) {
           repairs.push(`${e.name}: the loan or the paying account no longer exists, so the event was removed.`);

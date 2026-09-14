@@ -68,7 +68,7 @@ export type LifeEventTarget =
   | { kind: "income"; seed: IncomeTemplateSeed }
   | { kind: "expense"; seed: ExpenseTemplateSeed }
   /** One of the existing event drawers, by its picker key. */
-  | { kind: "event"; type: "buy_home" | "sell_home" | "heloc" | "open_loan" | "pay_off_loan" | "roth_conversion" | "rollover" | "custom_transfer" }
+  | { kind: "event"; type: "buy_home" | "sell_home" | "heloc" | "open_loan" | "refinance" | "pay_off_loan" | "roth_conversion" | "rollover" | "custom_transfer" }
   /** A temporary change to an existing salary (a break, a cut, a raise). */
   | { kind: "adjustment"; multiplier: number; months: number | null; note: string }
   /** Lives in Assumptions (retirement age, healthcare, planning-end age). */
@@ -213,6 +213,14 @@ export const LIFE_EVENT_TEMPLATES: LifeEventTemplate[] = [
   { id: "buy-home", group: "Home", label: "Buy a home", hint: "Creates the home and its mortgage, pays the down payment", keywords: ["house", "mortgage", "purchase", "closing"], target: { kind: "event", type: "buy_home" } },
   { id: "sell-home", group: "Home", label: "Sell a home", hint: "Retires its loans and credits the proceeds", keywords: ["house", "downsize", "move", "sale"], target: { kind: "event", type: "sell_home" } },
   { id: "downsize", group: "Home", label: "Downsize or move", hint: "Sell this home, then add Buy a home for the next one", keywords: ["downsize", "relocate", "move", "smaller"], target: { kind: "event", type: "sell_home" } },
+  {
+    id: "refinance",
+    group: "Home",
+    label: "Refinance a mortgage",
+    hint: "Swap a loan's rate and term on a date, optionally taking cash out",
+    keywords: ["refi", "rate", "lower payment", "cash out", "recast"],
+    target: { kind: "event", type: "refinance" },
+  },
   { id: "heloc", group: "Home", label: "Home equity line (HELOC)", hint: "Borrow against a home: interest-only while you draw, then repaid", keywords: ["equity", "line of credit", "renovation", "borrow"], target: { kind: "event", type: "heloc" } },
   {
     id: "renovation",

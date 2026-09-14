@@ -440,6 +440,17 @@ export function buildLlmExport(scenario: Scenario): string {
             } Payments amortize from the spending hub.`
           );
           break;
+        case "refinance":
+          lines.push(
+            `  - Refinance ${accountName(ev.loanAccountId)} at ${fmtPct(ev.annualInterestRatePct)} over ${Math.round(ev.termMonths / 12)} years, counted from this date. The balance carries over; the payment is re-sized from whatever is owed at closing.${
+              ev.cashOutAmount > 0 ? ` Takes ${formatMoney(ev.cashOutAmount)} cash out (added to the balance).` : ""
+            }${
+              ev.closingCosts > 0
+                ? ` Closing costs ${formatMoney(ev.closingCosts)}, ${ev.closingCostsFinanced ? "rolled into the balance" : "paid in cash at closing"}.`
+                : ""
+            }`
+          );
+          break;
         case "pay_off_loan":
           lines.push(
             `  - Pay ${ev.amount == null ? "off whatever is left on" : `${formatMoney(ev.amount)} toward`} ${accountName(ev.loanAccountId)} from ${accountName(ev.fromAccountId)}.`

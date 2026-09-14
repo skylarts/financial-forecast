@@ -1502,6 +1502,18 @@ export function forecastScenario(
       // The remaining balance simply stops amortizing (no sale/payoff is
       // modeled), same simplification as a housing Expense that just stops.
       if (mortgage.paymentEndDate && compareDates(month, mortgage.paymentEndDate) > 0) continue;
+      // A refinance replaces the rate and term from its month onward. The
+      // newest one that has already closed wins; before the first one the
+      // loan's original terms stand. The balance is untouched by the swap --
+      // any cash-out or rolled-in closing costs arrived as postings in step 2,
+      // so by now `currentBalance` is already the new loan's opening balance.
+      const activeRefi = mortgage.refinances?.reduce<NonNullable<MortgageSpec["refinances"]>[number] | undefined>(
+        (best, r) => (compareDates(r.date, month) <= 0 ? r : best),
+        undefined
+      );
+      const rate = activeRefi?.annualInterestRatePct ?? mortgage.loanTerms.annualInterestRatePct;
+      const extraWanted = activeRefi ? activeRefi.extraPrincipalMonthly ?? 0 : mortgage.loanTerms.extraPrincipalMonthly ?? 0;
+
       // A line of credit's draw period: interest only, balance untouched. The
       // month it ends, the payment is re-sized to clear whatever is owed by
       // then over the repayment term -- so it reflects what was actually drawn,
@@ -1511,15 +1523,19 @@ export function forecastScenario(
       const monthsSinceOrigination = monthsBetween(originationMonth, month.slice(0, 7));
       const inDrawPeriod = drawMonths > 0 && monthsSinceOrigination <= drawMonths;
       let scheduledPayment = payment;
-      if (inDrawPeriod) {
-        scheduledPayment = (currentBalance * mortgage.loanTerms.annualInterestRatePct) / 12;
+      if (activeRefi && month.slice(0, 7) === activeRefi.date.slice(0, 7)) {
+        // Closing month: size the new payment off what is actually owed now,
+        // over the new term. Same reason the draw-period handoff does it here.
+        scheduledPayment = computeMonthlyPayment(currentBalance, rate, activeRefi.termMonths);
+        mortgagePayments.set(account.id, scheduledPayment);
+      } else if (inDrawPeriod) {
+        scheduledPayment = (currentBalance * rate) / 12;
       } else if (drawMonths > 0 && monthsSinceOrigination === drawMonths + 1) {
         scheduledPayment =
-          mortgage.loanTerms.monthlyPayment ??
-          computeMonthlyPayment(currentBalance, mortgage.loanTerms.annualInterestRatePct, mortgage.loanTerms.termMonths);
+          mortgage.loanTerms.monthlyPayment ?? computeMonthlyPayment(currentBalance, rate, mortgage.loanTerms.termMonths);
         mortgagePayments.set(account.id, scheduledPayment);
       }
-      const step = amortizeMonth(currentBalance, mortgage.loanTerms.annualInterestRatePct, scheduledPayment);
+      const step = amortizeMonth(currentBalance, rate, scheduledPayment);
 
       // Extra principal on top of the scheduled payment -- capped at whatever
       // balance is left after the normal step, so the final payment never
@@ -1528,7 +1544,6 @@ export function forecastScenario(
       // above simply stops charging once it's gone).
       let principalPortion = step.principalPortion;
       let newBalance = step.newBalance;
-      const extraWanted = mortgage.loanTerms.extraPrincipalMonthly ?? 0;
       if (extraWanted > 0 && newBalance > 0) {
         const extra = Math.min(extraWanted, newBalance);
         principalPortion += extra;

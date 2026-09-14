@@ -300,6 +300,23 @@ Selling zeroes out both that home's asset balance and its linked mortgage balanc
 \`\`\`
 Ordinary income in the year it happens, never the 10% penalty.
 
+**type: "refinance"**
+\`\`\`
+{
+  ...base,
+  "type": "refinance",
+  "loanAccountId": string,                   // the mortgage/loan whose terms are replaced; the account and its balance carry over
+  "annualInterestRatePct": number,           // the NEW rate as a fraction (0.055 = 5.5%)
+  "termMonths": number > 0,                  // the NEW term, counted from startDate (the closing date)
+  "cashOutAmount": number >= 0,              // today's dollars; added to the balance and paid out as cash. default 0
+  "cashOutAccountId": string | null,         // where the cash lands; null = the spending hub
+  "closingCosts": number >= 0,               // today's dollars. default 0
+  "closingCostsFinanced": boolean,           // default true = rolled into the balance; false = paid in cash at closing (an expense that year)
+  "extraPrincipalMonthly": number | null     // carried onto the new loan; null keeps what the loan already had
+}
+\`\`\`
+Replaces a loan's rate and term on a date. It is NOT a new account: anything pointing at this loan (a home's linkedLiabilityId, a later pay_off_loan) keeps pointing at it. From the closing month the loan amortizes at the new rate, and its payment is re-sized from the balance at that moment over the new term.
+
 **type: "pay_off_loan"**
 \`\`\`
 {
