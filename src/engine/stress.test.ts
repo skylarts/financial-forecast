@@ -193,9 +193,12 @@ describe("stress presets", () => {
     }
   });
 
-  it("every applicable preset ends no better than the base plan, in today's dollars (a replay may: history can beat a cautious plan)", () => {
-    // Compared in the base plan's final year, so a run that lasts longer
-    // (Live longer) is not credited for its extra years -- the tab's rule.
+  it("every applicable preset ends no better than the base plan, in today's dollars", () => {
+    // Two kinds of preset are allowed to come out ahead: a historical
+    // replay (history can beat a cautious plan's expected return), and
+    // living longer (five more years of a pension that would otherwise
+    // have stopped at death). Everything else must hurt or do nothing.
+    const mayEndHigher = (key: StressKey) => key.startsWith("history_") || key === "live_longer";
     const baseRun = projectScenario(scenario);
     const baseEndYear = baseRun.years[baseRun.years.length - 1].year;
     const baseEnd = baseRun.kpis.netWorthAtEndReal;
@@ -204,7 +207,7 @@ describe("stress presets", () => {
       const run = preset.apply(scenario, DEFAULT_STRESS_PARAMS);
       const result = projectScenario(run.scenario, run.options);
       const end = result.years.find((y) => y.year === baseEndYear)?.netWorthReal ?? result.kpis.netWorthAtEndReal;
-      if (!preset.key.startsWith("history_")) expect(end, preset.key).toBeLessThanOrEqual(baseEnd + 1);
+      if (!mayEndHigher(preset.key)) expect(end, preset.key).toBeLessThanOrEqual(baseEnd + 1);
       if (end < baseEnd - 1) worse.push(preset.key);
     }
     expect(worse).toContain("lower_returns");
