@@ -397,7 +397,7 @@ const MARKET_PRESETS: StressPreset[] = [
     describe: (p, s) => {
       const share = Math.round(Math.min(1, Math.max(0, p.equityShare)) * 100);
       const start = sequenceStartYear(s, p);
-      return `Investments earn what a ${share}/${100 - share} stock/bond portfolio earned, after inflation, from ${era.startYear} to ${era.startYear + HISTORICAL_ERA_YEARS - 1} -- laid over ${start} to ${start + HISTORICAL_ERA_YEARS - 1}. That era: ${era.summary}.`;
+      return `Investments earn what a ${share}/${100 - share} stock/bond portfolio earned, after inflation, from ${era.startYear} to ${era.startYear + HISTORICAL_ERA_YEARS - 1} — laid over ${start} to ${start + HISTORICAL_ERA_YEARS - 1}. That era: ${era.summary}.`;
     },
     apply: (scenario, p) => ({ scenario, options: { yearReturnOverrides: historyOverrides(scenario, p, era.startYear) } }),
   })),
