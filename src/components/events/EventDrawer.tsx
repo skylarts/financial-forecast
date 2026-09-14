@@ -40,7 +40,7 @@ import { treatmentOf } from "@/engine/resolveEvents";
 // same as Buy a home hands off to HomeDrawer. Childcare is an ordinary
 // expense too (a monthly cost with an end date), so there is no separate
 // "have a kid" template any more.
-type TemplateType = EventType | "income" | "expense";
+type TemplateType = EventType | "income" | "expense" | "heloc";
 
 const EVENT_TEMPLATES: { type: TemplateType; label: string; hint: string }[] = [
   { type: "income", label: "Income", hint: "Salary, Social Security, pension, rental, or a one-time payment" },
@@ -48,7 +48,8 @@ const EVENT_TEMPLATES: { type: TemplateType; label: string; hint: string }[] = [
   { type: "buy_home", label: "Buy a home", hint: "Creates a real estate asset, optionally financed" },
   { type: "sell_home", label: "Sell a home", hint: "Sell a home you own: retires its mortgage and credits the proceeds" },
   { type: "roth_conversion", label: "Roth conversion", hint: "Move money from a tax-deferred account to a Roth: taxed as income, never penalized" },
-  { type: "open_loan", label: "Take out a loan", hint: "Finance a car, take a HELOC or a personal loan: creates the debt and starts its payments" },
+  { type: "open_loan", label: "Take out a loan", hint: "Finance a car, a student or personal loan: creates the debt and starts its payments" },
+  { type: "heloc", label: "Home equity line (HELOC)", hint: "Borrow against a home you own: interest-only while you draw, then paid back over the repayment period" },
   { type: "pay_off_loan", label: "Pay off a loan", hint: "Pay a mortgage or loan down, or off, from an account on a date" },
   { type: "rollover", label: "Rollover", hint: "Move money between two tax-deferred accounts, with no tax" },
   { type: "custom_transfer", label: "Custom transfer", hint: "Any other move between two of your accounts" },
@@ -271,10 +272,20 @@ export function EventDrawer({
   if (selectedType === "expense") {
     return <ExpenseDrawer open={open} onClose={onClose} expense={undefined} accounts={accounts} />;
   }
-  if (selectedType === "open_loan") {
+  if (selectedType === "open_loan" || selectedType === "heloc") {
     const loanEvent = event?.type === "open_loan" ? event : undefined;
     const loanAccount = loanEvent ? accounts.find((a) => a.id === loanEvent.loanAccountId) : undefined;
-    return <LoanDrawer open={open} onClose={onClose} account={loanAccount} event={loanEvent} accounts={accounts} initialMode="new" />;
+    return (
+      <LoanDrawer
+        open={open}
+        onClose={onClose}
+        account={loanAccount}
+        event={loanEvent}
+        accounts={accounts}
+        initialMode="new"
+        initialKind={selectedType === "heloc" ? "heloc" : "fixed"}
+      />
+    );
   }
 
   /**

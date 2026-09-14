@@ -6,15 +6,23 @@ import { moneyStrToNumber, percentStrToFraction } from "@/lib/inputFormat";
 
 /** Rate fields are PERCENT-unit strings ("7" = 7%/yr); money fields are
  *  lenient money strings ("40,000") -- same conventions as buyHome.ts. */
+export type LoanKind = "fixed" | "heloc";
+
 export interface OpenLoanInput {
   name: string;
   startDate: string;
   principal: string;
   annualInterestRatePct: string;
+  /** A fixed loan's whole term; a HELOC's REPAYMENT period (after the draw). */
   termYears: string;
   extraPrincipalMonthly: string;
   /** "" = the money paid for something the plan doesn't track. */
   proceedsAccountId: string;
+  kind: LoanKind;
+  /** HELOC only: the years of interest-only draw before repayment starts. */
+  drawYears: string;
+  /** HELOC only: the home it is secured by -- paid off when that home sells. */
+  securedByAccountId: string;
 }
 
 export const OPEN_LOAN_DEFAULTS: OpenLoanInput = {
@@ -25,6 +33,21 @@ export const OPEN_LOAN_DEFAULTS: OpenLoanInput = {
   termYears: "5",
   extraPrincipalMonthly: "",
   proceedsAccountId: "",
+  kind: "fixed",
+  drawYears: "",
+  securedByAccountId: "",
+};
+
+/** A HELOC as most US lenders write one: 10 years to draw at interest only,
+ *  then 20 years to repay. The rate floats in real life; one rate is the
+ *  simplification here, same as every other loan in the plan. */
+export const HELOC_DEFAULTS: OpenLoanInput = {
+  ...OPEN_LOAN_DEFAULTS,
+  name: "HELOC",
+  annualInterestRatePct: "8",
+  drawYears: "10",
+  termYears: "20",
+  kind: "heloc",
 };
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -42,7 +65,14 @@ function validate(input: OpenLoanInput): string | null {
   if (!input.startDate) return "Enter the date the loan starts.";
   if (!((moneyStrToNumber(input.principal) ?? 0) > 0)) return "Enter how much is borrowed.";
   const termYears = Number(input.termYears);
-  if (!Number.isFinite(termYears) || termYears <= 0) return "Enter the loan's term in years.";
+  if (!Number.isFinite(termYears) || termYears <= 0) {
+    return input.kind === "heloc" ? "Enter the repayment period in years." : "Enter the loan's term in years.";
+  }
+  if (input.kind === "heloc") {
+    const drawYears = Number(input.drawYears);
+    if (!Number.isFinite(drawYears) || drawYears <= 0) return "Enter the draw period in years.";
+    if (!input.securedByAccountId) return "Choose the home this line of credit is secured by.";
+  }
   return null;
 }
 
@@ -65,6 +95,12 @@ function loanAccountCandidate(input: OpenLoanInput, principal: number, existingN
       annualInterestRatePct: percentStrToFraction(input.annualInterestRatePct) ?? 0,
       termMonths: Math.max(1, Math.round(termYears * 12)),
       extraPrincipalMonthly: moneyStrToNumber(input.extraPrincipalMonthly) ?? undefined,
+      ...(input.kind === "heloc"
+        ? {
+            interestOnlyMonths: Math.max(1, Math.round(Number(input.drawYears) * 12)),
+            linkedAssetId: input.securedByAccountId,
+          }
+        : {}),
     },
   };
 }
@@ -97,6 +133,7 @@ export function openNewLoan(input: OpenLoanInput, settings: { startDate: string;
     loanAccountId: loanAccount.id,
     principal: principalToday,
     proceedsAccountId: input.proceedsAccountId || null,
+    loanKind: input.kind,
   };
   const eResult = openLoanEventSchema.omit({ id: true }).safeParse(eventCandidate);
   if (!eResult.success) return { ok: false, error: eResult.error.issues[0]?.message ?? "That doesn't look right." };
@@ -143,6 +180,7 @@ export function updateOpenedLoan(
     loanAccountId: loanAccount.id,
     principal: principalToday,
     proceedsAccountId: input.proceedsAccountId || null,
+    loanKind: input.kind,
     isExcluded: event.isExcluded,
     notes: event.notes,
   };

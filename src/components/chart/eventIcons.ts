@@ -38,3 +38,9 @@ export const MARKER_TONE_CLASS: Record<MarkerKind, string> = {
   expense: "bg-negative/25 text-negative",
   event: "bg-accent/25 text-accent",
 };
+
+/** The icon for an event; a HELOC gets its own so it doesn't read as a car loan on the chart. */
+export function eventIconFor(event: { type: TimelineEntryType; loanKind?: "fixed" | "heloc" }): string {
+  if (event.type === "open_loan" && event.loanKind === "heloc") return "🏡";
+  return EVENT_TYPE_ICONS[event.type];
+}

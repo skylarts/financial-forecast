@@ -6,7 +6,7 @@ import { retirementsInOrder } from "@/domain";
 import { useAssumptionsStore } from "@/store/useAssumptionsStore";
 import { AnchorChip } from "@/components/ui/AnchoredDate";
 import { formatMoney } from "@/lib/format";
-import { EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES, freqLabel } from "@/lib/timelineFormat";
+import { eventBadgeLabel, INCOME_CATEGORY_BADGES, freqLabel } from "@/lib/timelineFormat";
 import { IncomeDrawer } from "@/components/income/IncomeDrawer";
 import { ExpenseDrawer } from "@/components/expenses/ExpenseDrawer";
 import { EventDrawer } from "@/components/events/EventDrawer";
@@ -151,7 +151,7 @@ export function TimelineTab({
       key: `ev-${ev.id}`,
       date: ev.startDate,
       tone: "event",
-      badge: EVENT_TYPE_LABELS[ev.type] ?? ev.type,
+      badge: eventBadgeLabel(ev),
       name: ev.name,
       detail: t?.description ?? "",
       excluded: ev.isExcluded ?? false,

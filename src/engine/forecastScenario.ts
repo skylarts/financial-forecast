@@ -27,8 +27,7 @@ import {
   monthColumnLabel,
   todayISO,
   yearOf,
-  yearMonthOf,
-} from "./dateMath";
+  yearMonthOf, monthsBetween } from "./dateMath";
 import { monthlyRateFromAnnual } from "./growth";
 import { rmdDivisor, rmdStartAgeForBirthYear } from "./rmd";
 import { computeMonthlyPayment, amortizeMonth } from "./amortization";
@@ -1036,7 +1035,15 @@ export function forecastScenario(
       if (!account.saleInfo || !account.soldDate || month.slice(0, 7) < account.soldDate.slice(0, 7)) continue;
       const homeValue = balances.get(account.id) ?? 0;
       if (homeValue === 0) continue; // already sold in an earlier month
-      const mortgageBalance = account.linkedLiabilityId ? balances.get(account.linkedLiabilityId) ?? 0 : 0;
+      // Everything secured by this home is paid off at closing: the mortgage
+      // the home links to, plus any lien that links to the home (a HELOC).
+      const lienIds = new Set<Id>();
+      if (account.linkedLiabilityId) lienIds.add(account.linkedLiabilityId);
+      for (const other of accounts) {
+        if (other.category === "liability" && other.loanTerms?.linkedAssetId === account.id) lienIds.add(other.id);
+      }
+      let mortgageBalance = 0;
+      for (const lienId of lienIds) mortgageBalance += balances.get(lienId) ?? 0;
       const proceeds = homeValue * (1 - account.saleInfo.sellingCostsPct) - mortgageBalance;
       const targetId = account.saleInfo.proceedsAccountId ?? primarySpendingAccountId;
       if (targetId && Math.abs(proceeds) > 0.005) {
@@ -1495,7 +1502,24 @@ export function forecastScenario(
       // The remaining balance simply stops amortizing (no sale/payoff is
       // modeled), same simplification as a housing Expense that just stops.
       if (mortgage.paymentEndDate && compareDates(month, mortgage.paymentEndDate) > 0) continue;
-      const step = amortizeMonth(currentBalance, mortgage.loanTerms.annualInterestRatePct, payment);
+      // A line of credit's draw period: interest only, balance untouched. The
+      // month it ends, the payment is re-sized to clear whatever is owed by
+      // then over the repayment term -- so it reflects what was actually drawn,
+      // not the original limit. That sizing must come from the balance at
+      // that moment, which is why it's set here rather than up front.
+      const drawMonths = mortgage.loanTerms.interestOnlyMonths ?? 0;
+      const monthsSinceOrigination = monthsBetween(originationMonth, month.slice(0, 7));
+      const inDrawPeriod = drawMonths > 0 && monthsSinceOrigination <= drawMonths;
+      let scheduledPayment = payment;
+      if (inDrawPeriod) {
+        scheduledPayment = (currentBalance * mortgage.loanTerms.annualInterestRatePct) / 12;
+      } else if (drawMonths > 0 && monthsSinceOrigination === drawMonths + 1) {
+        scheduledPayment =
+          mortgage.loanTerms.monthlyPayment ??
+          computeMonthlyPayment(currentBalance, mortgage.loanTerms.annualInterestRatePct, mortgage.loanTerms.termMonths);
+        mortgagePayments.set(account.id, scheduledPayment);
+      }
+      const step = amortizeMonth(currentBalance, mortgage.loanTerms.annualInterestRatePct, scheduledPayment);
 
       // Extra principal on top of the scheduled payment -- capped at whatever
       // balance is left after the normal step, so the final payment never
@@ -1521,6 +1545,7 @@ export function forecastScenario(
         // otherwise overpay/overcharge a loan that's paying off with less than
         // a full payment remaining.
         const actualPayment = step.interestPortion + principalPortion;
+        const paymentLabel = `${account.class === "mortgage" ? "Mortgage" : "Loan"} payment (${account.name})`;
         // Paying from a non-hub account (a mortgage set to draw on a savings
         // account) can't overdraw it -- whatever that account is short is
         // charged to the hub for the drain order to cover, same as any other
@@ -1534,11 +1559,11 @@ export function forecastScenario(
         const payerBucket = acc.rollforward.get(payerId);
         if (payerBucket) payerBucket.withdrawals += paidFromPayer;
         if (payer && actualPayment - paidFromPayer > 0.005) {
-          chargeShortfallToHub(payer, actualPayment - paidFromPayer, `Mortgage payment (${account.name})`, month);
+          chargeShortfallToHub(payer, actualPayment - paidFromPayer, paymentLabel, month);
         }
         acc.totalExpenses += actualPayment;
         addTo(acc.expenseByItem, account.id, actualPayment);
-        itemLabels.set(account.id, `Mortgage payment (${account.name})`);
+        itemLabels.set(account.id, paymentLabel);
         markFirstDate(account.id, month);
         ledger.push({
           date: month,
@@ -1546,7 +1571,7 @@ export function forecastScenario(
           accountId: payerId,
           toAccountId: account.id,
           amount: actualPayment,
-          note: `Mortgage payment (${account.name})`,
+          note: paymentLabel,
         });
       }
     }

@@ -433,7 +433,7 @@ export function buildLlmExport(scenario: Scenario): string {
           break;
         case "open_loan":
           lines.push(
-            `  - Take out ${formatMoney(ev.principal)} as ${accountName(ev.loanAccountId)} (today's dollars, inflated to the start date). ${
+            `  - ${ev.loanKind === "heloc" ? "Draw" : "Take out"} ${formatMoney(ev.principal)} ${ev.loanKind === "heloc" ? "on" : "as"} ${accountName(ev.loanAccountId)}${ev.loanKind === "heloc" ? " (a home equity line: interest-only through its draw period, then amortized over the repayment period; paid off if the home sells)" : ""} (today's dollars, inflated to the start date). ${
               ev.proceedsAccountId == null
                 ? "The money paid for something outside the plan, so no account receives it -- only the debt and its monthly payments appear."
                 : `The money is deposited into ${accountName(ev.proceedsAccountId)}.`

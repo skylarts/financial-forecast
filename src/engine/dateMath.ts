@@ -95,3 +95,10 @@ export function* eachMonthStart(start: ISODate, end: ISODate): Generator<ISODate
     cursor = addMonths(cursor, 1);
   }
 }
+
+/** Whole months from one 'YYYY-MM' (or ISO date) to another; negative when `to` is earlier. */
+export function monthsBetween(from: string, to: string): number {
+  const [fy, fm] = [Number(from.slice(0, 4)), Number(from.slice(5, 7))];
+  const [ty, tm] = [Number(to.slice(0, 4)), Number(to.slice(5, 7))];
+  return (ty - fy) * 12 + (tm - fm);
+}

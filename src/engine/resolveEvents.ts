@@ -159,6 +159,11 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
     }
     const realEstateAccount = scenario.accounts.find((a) => a.id === event.realEstateAccountId);
     if (realEstateAccount?.linkedLiabilityId) setSoldDate(realEstateAccount.linkedLiabilityId);
+    // Every other lien on this home (a HELOC, a second mortgage) is paid off
+    // at closing too -- they point at the home, the home only points at one.
+    for (const lien of scenario.accounts) {
+      if (lien.category === "liability" && lien.loanTerms?.linkedAssetId === event.realEstateAccountId) setSoldDate(lien.id);
+    }
   }
 
   // Accounts that are excluded from the plan never receive or emit a

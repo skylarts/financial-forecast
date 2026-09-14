@@ -1,4 +1,4 @@
-import type { IncomeCategory, LedgerEvent, TimelineEntryType } from "@/domain";
+import type { ScenarioEvent, IncomeCategory, LedgerEvent, TimelineEntryType } from "@/domain";
 
 export const FREQUENCY_LABELS: Record<string, string> = {
   monthly: "/mo",
@@ -18,6 +18,13 @@ export const INCOME_CATEGORY_BADGES: Record<IncomeCategory, string> = {
   rental: "Rental",
   other: "Income",
 };
+
+/** The Timeline/chart badge for an event. Mostly the type's label; a HELOC is
+ *  an open_loan underneath but reads as its own thing to the person who took it. */
+export function eventBadgeLabel(event: Pick<ScenarioEvent, "type"> & { loanKind?: "fixed" | "heloc" }): string {
+  if (event.type === "open_loan" && event.loanKind === "heloc") return "HELOC";
+  return EVENT_TYPE_LABELS[event.type] ?? event.type;
+}
 
 export const EVENT_TYPE_LABELS: Record<TimelineEntryType, string> = {
   retirement: "Retire",
