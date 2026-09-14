@@ -262,6 +262,24 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
   // sell_home event sells it (zeroed balance -- see EngineAccount.soldDate
   // and forecastScenario's amortization step, which skips once the balance
   // is <= 0 regardless of paymentEndDate).
+  // Refinances, grouped by the loan they replace the terms of and ordered by
+  // date, so the amortization step can ask "which terms are in force this
+  // month" without scanning events. An excluded event changes nothing, same
+  // as everywhere else.
+  const refinancesByLoan = new Map<Id, NonNullable<MortgageSpec["refinances"]>>();
+  for (const event of events) {
+    if (event.type !== "refinance") continue;
+    const list = refinancesByLoan.get(event.loanAccountId) ?? [];
+    list.push({
+      date: event.startDate,
+      annualInterestRatePct: event.annualInterestRatePct,
+      termMonths: event.termMonths,
+      extraPrincipalMonthly: event.extraPrincipalMonthly ?? undefined,
+    });
+    refinancesByLoan.set(event.loanAccountId, list);
+  }
+  for (const list of refinancesByLoan.values()) list.sort((a, b) => compareDates(a.date, b.date));
+
   for (const account of scenario.accounts) {
     if (excludedAccountIds.has(account.id)) continue;
     if ((account.class !== "loan" && account.class !== "mortgage" && account.class !== "credit_card") || !account.loanTerms) continue;
@@ -282,6 +300,7 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
       loanTerms: account.loanTerms,
       payingAccountId: primarySpendingAccountId,
       paymentEndDate: account.class === "mortgage" ? paymentEndDate ?? undefined : undefined,
+      refinances: refinancesByLoan.get(account.id),
     });
   }
 
@@ -795,6 +814,59 @@ export function resolveEvents(scenario: Scenario): ResolvedSchedule {
             category: "transfer", // borrowing money isn't income -- the matching debt is booked alongside it
             label: `Loan proceeds: ${event.name}`,
             sourceId: `${event.id}:proceeds`,
+          });
+        }
+      }
+    } else if (event.type === "refinance") {
+      // The terms change is handled by the amortization step (see
+      // MortgageSpec.refinances). What belongs here is the money: anything
+      // rolled into the new loan grows what is owed, and cash taken out has
+      // to land somewhere.
+      const inflate = (amountToday: number) =>
+        growthAdjustedAmount(amountToday, elapsedYears(settings.startDate, event.startDate), settings.inflationRatePct);
+      const cashOut = inflate(event.cashOutAmount);
+      const closingCosts = inflate(event.closingCosts);
+      const rolledIn = cashOut + (event.closingCostsFinanced ? closingCosts : 0);
+      if (rolledIn > 0.005) {
+        // Negative on a liability is borrowing: the amount owed grows by what
+        // the new loan advances over the old one's balance.
+        pushPosting({
+          date: event.startDate,
+          yearMonth: event.startDate.slice(0, 7),
+          accountId: event.loanAccountId,
+          amount: -rolledIn,
+          category: "transfer",
+          label: `Refinance: ${event.name}`,
+          sourceId: `${event.id}:balance`,
+        });
+      }
+      if (cashOut > 0.005) {
+        const targetId = event.cashOutAccountId ?? primarySpendingAccountId;
+        if (targetId) {
+          pushPosting({
+            date: event.startDate,
+            yearMonth: event.startDate.slice(0, 7),
+            accountId: targetId,
+            amount: cashOut,
+            category: "transfer", // borrowing against equity is not income -- the matching debt is booked alongside it
+            label: `Cash out: ${event.name}`,
+            sourceId: `${event.id}:cashout`,
+          });
+        }
+      }
+      if (!event.closingCostsFinanced && closingCosts > 0.005) {
+        // Paid at the table rather than rolled in: a real cost, so it reads as
+        // an expense in the year it happens instead of vanishing into a balance.
+        const payerId = event.cashOutAccountId ?? primarySpendingAccountId;
+        if (payerId) {
+          pushPosting({
+            date: event.startDate,
+            yearMonth: event.startDate.slice(0, 7),
+            accountId: payerId,
+            amount: -closingCosts,
+            category: "expense",
+            label: `Closing costs: ${event.name}`,
+            sourceId: `${event.id}:closing`,
           });
         }
       }

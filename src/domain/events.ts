@@ -155,6 +155,37 @@ export const openLoanEventSchema = z.object({
 });
 export type OpenLoanEvent = z.infer<typeof openLoanEventSchema>;
 
+/**
+ * Replace a loan's rate and term on a date -- a refinance. The account keeps
+ * its identity and its balance; only the terms change, because that is what a
+ * refinance actually is. Optionally roll closing costs into the balance and
+ * take cash out, both of which grow what is owed.
+ *
+ * It is NOT a new loan account: a plan that pointed at this mortgage (a
+ * pay_off_loan event, a home's linkedLiabilityId) keeps pointing at it.
+ */
+export const refinanceEventSchema = z.object({
+  ...baseEventFields,
+  type: z.literal("refinance"),
+  /** The mortgage or loan being refinanced. */
+  loanAccountId: idSchema,
+  /** The new annual rate, as a fraction (0.055 = 5.5%). */
+  annualInterestRatePct: z.number().min(0).max(1),
+  /** The new term, counted from the refinance date. */
+  termMonths: z.number().int().positive(),
+  /** Today's dollars, inflated to the refinance date. Added to the balance and paid out as cash. */
+  cashOutAmount: z.number().nonnegative().default(0),
+  /** Where the cash-out lands. null = the spending hub. */
+  cashOutAccountId: idSchema.nullable().default(null),
+  /** Today's dollars, inflated to the refinance date. Lender fees, title, points. */
+  closingCosts: z.number().nonnegative().default(0),
+  /** true = rolled into the new balance (the usual "no-cost" refi); false = paid in cash at closing. */
+  closingCostsFinanced: z.boolean().default(true),
+  /** Carried over onto the new loan; blank keeps whatever the loan already had. */
+  extraPrincipalMonthly: z.number().nonnegative().nullable().default(null),
+});
+export type RefinanceEvent = z.infer<typeof refinanceEventSchema>;
+
 export const customTransferEventSchema = z.object({
   ...baseEventFields,
   type: z.literal("custom_transfer"),
@@ -176,6 +207,7 @@ export const scenarioEventSchema = z
     rothConversionEventSchema,
     payOffLoanEventSchema,
     openLoanEventSchema,
+    refinanceEventSchema,
     rolloverEventSchema,
     customTransferEventSchema,
   ])
@@ -187,6 +219,10 @@ export const scenarioEventSchema = z
   .refine((e) => e.type !== "pay_off_loan" || e.fromAccountId !== e.loanAccountId, {
     message: "The two accounts must differ",
     path: ["loanAccountId"],
+  })
+  .refine((e) => e.type !== "refinance" || e.cashOutAccountId !== e.loanAccountId, {
+    message: "Cash taken out can't be deposited into the loan itself",
+    path: ["cashOutAccountId"],
   })
   .refine((e) => e.type !== "open_loan" || e.proceedsAccountId !== e.loanAccountId, {
     message: "The borrowed money can't be deposited into the loan itself",

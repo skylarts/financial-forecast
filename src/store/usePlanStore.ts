@@ -321,6 +321,8 @@ export const usePlanStore = create<PlanState>()(
                 return e.fromAccountId === id || e.toAccountId === id;
               case "pay_off_loan":
                 return e.fromAccountId === id || e.loanAccountId === id;
+              case "refinance":
+                return e.loanAccountId === id || e.cashOutAccountId === id;
               case "open_loan":
                 // Deliberately NOT checking e.loanAccountId -- that account is
                 // owned by this event (removeOpenedLoan in src/lib/openLoan.ts

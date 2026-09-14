@@ -55,6 +55,19 @@ export function buildTimeline(scenario: Scenario): TimelineRow[] {
             : `Borrow $${event.principal.toLocaleString()} as ${accountName(event.loanAccountId)}, ${where}`;
         break;
       }
+      case "refinance": {
+        const years = Math.round(event.termMonths / 12);
+        const extras = [
+          event.cashOutAmount > 0 ? `taking $${event.cashOutAmount.toLocaleString()} out` : null,
+          event.closingCosts > 0
+            ? `$${event.closingCosts.toLocaleString()} closing costs ${event.closingCostsFinanced ? "rolled in" : "paid at closing"}`
+            : null,
+        ].filter(Boolean);
+        description = `Refinance ${accountName(event.loanAccountId)} at ${(event.annualInterestRatePct * 100).toFixed(2)}% over ${years} yrs${
+          extras.length ? `, ${extras.join(", ")}` : ""
+        }`;
+        break;
+      }
       case "pay_off_loan": {
         description = `Pay ${event.amount == null ? "off" : `$${event.amount.toLocaleString()} toward`} ${accountName(event.loanAccountId)} from ${accountName(event.fromAccountId)}`;
         break;
