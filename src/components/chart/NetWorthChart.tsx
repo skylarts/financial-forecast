@@ -22,6 +22,7 @@ import { useUiStore } from "@/store/useUiStore";
 import { usePlanStore } from "@/store/usePlanStore";
 import { buildChartMarkers, type ChartMarker } from "./chartMarkers";
 import { MARKER_TONE_CLASS } from "./eventIcons";
+import { MarkerIcon } from "./MarkerIcon";
 import { MarkerLayoutReporter, type MarkerLayout } from "./MarkerLayoutReporter";
 import { Chip, Segmented } from "@/components/ui/controls";
 import {
@@ -1114,7 +1115,7 @@ export function NetWorthChart({
                         onPointerEnter={() => !drag && setHoverKey(m.key)}
                         onPointerLeave={() => setHoverKey((k) => (k === m.key ? null : k))}
                       >
-                        {m.icon}
+                        <MarkerIcon icon={m.icon} />
                       </div>
                     );
                   })}
@@ -1182,7 +1183,7 @@ export function NetWorthChart({
                   className={`pointer-events-none absolute z-30 flex items-center justify-center rounded-md text-xs shadow-lg ${MARKER_TONE_CLASS[drag.kind]}`}
                   style={{ left: drag.pointerX - ICON_SIZE / 2, top: drag.iconTop, width: ICON_SIZE, height: ICON_SIZE }}
                 >
-                  {markers.find((m) => m.key === drag.key)?.icon}
+                  <MarkerIcon icon={markers.find((m) => m.key === drag.key)?.icon ?? ""} />
                 </div>
               </>
             )}

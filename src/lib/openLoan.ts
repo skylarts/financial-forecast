@@ -23,6 +23,8 @@ export interface OpenLoanInput {
   drawYears: string;
   /** HELOC only: the home it is secured by -- paid off when that home sells. */
   securedByAccountId: string;
+  /** The life-event template this came from, if any -- display only (its chart icon). */
+  templateId?: string;
 }
 
 export const OPEN_LOAN_DEFAULTS: OpenLoanInput = {
@@ -134,6 +136,7 @@ export function openNewLoan(input: OpenLoanInput, settings: { startDate: string;
     principal: principalToday,
     proceedsAccountId: input.proceedsAccountId || null,
     loanKind: input.kind,
+    templateId: input.templateId,
   };
   const eResult = openLoanEventSchema.omit({ id: true }).safeParse(eventCandidate);
   if (!eResult.success) return { ok: false, error: eResult.error.issues[0]?.message ?? "That doesn't look right." };
@@ -181,6 +184,7 @@ export function updateOpenedLoan(
     principal: principalToday,
     proceedsAccountId: input.proceedsAccountId || null,
     loanKind: input.kind,
+    templateId: input.templateId ?? event.templateId,
     isExcluded: event.isExcluded,
     notes: event.notes,
   };

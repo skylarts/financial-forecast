@@ -131,6 +131,7 @@ export function HomeDrawer({
   event,
   accounts,
   initialMode = "existing",
+  templateId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -142,6 +143,8 @@ export function HomeDrawer({
   accounts: Account[];
   /** Only consulted when account is omitted (creating new). */
   initialMode?: Mode;
+  /** The life-event template that opened this, if any -- display only (its chart icon). */
+  templateId?: string;
 }) {
   const settings = usePlanStore((s) => s.activeScenario().settings);
   // A null plan start date means "today, live" -- resolve it here so every
@@ -247,6 +250,7 @@ export function HomeDrawer({
         homeInsuranceRatePct: v.homeInsuranceRatePct,
         maintenanceRatePct: v.maintenanceRatePct,
         replaceHousingExpenses: v.replaceHousingExpenses,
+        templateId,
       };
       result = event
         ? updateBoughtHome(event.id, input, { ...settings, startDate: effectiveStartDate })

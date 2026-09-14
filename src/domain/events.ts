@@ -14,6 +14,8 @@ const baseEventFields = {
    *  the projection. A lighter-weight "what if this didn't happen" toggle
    *  than duplicating a whole scenario. */
   isExcluded: z.boolean().optional(),
+  /** The life-event template this came from -- display only. See income.ts. */
+  templateId: z.string().optional(),
 };
 
 /**

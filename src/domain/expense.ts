@@ -34,5 +34,7 @@ export const expenseBaselineSchema = z.object({
   adjustments: z.array(temporaryAdjustmentSchema).optional(),
   /** Visible and editable, but the engine skips it entirely (no postings). */
   isExcluded: z.boolean().optional(),
+  /** The life-event template this came from -- display only. See income.ts. */
+  templateId: z.string().optional(),
 });
 export type ExpenseBaseline = z.infer<typeof expenseBaselineSchema>;

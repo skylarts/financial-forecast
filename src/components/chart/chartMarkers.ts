@@ -8,8 +8,8 @@ import type {
 } from "@/domain";
 import { retirementsInOrder } from "@/domain";
 import { formatMoney } from "@/lib/format";
-import { eventBadgeLabel, EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES } from "@/lib/timelineFormat";
-import { eventIconFor, EVENT_TYPE_ICONS, EXPENSE_CATEGORY_ICONS, INCOME_CATEGORY_ICONS, type MarkerKind } from "./eventIcons";
+import { eventBadgeLabel, templateBadge, EVENT_TYPE_LABELS, INCOME_CATEGORY_BADGES } from "@/lib/timelineFormat";
+import { eventIconFor, iconForTemplate, EVENT_TYPE_ICONS, EXPENSE_CATEGORY_ICONS, INCOME_CATEGORY_ICONS, type MarkerKind } from "./eventIcons";
 
 export interface MarkerRow {
   label: string;
@@ -226,8 +226,8 @@ export function buildChartMarkers({
       kind: "income",
       year: yearOf(inc.startDate),
       startDate: inc.startDate,
-      icon: INCOME_CATEGORY_ICONS[inc.category],
-      badge: INCOME_CATEGORY_BADGES[inc.category],
+      icon: iconForTemplate(inc.templateId, INCOME_CATEGORY_ICONS[inc.category]),
+      badge: templateBadge(inc.templateId) ?? INCOME_CATEGORY_BADGES[inc.category],
       title: inc.name,
       rows,
     });
@@ -243,8 +243,8 @@ export function buildChartMarkers({
       kind: "expense",
       year: yearOf(exp.startDate),
       startDate: exp.startDate,
-      icon: EXPENSE_CATEGORY_ICONS[exp.category],
-      badge: "Expense",
+      icon: iconForTemplate(exp.templateId, EXPENSE_CATEGORY_ICONS[exp.category]),
+      badge: templateBadge(exp.templateId) ?? "Expense",
       title: exp.name,
       rows,
     });

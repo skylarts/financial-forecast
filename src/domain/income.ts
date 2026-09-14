@@ -50,6 +50,13 @@ export const incomeSourceSchema = z.object({
   /** Visible and editable, but the engine skips it entirely (no postings). */
   isExcluded: z.boolean().optional(),
   /**
+   * The life-event template this was created from (see lifeEventTemplates.ts).
+   * Display only -- the engine never reads it. It is what lets a Wedding show
+   * a ring on the chart instead of the generic Discretionary icon, without
+   * inventing a record type per life event.
+   */
+  templateId: z.string().optional(),
+  /**
    * Social Security / pension only: the age the benefit is claimed at. The
    * engine reads `startDate` (the owner's birthday at this age); this is
    * kept so the form can show the age that produced the date.

@@ -253,6 +253,8 @@ export function EventDrawer({
   const openAssumptions = useAssumptionsStore((s) => s.openAssumptions);
   const planStartDate = usePlanStore((s) => s.activeScenario().settings.startDate) ?? todayISO();
   const [handoff, setHandoff] = useState<Handoff | null>(null);
+  /** Which life-event template opened this form, kept so the saved event can show its own icon. */
+  const [pickedTemplateId, setPickedTemplateId] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState("");
   const addEvent = usePlanStore((s) => s.addEvent);
   const updateEvent = usePlanStore((s) => s.updateEvent);
@@ -282,6 +284,7 @@ export function EventDrawer({
   useEffect(() => {
     setHandoff(null);
     setQuery("");
+    setPickedTemplateId(event?.templateId);
     setSelectedType(event?.type ?? null);
     reset(event ? eventToFormValues(event) : DEFAULTS);
     setStartAnchor(event?.startAnchor ?? null);
@@ -320,7 +323,7 @@ export function EventDrawer({
     const buyEvent = event?.type === "buy_home" ? event : undefined;
     const linkedAccount = buyEvent ? accounts.find((a) => a.id === buyEvent.realEstateAccountId) : undefined;
     return (
-      <HomeDrawer open={open} onClose={onClose} account={linkedAccount} event={buyEvent} accounts={accounts} initialMode="buy" />
+      <HomeDrawer open={open} onClose={onClose} account={linkedAccount} event={buyEvent} accounts={accounts} initialMode="buy" templateId={pickedTemplateId} />
     );
   }
   if (selectedType === "income") {
@@ -341,6 +344,7 @@ export function EventDrawer({
         accounts={accounts}
         initialMode="new"
         initialKind={selectedType === "heloc" ? "heloc" : "fixed"}
+        templateId={pickedTemplateId}
       />
     );
   }
@@ -355,6 +359,7 @@ export function EventDrawer({
     const resolved = resolveTemplate(template, { people, accounts, planStartDate });
     switch (resolved.kind) {
       case "event":
+        setPickedTemplateId(resolved.templateId);
         chooseTemplate(resolved.type);
         return;
       case "income":
@@ -431,6 +436,7 @@ export function EventDrawer({
   const onSubmit = (v: FormValues) => {
     if (!selectedType) return;
     const base = {
+      templateId: pickedTemplateId,
       name: v.name.trim(),
       startDate: v.startDate,
       isExcluded: v.isExcluded,

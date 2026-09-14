@@ -235,6 +235,10 @@ export function IncomeDrawer({
       category: values.category,
       adjustments,
       isExcluded: values.isExcluded,
+      // Display only: which life-event template this came from, so the chart
+      // and Timeline can show its own icon instead of the category's. Kept on
+      // edit so re-saving a templated item doesn't turn it generic.
+      templateId: income?.templateId ?? seed?.templateId,
       claimAge: benefit && values.claimAge.trim() !== "" ? Number(values.claimAge) : undefined,
       survivorPct: values.category === "pension" ? percentStrToFraction(values.survivorPct) ?? undefined : undefined,
     };

@@ -21,6 +21,8 @@ export interface BuyHomeInput {
   homeInsuranceRatePct: string;
   maintenanceRatePct: string;
   replaceHousingExpenses: boolean;
+  /** The life-event template this came from, if any -- display only (its chart icon). */
+  templateId?: string;
 }
 
 export const BUY_HOME_DEFAULTS: BuyHomeInput = {
@@ -149,6 +151,7 @@ export function buyNewHome(input: BuyHomeInput, settings: { startDate: string; i
     downPaymentFromAccountId: input.downPaymentFromAccountId,
     realEstateAccountId: realEstateAccount.id,
     replaceHousingExpenses: input.replaceHousingExpenses,
+    templateId: input.templateId,
   };
   const eResult = buyHomeEventSchema.omit({ id: true }).safeParse(eventCandidate);
   if (!eResult.success) return { ok: false, error: eResult.error.issues[0]?.message ?? "That doesn't look right." };
@@ -263,6 +266,7 @@ export function updateBoughtHome(
     downPaymentFromAccountId: input.downPaymentFromAccountId,
     realEstateAccountId: realEstateAccount.id,
     replaceHousingExpenses: input.replaceHousingExpenses,
+    templateId: input.templateId ?? event.templateId,
   };
   const eResult = buyHomeEventSchema.omit({ id: true }).safeParse(eventCandidate);
   if (!eResult.success) return { ok: false, error: eResult.error.issues[0]?.message ?? "That doesn't look right." };
