@@ -7,6 +7,7 @@ import { formatMoney, type DollarMode } from "@/lib/format";
 import { DEFAULT_STRESS_PARAMS, STRESS_GROUP_LABELS, retirementYearOf, type StressGroup, type StressKey, type StressParams } from "@/engine/stress";
 import { netWorthIn, summarizeProjection, yearsOfSpendingCovered, type StressSummary } from "@/engine/stressSummary";
 import { useStressAnalysis, type StressRow } from "@/store/useStress";
+import { MonteCarloPanel } from "./MonteCarloPanel";
 import { useUiStore } from "@/store/useUiStore";
 import { InfoTooltip, inputClass } from "@/components/ui/formFields";
 
@@ -359,6 +360,8 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
         </table>
         {baseRetire === null && <p className="border-t border-border px-4 py-2 text-[11px] text-dim-2">Set a retirement age on a person to see each test at retirement.</p>}
       </div>
+
+      <MonteCarloPanel scenario={scenario} base={base} real={real} ready={!running} retirementYear={retirementYear} />
 
       <div className="rounded-xl border border-border bg-panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
