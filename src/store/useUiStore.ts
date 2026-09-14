@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { DEFAULT_STRESS_PARAMS, STRESS_PRESETS, type StressKey, type StressParams } from "@/engine/stress";
+import { DEFAULT_MONTE_CARLO_PARAMS, type MonteCarloParams } from "@/engine/monteCarlo";
 
 export type Theme = "dark" | "joy";
 
@@ -34,6 +35,9 @@ interface UiState {
   /** How hard each stress preset hits; shared by the chart overlay and the Stress test tab. */
   stressParams: StressParams;
   setStressParams: (params: StressParams) => void;
+  /** How the Monte Carlo panel draws its random futures. */
+  monteCarloParams: MonteCarloParams;
+  setMonteCarloParams: (params: MonteCarloParams) => void;
 }
 
 /** UI-only preferences (not part of a financial plan), persisted separately. */
@@ -55,6 +59,8 @@ export const useUiStore = create<UiState>()(
       setStressOverlay: (key) => set({ stressOverlay: key }),
       stressParams: DEFAULT_STRESS_PARAMS,
       setStressParams: (params) => set({ stressParams: params }),
+      monteCarloParams: DEFAULT_MONTE_CARLO_PARAMS,
+      setMonteCarloParams: (params) => set({ monteCarloParams: params }),
     }),
     {
       name: "forecast-ui",
@@ -65,6 +71,7 @@ export const useUiStore = create<UiState>()(
         accountsExpanded: s.accountsExpanded,
         stressOverlay: s.stressOverlay,
         stressParams: s.stressParams,
+        monteCarloParams: s.monteCarloParams,
       }),
       /**
        * A saved copy of the stress parameters may be missing one a newer
@@ -81,9 +88,18 @@ export const useUiStore = create<UiState>()(
           const value = saved[key];
           if (typeof value === "number" && Number.isFinite(value)) stressParams[key] = value;
         }
+        // Same treatment for the Monte Carlo settings: numbers and the model
+        // name are kept only where they still make sense.
+        const savedMc = (p.monteCarloParams ?? {}) as Partial<MonteCarloParams>;
+        const monteCarloParams = { ...DEFAULT_MONTE_CARLO_PARAMS };
+        for (const key of ["paths", "volatility", "equityShare", "seed"] as const) {
+          const value = savedMc[key];
+          if (typeof value === "number" && Number.isFinite(value)) monteCarloParams[key] = value;
+        }
+        if (savedMc.model === "history" || savedMc.model === "normal") monteCarloParams.model = savedMc.model;
         // A preset that no longer exists can't be drawn on the chart.
         const overlay = p.stressOverlay && STRESS_PRESETS.some((x) => x.key === p.stressOverlay) ? p.stressOverlay : null;
-        return { ...current, ...p, stressOverlay: overlay, stressParams };
+        return { ...current, ...p, stressOverlay: overlay, stressParams, monteCarloParams };
       },
     }
   )
