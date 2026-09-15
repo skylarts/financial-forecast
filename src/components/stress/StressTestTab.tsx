@@ -178,6 +178,7 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
     const isOpen = open.has(r.key);
     const drawn = onChart.has(r.key);
     const shortfall = s?.firstShortfallYear ?? null;
+    const improvised = s?.firstImprovisedYear ?? null;
     const depth = s ? (real ? s.shortfallDepthReal : s.shortfallDepthNominal) : 0;
     const knobs = knobsFor(r.key);
     const retire = s ? netWorthIn(s, retirementYear, real) : null;
@@ -191,8 +192,15 @@ export function StressTestTab({ scenario, projection, dollarMode }: { scenario: 
             </div>
           </td>
           <td className={`px-3 py-2 whitespace-nowrap ${!s ? "" : shortfall === null ? "text-positive" : "text-negative"}`}>
-            {!s ? <Pending /> : shortfall === null ? "End of plan" : `Short in ${shortfall}`}
+            {!s ? <Pending /> : shortfall !== null ? `Short in ${shortfall}` : "End of plan"}
             {s && shortfall !== null && depth > 0 && <span className="ml-1 text-[11px] text-dim-2">by {formatMoney(depth)}</span>}
+            {/* The plan held, but only because the engine reached past the
+                drain order to do it. Worth saying: the money was there, the
+                routing could not get at it -- which is a fixable problem, and
+                a different one from running out. */}
+            {s && shortfall === null && improvised !== null && (
+              <span className="ml-1 text-[11px] text-dim-2">improvising from {improvised}</span>
+            )}
           </td>
           <td className="px-3 py-2 text-right font-mono tabular-nums">{!s ? <Pending /> : <Delta value={netWorthIn(s, baseEndYear, real)} base={baseEnd} />}</td>
           <td className="px-3 py-2 text-[12px]">

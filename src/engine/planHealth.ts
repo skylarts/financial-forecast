@@ -15,10 +15,27 @@ export function firstShortfallYear(result: Pick<ProjectionResult, "warnings">): 
   return first;
 }
 
-/** "End of plan" or "Runs short in 2063". */
+/**
+ * The first year the withdrawal routing could not reach money that existed,
+ * so the engine had to raid an account outside the plan. Null when the plan
+ * was followed as written. This is the softer of the two signals: the
+ * household kept paying its bills, but not the way it meant to.
+ */
+export function firstImprovisedYear(result: Pick<ProjectionResult, "warnings">): number | null {
+  let first: number | null = null;
+  for (const w of result.warnings) {
+    if (w.kind !== "unplanned_withdrawal") continue;
+    if (first === null || w.year < first) first = w.year;
+  }
+  return first;
+}
+
+/** "End of plan", "Improvises from 2049" or "Runs short in 2063". */
 export function holdsThroughLabel(result: Pick<ProjectionResult, "warnings">): string {
   const year = firstShortfallYear(result);
-  return year === null ? "End of plan" : `Runs short in ${year}`;
+  if (year !== null) return `Runs short in ${year}`;
+  const improvised = firstImprovisedYear(result);
+  return improvised === null ? "End of plan" : `Improvises from ${improvised}`;
 }
 
 /** Account classes a household can actually spend from (a home is not spending money). */

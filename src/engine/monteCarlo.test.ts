@@ -68,6 +68,7 @@ describe("fan summary", () => {
     netWorthAtEnd: end * 3,
     netWorthAtEndReal: end * 3 * 0.9,
     firstShortfallYear: shortYear,
+    firstImprovisedYear: null,
     shortfallDepthNominal: 0,
     shortfallDepthReal: 0,
     lowestReal: { year: 2026, value: end * 0.9 },

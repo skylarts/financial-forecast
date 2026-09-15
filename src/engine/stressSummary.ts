@@ -1,5 +1,5 @@
 import type { Account, ProjectionResult } from "@/domain";
-import { firstShortfallYear } from "./planHealth";
+import { firstImprovisedYear, firstShortfallYear } from "./planHealth";
 
 /**
  * The slice of a projection the stress tests read: net worth by year, where
@@ -25,6 +25,12 @@ export interface StressSummary {
   netWorthAtEndReal: number;
   /** The first year the household could not cover its spending, or null when the plan holds. */
   firstShortfallYear: number | null;
+  /**
+   * The first year the drain order could not reach money that existed, so an
+   * account outside it was raided. The plan held; the routing did not. Null
+   * when the plan was followed as written.
+   */
+  firstImprovisedYear: number | null;
   /**
    * How far below zero the household's cash is driven, at its worst year
    * end -- the size of the hole, not just the year it opens. 0 when the
@@ -68,6 +74,7 @@ export function summarizeProjection(result: ProjectionResult): StressSummary {
     netWorthAtEnd: result.kpis.netWorthAtEnd,
     netWorthAtEndReal: result.kpis.netWorthAtEndReal,
     firstShortfallYear: firstShortfallYear(result),
+    firstImprovisedYear: firstImprovisedYear(result),
     shortfallDepthNominal,
     shortfallDepthReal,
     lowestReal: Number.isFinite(lowestReal.value) ? lowestReal : { year: 0, value: 0 },

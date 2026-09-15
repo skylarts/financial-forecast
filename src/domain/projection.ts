@@ -327,7 +327,12 @@ export interface ProjectionWarning {
     | "frozen_floor"
     /** Money routed into an account that could not legally receive it then
      *  (an IRA with no earned income, an HSA on Medicare). */
-    | "ineligible_contribution";
+    | "ineligible_contribution"
+    /** The drain order could not cover a bill, so an asset outside it (or
+     *  below its floor) was raided. The plan held, but not the way it was
+     *  written -- distinct from insufficient_funds, which now means the
+     *  household genuinely ran out. */
+    | "unplanned_withdrawal";
   message: string;
   accountId?: Id;
 }

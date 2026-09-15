@@ -73,9 +73,15 @@ describe("withdrawal strategy presets", () => {
       });
     const preset = forecastScenario(build("conventional"));
     const custom = forecastScenario(build("custom"));
-    expect(firstShortfallYear(custom)).toBe(2026);
+    // Neither household runs out -- both have the same money. The difference
+    // is whether spending it was PLANNED: the preset derives an order from
+    // the accounts, while an empty custom order describes nothing, so every
+    // dollar it spends is an improvisation the plan reports.
+    expect(firstShortfallYear(custom)).toBeNull();
     expect(firstShortfallYear(preset)).toBeNull();
     expect(holdsThroughLabel(preset)).toBe("End of plan");
+    expect(custom.warnings.some((w) => w.kind === "unplanned_withdrawal")).toBe(true);
+    expect(preset.warnings.some((w) => w.kind === "unplanned_withdrawal")).toBe(false);
     // Conventional: checking first, then the brokerage; the IRA is untouched
     // while the brokerage can still pay.
     const y = preset.years[0];

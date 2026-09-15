@@ -1912,9 +1912,14 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       },
     });
     const result = forecastScenario(scenario);
-    expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.year === 2026)).toBe(true);
-    // 2027 onward the IRA is active and catches up: 2026's whole accumulated
-    // shortfall ($12k) plus all of 2027's own shortfall ($12k) = $24k drawn.
+    // The household is not broke -- the IRA is simply not an active source
+    // yet. Last resort reaches it and says so, rather than letting the hub go
+    // negative and reporting a shortfall that never happened.
+    expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.year === 2026)).toBe(false);
+    const improvised = result.warnings.find((w) => w.kind === "unplanned_withdrawal" && w.year === 2026);
+    expect(improvised?.accountId).toBe(ira.id);
+    expect(improvised?.message).toContain("not an active source");
+    // Either way the same $24k comes out of the IRA across the two years.
     const y2027 = result.years.find((y) => y.year === 2027)!;
     expect(y2027.accountBalances[ira.id]).toBeCloseTo(200_000 - 24_000, 0);
     expect(y2027.accountBalances[checking.id]).toBeCloseTo(0, 0);
@@ -2190,8 +2195,16 @@ describe("forecastScenario -- drain order date windows and splitting", () => {
       },
     });
     const result = forecastScenario(scenario);
-    expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.year === 2026)).toBe(true);
-    expect(result.years[0].accountBalances[brokerage.id]).toBeCloseTo(100_000, 0);
+    // The floor stops the PLANNED cascade at $100k, but $100k of real money is
+    // still sitting there, so the household has not run out -- it has broken
+    // its own rule. That is an unplanned withdrawal, not insolvency.
+    expect(result.warnings.some((w) => w.kind === "insufficient_funds" && w.year === 2026)).toBe(false);
+    const improvised = result.warnings.find((w) => w.kind === "unplanned_withdrawal" && w.year === 2026);
+    expect(improvised?.accountId).toBe(brokerage.id);
+    expect(improvised?.message).toContain("floor or per-period limit");
+    // $110k of brokerage against a $60k bill: the floor is breached, and what
+    // is left is the $50k the floor was protecting minus nothing else to pay.
+    expect(result.years[0].accountBalances[brokerage.id]).toBeCloseTo(50_000, 0);
   });
 });
 
@@ -2237,8 +2250,14 @@ describe("forecastScenario -- split order date windows and floor growth override
         balanceFloor: 100_000,
         balanceFloorGrowthRatePct,
       });
+      // A second, unfloored source sits BELOW the brokerage in the order, so
+      // whatever the floor refuses spills there and gets covered normally.
+      // Without it the last-resort tier would breach the floor to keep the
+      // plan solvent, and the two floors would both end at zero -- which is
+      // correct behaviour but makes this particular difference unobservable.
+      const backup = makeAccount({ class: "cash", name: "Backup", startingBalance: 500_000, growthRatePct: 0 });
       const scenario = makeScenario({
-        accounts: [checking, brokerage],
+        accounts: [checking, brokerage, backup],
         expenses: [makeExpense({ paymentAccountId: checking.id, amount: 50_000 / 12 })], // ~$50k/yr shortfall
         startDate: "2026-01-01",
         horizonEndDate: "2027-12-31",
@@ -2247,6 +2266,7 @@ describe("forecastScenario -- split order date windows and floor growth override
           splitOrder: [],
           drainOrder: [
             { id: nanoid(), accountId: brokerage.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: null, minBalanceGrowthRatePct: null },
+            { id: nanoid(), accountId: backup.id, startDate: null, endDate: null, kind: "percent_of_remainder", amount: null, pct: 1, minBalance: null, minBalanceGrowthRatePct: null },
           ],
         },
       });
