@@ -39,9 +39,12 @@ export const dateAnchorFields = {
   endAnchor: dateAnchorSchema.nullable().optional(),
 };
 
-/** Anything the resolver can rewrite: it only ever touches these two fields. */
+/** Anything the resolver can rewrite: it only ever touches these two fields.
+ *  `startDate` is nullable so routing stops (where null means "from the plan's
+ *  start") fit without a separate code path -- an anchor that resolves always
+ *  replaces it, and one that can't leaves whatever was there. */
 type Anchorable = {
-  startDate: ISODate;
+  startDate: ISODate | null;
   endDate?: ISODate | null;
   startAnchor?: DateAnchor | null;
   endAnchor?: DateAnchor | null;
@@ -96,6 +99,8 @@ export function resolveAnchoredDates<
     incomeSources: Anchorable[];
     expenses: Anchorable[];
     events: Anchorable[];
+    /** Optional so partial fixtures (and any caller predating routing anchors) still work. */
+    settings?: { moneyFlow?: { splitOrder?: Anchorable[]; drainOrder?: Anchorable[] } };
   },
 >(scenario: T): T {
   const people = scenario.household.people;
@@ -111,9 +116,27 @@ export function resolveAnchoredDates<
   const incomeSources = mapped(scenario.incomeSources);
   const expenses = mapped(scenario.expenses);
   const events = mapped(scenario.events);
+  // Routing windows are anchored too: a drain stop that opens "at Skylar's
+  // retirement" has to follow him, or the money it guards is locked behind a
+  // date that stopped meaning anything the moment the age changed.
+  const moneyFlow = scenario.settings?.moneyFlow;
+  const splitOrder = moneyFlow?.splitOrder ? mapped(moneyFlow.splitOrder) : undefined;
+  const drainOrder = moneyFlow?.drainOrder ? mapped(moneyFlow.drainOrder) : undefined;
 
   if (!changed) return scenario;
-  return { ...scenario, incomeSources, expenses, events };
+  const next = { ...scenario, incomeSources, expenses, events };
+  if (!moneyFlow) return next;
+  return {
+    ...next,
+    settings: {
+      ...scenario.settings,
+      moneyFlow: {
+        ...moneyFlow,
+        ...(splitOrder ? { splitOrder } : {}),
+        ...(drainOrder ? { drainOrder } : {}),
+      },
+    },
+  };
 }
 
 /** How many dated fields in a scenario follow this person's retirement -- the "if I move this, N things move" count. */
@@ -122,10 +145,17 @@ export function countAnchorsToPerson(
     incomeSources: Anchorable[];
     expenses: Anchorable[];
     events: Anchorable[];
+    settings?: { moneyFlow?: { splitOrder?: Anchorable[]; drainOrder?: Anchorable[] } };
   },
   personId: string
 ): number {
-  const items: Anchorable[] = [...scenario.incomeSources, ...scenario.expenses, ...scenario.events];
+  const items: Anchorable[] = [
+    ...scenario.incomeSources,
+    ...scenario.expenses,
+    ...scenario.events,
+    ...(scenario.settings?.moneyFlow?.splitOrder ?? []),
+    ...(scenario.settings?.moneyFlow?.drainOrder ?? []),
+  ];
   let count = 0;
   for (const item of items) {
     if (item.startAnchor?.personId === personId) count += 1;

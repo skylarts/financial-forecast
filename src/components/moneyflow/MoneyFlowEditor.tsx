@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { nanoid } from "nanoid";
-import type { Account, FlowLimitPeriod, ForecastSettings, LedgerEvent, MoneyFlow, WithdrawalStrategy } from "@/domain";
+import type { Account, DateAnchor, FlowLimitPeriod, ForecastSettings, LedgerEvent, MoneyFlow, Person, WithdrawalStrategy } from "@/domain";
 import { forecastSettingsSchema } from "@/domain";
 import { ErrorBanner, InfoTooltip, MoneyInput, PercentInput } from "@/components/ui/formFields";
+import { AnchoredDateInput } from "@/components/ui/AnchoredDate";
 import { fractionToPercentStr, percentStrToFraction, moneyToStr, moneyStrToNumber } from "@/lib/inputFormat";
 import { usePlanStore } from "@/store/usePlanStore";
 import {
@@ -32,6 +33,7 @@ const PRESET_KEYS: WithdrawalStrategy[] = ["conventional", "tax_deferred_first",
  */
 export function MoneyFlowEditor({ accounts, settings, ledger = [] }: { accounts: Account[]; settings: ForecastSettings; ledger?: LedgerEvent[] }) {
   const updateSettings = usePlanStore((s) => s.updateSettings);
+  const people = usePlanStore((s) => s.activeScenario().household.people);
   const [error, setError] = useState<string | null>(null);
   // Which stops have their limit and date-window controls unfolded.
   const [openStops, setOpenStops] = useState<Set<string>>(new Set());
@@ -266,6 +268,9 @@ export function MoneyFlowEditor({ accounts, settings, ledger = [] }: { accounts:
                 <ActiveWindowFields
                   startDate={stop.startDate ?? ""}
                   endDate={stop.endDate ?? ""}
+                  startAnchor={stop.startAnchor ?? null}
+                  endAnchor={stop.endAnchor ?? null}
+                  people={people}
                   onChange={(patch) => updateSplitStop(stop.id, patch)}
                 />
               </div>
@@ -421,6 +426,9 @@ export function MoneyFlowEditor({ accounts, settings, ledger = [] }: { accounts:
                 <ActiveWindowFields
                   startDate={stop.startDate ?? ""}
                   endDate={stop.endDate ?? ""}
+                  startAnchor={stop.startAnchor ?? null}
+                  endAnchor={stop.endAnchor ?? null}
+                  people={people}
                   onChange={(patch) => updateDrainStop(stop.id, patch)}
                 />
               </div>
@@ -549,33 +557,46 @@ function ShareInput({ value, onCommit }: { value: number | null; onCommit: (pct:
 function ActiveWindowFields({
   startDate,
   endDate,
+  startAnchor,
+  endAnchor,
+  people,
   onChange,
 }: {
   startDate: string;
   endDate: string;
-  onChange: (patch: { startDate?: string | null; endDate?: string | null }) => void;
+  startAnchor: DateAnchor | null;
+  endAnchor: DateAnchor | null;
+  people: readonly Person[];
+  onChange: (patch: {
+    startDate?: string | null;
+    endDate?: string | null;
+    startAnchor?: DateAnchor | null;
+    endAnchor?: DateAnchor | null;
+  }) => void;
 }) {
-  const box =
-    "w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground sm:w-auto";
   const blank = (value: string) => (value === "" ? null : value);
   return (
-    <div className="grid w-full grid-cols-2 items-end gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
-      <label className="min-w-0 sm:flex sm:items-center sm:gap-1">
-        <span className="mb-0.5 block sm:mb-0">Start</span>
-        <input
-          className={box}
-          type="date"
-          value={startDate}
-          onChange={(e) => onChange({ startDate: blank(e.target.value) })}
+    <div className="grid w-full grid-cols-2 items-start gap-2 sm:flex sm:w-auto sm:gap-3">
+      <label className="flex min-w-0 flex-col gap-1 sm:w-48">
+        <span>Start</span>
+        <AnchoredDateInput
+          controlled={{ value: startDate, onChange: (v) => onChange({ startDate: blank(v) }) }}
+          anchor={startAnchor}
+          onAnchorChange={(a) => onChange({ startAnchor: a })}
+          onResolve={(d) => onChange({ startDate: d })}
+          people={people}
+          kind="start"
         />
       </label>
-      <label className="min-w-0 sm:flex sm:items-center sm:gap-1">
-        <span className="mb-0.5 block sm:mb-0">End</span>
-        <input
-          className={box}
-          type="date"
-          value={endDate}
-          onChange={(e) => onChange({ endDate: blank(e.target.value) })}
+      <label className="flex min-w-0 flex-col gap-1 sm:w-48">
+        <span>End</span>
+        <AnchoredDateInput
+          controlled={{ value: endDate, onChange: (v) => onChange({ endDate: blank(v) }) }}
+          anchor={endAnchor}
+          onAnchorChange={(a) => onChange({ endAnchor: a })}
+          onResolve={(d) => onChange({ endDate: d })}
+          people={people}
+          kind="end"
         />
       </label>
     </div>

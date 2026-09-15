@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import type React from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
 import {
   ANCHOR_OFFSET_OPTIONS,
@@ -25,6 +26,7 @@ import { inputClass } from "./formFields";
  */
 export function AnchoredDateInput({
   reg,
+  controlled,
   anchor,
   onAnchorChange,
   onResolve,
@@ -32,7 +34,10 @@ export function AnchoredDateInput({
   kind,
   defaultPersonId,
 }: {
-  reg: UseFormRegisterReturn;
+  /** react-hook-form registration, for the drawers. Omit when passing `controlled`. */
+  reg?: UseFormRegisterReturn;
+  /** Plain controlled value, for editors that don't use react-hook-form (the routing rows). */
+  controlled?: { value: string; onChange: (value: string) => void };
   anchor: DateAnchor | null;
   onAnchorChange: (anchor: DateAnchor | null) => void;
   /** Called with the date the link resolves to, so the caller can write it into the form. */
@@ -44,6 +49,11 @@ export function AnchoredDateInput({
   defaultPersonId?: string | null;
 }) {
   const resolved = anchor ? (kind === "end" ? resolveEndAnchor(anchor, people) : resolveAnchor(anchor, people)) : null;
+  // One shape for the <input> whichever way the caller drives it.
+  const inputProps = reg ?? {
+    value: controlled?.value ?? "",
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => controlled?.onChange(e.target.value),
+  };
   // Someone modelled as never retiring has no date to follow, so they are not
   // offered as a choice -- linking to them would silently resolve to nothing.
   const retiring = people.filter((p) => retirementDateOf(p) !== null);
@@ -58,10 +68,10 @@ export function AnchoredDateInput({
   }, [resolved]);
 
   if (!anchor) {
-    if (retiring.length === 0) return <input {...reg} type="date" className={inputClass} />;
+    if (retiring.length === 0) return <input {...inputProps} type="date" className={inputClass} />;
     return (
       <>
-        <input {...reg} type="date" className={inputClass} />
+        <input {...inputProps} type="date" className={inputClass} />
         <button
           type="button"
           onClick={() =>
@@ -83,7 +93,7 @@ export function AnchoredDateInput({
 
   return (
     <>
-      <input {...reg} type="date" readOnly tabIndex={-1} className={`${inputClass} cursor-not-allowed opacity-60`} />
+      <input {...inputProps} type="date" readOnly tabIndex={-1} className={`${inputClass} cursor-not-allowed opacity-60`} />
       <div className="flex flex-col gap-1 rounded-md border border-accent/40 bg-accent/5 p-1.5">
         {/* Stacked, not side by side: these sit inside a half-width column in
             a two-date FieldRow, where two selects on one line truncate their
