@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import { idSchema, isoDateSchema } from "./common";
+import { dateAnchorFields } from "./anchor";
 
 /**
  * The window a routing stop's `limitAmount` is measured over. Deliberately
@@ -49,6 +50,8 @@ export const splitStopSchema = z.object({
   startDate: isoDateSchema.nullable().default(null),
   /** null = active through the plan's end. */
   endDate: isoDateSchema.nullable().default(null),
+  /** When set, the dates above are recomputed from a retirement instead of typed. */
+  ...dateAnchorFields,
   /**
    * DEPRECATED -- the target account's `balanceCeiling` replaced this. Still
    * parsed so plans saved before the move keep loading; scenarioSchema's
@@ -109,6 +112,16 @@ export const drainStopSchema = z.object({
   startDate: isoDateSchema.nullable().default(null),
   /** null = active through the plan's end. */
   endDate: isoDateSchema.nullable().default(null),
+  /**
+   * When set, the dates above are recomputed from a retirement instead of
+   * typed. This is what most drain windows actually mean: a 457 opens when its
+   * owner separates from service, a 401(k) at 55 opens the day they retire.
+   * Typed dates silently go stale the moment a retirement age moves -- and the
+   * "Forced to stop working early" stress test moves it on every run, so a
+   * plan whose gates were typed reports a shortfall with the money sitting
+   * right there, locked behind a date that no longer means anything.
+   */
+  ...dateAnchorFields,
   /**
    * DEPRECATED -- the source account's `balanceFloor` replaced this. Still
    * parsed so plans saved before the move keep loading; scenarioSchema's
