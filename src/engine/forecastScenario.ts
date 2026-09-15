@@ -18,6 +18,7 @@ import { retirementsInOrder } from "@/domain";
 import {
   addMonths,
   ageOn,
+  birthdayAtAge,
   compareDates,
   eachMonthStart,
   elapsedYears,
@@ -35,7 +36,7 @@ import { resolveEvents } from "./resolveEvents";
 import { resolvePrimarySpendingAccountId } from "./moneyFlow";
 import { effectiveOwnerOn, filingStatusForYear, survivorsOn } from "./household";
 import { healthcareChargesForMonth } from "./healthcare";
-import { deriveDrainOrder, drainTierOf } from "./strategy";
+import { deriveDrainOrder, drainTierOf, unreachableAccounts } from "./strategy";
 import type { EngineAccount, MortgageSpec, Posting } from "./types";
 import type { TaxBracket } from "./taxTables";
 import {
@@ -2286,6 +2287,81 @@ export function forecastScenario(
       accountId: d.id,
       message: `${d.name} has a balance but no interest rate/term -- it will sit frozen (no interest, no payments) until you add loan details.`,
     });
+  }
+
+  // --- Plan-health checks the simulation itself can't raise -------------
+  // These three describe money the plan can never actually use, or money it
+  // moved that the real world wouldn't allow. None of them make an account go
+  // negative, so nothing above would have flagged them.
+  const finalYear = years[years.length - 1];
+  if (finalYear) {
+    const yearsToEnd = Math.max(0, yearOf(finalYear.date) - startYear);
+
+    // 1. Assets no drain stop lists: they can grow forever and still never
+    //    cover a shortfall. Only meaningful for a hand-built order -- a preset
+    //    derives its order from the accounts, so nothing can be missing.
+    if (settings.withdrawalStrategy === "custom") {
+      for (const a of unreachableAccounts(moneyFlow.drainOrder, activeAccounts)) {
+        const ending = finalYear.accountBalances[a.id] ?? 0;
+        if (ending < 1) continue;
+        warnings.unshift({
+          year: yearOf(finalYear.date),
+          kind: "stranded_account",
+          accountId: a.id,
+          message: `${a.name} is not in your withdrawal order, so it can never cover a shortfall -- ${Math.round(ending).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} is unreachable at the end of the plan. Add it to the drain order (with a start date if it has an age restriction) or exclude it.`,
+        });
+      }
+    }
+
+    // 2. A floor the balance can never climb back over. The floor grows at its
+    //    own rate whether or not the balance does, so once the balance is at
+    //    (or under) it, that money is locked for good.
+    for (const a of activeAccounts) {
+      if (a.balanceFloor == null || a.category !== "asset") continue;
+      const floor = effectiveBalanceFloor(a, yearsToEnd, settings.inflationRatePct);
+      const ending = finalYear.accountBalances[a.id] ?? 0;
+      if (floor <= 0 || ending > floor * 1.001) continue;
+      const floorRate = a.balanceFloorGrowthRatePct ?? settings.inflationRatePct;
+      const outruns = floorRate > (a.growthRatePct ?? 0) + 1e-9;
+      warnings.unshift({
+        year: yearOf(finalYear.date),
+        kind: "frozen_floor",
+        accountId: a.id,
+        message:
+          `${a.name} ends the plan at its own floor, so ${Math.round(floor).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })} can never be spent` +
+          (outruns
+            ? ` -- and the floor grows at ${(floorRate * 100).toFixed(1)}%/yr while the account grows at ${(((a.growthRatePct ?? 0)) * 100).toFixed(1)}%/yr, so it outruns the balance. Pin the floor's growth rate to the account's own rate, or clear it.`
+            : `. That is what a floor is for -- but if this account was meant to be drawn down, clear its floor.`),
+      });
+    }
+
+    // 3. Money routed somewhere the real world wouldn't allow. An IRA needs
+    //    earned income; an HSA needs an HDHP and is barred from age 65.
+    const lastSalaryEnd = scenario.incomeSources
+      .filter((i) => i.category === "salary" && !i.isExcluded)
+      .map((i) => i.endDate)
+      .reduce<string | null>((latest, d) => (d == null ? latest : latest == null || d > latest ? d : latest), null);
+    const earliest65 = scenario.household.people
+      .map((p) => birthdayAtAge(p.birthDate, 65))
+      .reduce<string | null>((e, d) => (e == null || d < e ? d : e), null);
+    for (const stop of moneyFlow.splitOrder) {
+      const a = accountById.get(stop.accountId);
+      if (!a || a.isExcluded) continue;
+      const isHsa = a.class === "hsa";
+      const needsEarnedIncome = isHsa || a.class === "tax_free";
+      if (!needsEarnedIncome) continue;
+      const limit = isHsa && earliest65 && (!lastSalaryEnd || earliest65 < lastSalaryEnd) ? earliest65 : lastSalaryEnd;
+      if (!limit) continue;
+      if (stop.endDate != null && stop.endDate <= limit) continue;
+      warnings.unshift({
+        year: yearOf(limit),
+        kind: "ineligible_contribution",
+        accountId: a.id,
+        message: isHsa
+          ? `${a.name} keeps receiving surplus after ${limit}, but HSA contributions require a high-deductible plan and stop entirely at 65. Set an end date on its stop in the split order.`
+          : `${a.name} keeps receiving surplus after ${limit}, when the household has no earned income left. IRA contributions require earned income -- set an end date on its stop in the split order (a Roth 401(k)/403(b) funded by payroll is fine; this check only looks at the split order).`,
+      });
+    }
   }
 
   return {

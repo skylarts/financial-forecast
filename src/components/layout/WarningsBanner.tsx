@@ -10,12 +10,15 @@ const KIND_LABELS: Record<ProjectionWarning["kind"], string> = {
   early_withdrawal_penalty: "Early-withdrawal penalty (before 59½)",
   unamortized_debt: "A debt has no payoff plan",
   account_depleted: "Fully spent down",
+  stranded_account: "Money the plan can't reach",
+  frozen_floor: "Money locked under a floor",
+  ineligible_contribution: "A contribution the rules wouldn't allow",
 };
 
 // Running an account to $0 is often the PLAN (spending down a 529), so it
 // reads as a neutral heads-up rather than sharing the red "something is wrong"
 // banner with a genuine shortfall.
-const INFO_KINDS = new Set<ProjectionWarning["kind"]>(["account_depleted"]);
+const INFO_KINDS = new Set<ProjectionWarning["kind"]>(["account_depleted", "frozen_floor"]);
 
 /** "2061" or "2061–2072": the span of years a warning covers. */
 function yearSpan(years: number[]): string {
