@@ -181,7 +181,17 @@ export interface CashFlowPeriodRow {
   federalTaxTotal: number;
   /** federalTaxTotal broken into its sources (tax-deferred/RMD withdrawals, pension, taxable SS, capital gains, state/local add-on); sums exactly to federalTaxTotal. */
   federalTaxByComponent: FederalTaxComponent[];
-  /** Ordinary taxable income for the year (tax-deferred withdrawals + gross pension + taxable Social Security, net of the standard deduction). */
+  /**
+   * Ordinary taxable income for the year: the FULL ordinary base -- gross
+   * salary (where a gross amount is entered) + tax-deferred withdrawals and
+   * RMDs + Roth conversions + gross pension + the taxable portion of Social
+   * Security, net of the standard deduction. Salary IS included: this is the
+   * base capital gains stack on top of, so in a year with any earned income
+   * this figure is dominated by it and is NOT a measure of retirement income.
+   * It is also a NOMINAL figure -- deflate it (and compare against brackets,
+   * which the engine indexes forward at the same inflation rate) before
+   * reading a bracket off it.
+   */
   ordinaryTaxableIncome: number;
   /** Realized long-term capital gains from taxable-account withdrawals this year (gain-over-basis portion only). */
   capitalGainsRealized: number;
@@ -308,7 +318,16 @@ export interface ProjectionWarning {
      *  to be covered by the withdrawal routing instead. Informational, not
      *  necessarily a problem -- it's the expected end state of deliberately
      *  spending an account down (a 529, say). */
-    | "account_depleted";
+    | "account_depleted"
+    /** An asset the drain order can never reach: it will never cover a
+     *  shortfall, however large it grows. */
+    | "stranded_account"
+    /** A balance floor the account can never climb back above, so the money
+     *  under it is locked for the rest of the plan. */
+    | "frozen_floor"
+    /** Money routed into an account that could not legally receive it then
+     *  (an IRA with no earned income, an HSA on Medicare). */
+    | "ineligible_contribution";
   message: string;
   accountId?: Id;
 }
