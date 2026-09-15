@@ -12,13 +12,13 @@ import type { MoneyFlow } from "@/domain";
  */
 function buildScenario(
   moneyFlow: (extraSavingsId: string, checkingId: string, brokerageId: string) => MoneyFlow,
-  overrides?: { incomeAmount?: number; expenseAmount?: number; checkingCeiling?: number }
+  overrides?: { incomeAmount?: number; expenseAmount?: number; checkingCeiling?: number; checkingBalance?: number }
 ) {
   const extraSavings = makeAccount({ class: "cash", name: "Extra Savings", startingBalance: 0, growthRatePct: 0, isSpendingAccount: true });
   const checking = makeAccount({
     class: "cash",
     name: "Checking",
-    startingBalance: 0,
+    startingBalance: overrides?.checkingBalance ?? 0,
     growthRatePct: 0,
     // A balance bound is a property of the account, not of the routing stop
     // that happens to fill it -- see accountObjectSchema.balanceCeiling.
@@ -201,12 +201,13 @@ describe("Extra Savings deficit cascade", () => {
     );
     const result = projectScenario(scenario);
     const y2027 = result.years.find((y) => y.year === 2027)!;
-    console.log("\n" + traceYear(result, 2027) + "\n");
-    // Documents the observed shape: nothing withdrawn, Extra Savings deeply
-    // negative, brokerage untouched and compounding.
-    expect(y2027.cashFlow.withdrawalsByAccount).toHaveLength(0);
-    expect(y2027.accountBalances[extraSavings.id]).toBeLessThan(0);
-    expect(y2027.accountBalances[brokerage.id]).toBeGreaterThan(3_000_000);
+    // Pointing the drain order at the hub itself configures nothing -- but the
+    // brokerage is right there, so the household is not broke. Last resort
+    // reaches it, the hub stays solvent, and the plan says it improvised.
+    expect(y2027.cashFlow.withdrawalsByAccount.some((w) => w.id === brokerage.id)).toBe(true);
+    expect(y2027.accountBalances[extraSavings.id]).toBeGreaterThanOrEqual(-0.005);
+    expect(result.warnings.some((w) => w.kind === "unplanned_withdrawal" && w.accountId === brokerage.id)).toBe(true);
+    expect(result.warnings.some((w) => w.kind === "insufficient_funds")).toBe(false);
   });
 
   it("traceYear renders the year (smoke)", () => {
@@ -282,12 +283,35 @@ describe("routing stop rate limits", () => {
     const result = projectScenario(scenario);
     const y2026 = result.years.find((y) => y.year === 2026)!;
 
-    // Only $60k of the $180k shortfall may come from the brokerage; with no
-    // other source, the rest leaves Extra Savings genuinely negative rather
-    // than quietly over-draining the one capped account.
+    // The limit binds the PLANNED cascade at $60k. The remaining $120k has
+    // nowhere else to go, and a household does not stop paying its bills to
+    // honour its own bracket-management rule -- so the limit yields, loudly.
+    const drawn = y2026.cashFlow.withdrawalsByAccount.find((w) => w.id === brokerage.id);
+    expect(drawn?.gross ?? 0).toBeGreaterThan(60_001);
+    expect(y2026.accountBalances[extraSavings.id]).toBeGreaterThanOrEqual(-0.005);
+    const improvised = result.warnings.find((w) => w.kind === "unplanned_withdrawal" && w.accountId === brokerage.id);
+    expect(improvised?.message).toContain("floor or per-period limit");
+  });
+
+  it("keeps a drain stop's rate limit when another source can absorb the spill", () => {
+    const { scenario, brokerage, checking } = buildScenario(
+      (extraSavingsId, checkingId, brokerageId) => ({
+        splitOrder: [],
+        drainOrder: [
+          { id: "d1", accountId: brokerageId, kind: "percent_of_remainder", amount: null, pct: 1, limitAmount: 60_000, limitPeriod: "annual", limitGrowthRatePct: 0, startDate: null, endDate: null, minBalance: null, minBalanceGrowthRatePct: null },
+          { id: "d2", accountId: checkingId, kind: "percent_of_remainder", amount: null, pct: 1, startDate: null, endDate: null, minBalance: null, minBalanceGrowthRatePct: null },
+        ],
+      }),
+      { incomeAmount: 5_000, expenseAmount: 20_000, checkingBalance: 400_000 }
+    );
+    const result = projectScenario(scenario);
+    const y2026 = result.years.find((y) => y.year === 2026)!;
+    // This is the case the limit exists for: it is honoured exactly, and the
+    // rest spills to the next source as written. No improvising.
     const drawn = y2026.cashFlow.withdrawalsByAccount.find((w) => w.id === brokerage.id);
     expect(drawn?.gross ?? 0).toBeLessThanOrEqual(60_001);
-    expect(y2026.accountBalances[extraSavings.id]).toBeLessThan(0);
+    expect(y2026.cashFlow.withdrawalsByAccount.some((w) => w.id === checking.id)).toBe(true);
+    expect(result.warnings.some((w) => w.kind === "unplanned_withdrawal" && w.year === 2026)).toBe(false);
   });
 
   it("leaves routing unbounded when no limit is set", () => {

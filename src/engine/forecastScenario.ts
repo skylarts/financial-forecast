@@ -37,6 +37,7 @@ import { resolvePrimarySpendingAccountId } from "./moneyFlow";
 import { effectiveOwnerOn, filingStatusForYear, survivorsOn } from "./household";
 import { healthcareChargesForMonth } from "./healthcare";
 import { deriveDrainOrder, drainTierOf, unreachableAccounts } from "./strategy";
+import type { DrainTier } from "./strategy";
 import type { EngineAccount, MortgageSpec, Posting } from "./types";
 import type { TaxBracket } from "./taxTables";
 import {
@@ -440,6 +441,15 @@ function bracketTopFor(brackets: TaxBracket[], rate: number): number | null {
  * accuracy -- see `projectScenario` below, which iterates this function to
  * converge the estimates onto the real numbers before returning.
  */
+/** Cheapest-first, for the last-resort raid: spend cash before selling, and
+ *  leave the tax-free money until there is nothing else. */
+const LAST_RESORT_TIER_ORDER: Record<DrainTier, number> = {
+  cash: 0,
+  taxable: 1,
+  tax_deferred: 2,
+  tax_free: 3,
+};
+
 export function forecastScenario(
   scenario: Scenario,
   ratesByYearOverride?: Map<number, YearTaxRates>,
@@ -1861,6 +1871,59 @@ export function forecastScenario(
           const drawn = drawFromSource(source, spender, Math.min(offered, allowance), month, floor);
           recordFlowUse(stop, month, drawn);
           shortfall -= drawn;
+        }
+
+        // Last resort. The drain order is a PLAN for which account to spend
+        // from, and plans are wrong at the edges: a window hasn't opened yet,
+        // a floor is in the way, an account was never listed at all. A real
+        // household in that position does not let the bills go unpaid while
+        // money sits in an account -- it raids the account and eats the cost.
+        //
+        // Without this the hub simply goes negative, and every measure built
+        // on that (firstShortfallYear, "holds through", the Monte Carlo
+        // success rate) reports a plan that "ran out of money" when what
+        // actually happened is that the routing could not reach money that
+        // existed. So: cover the gap from whatever spendable financial asset
+        // is left, ignoring windows, floors and per-period limits, and log it
+        // as its own warning kind. Tax and the under-59½ penalty are charged
+        // exactly as on any other withdrawal, so an improvised raid on a
+        // tax-deferred account costs what it really would.
+        //
+        // Deliberately excluded: a home, a 529 and an HSA. Those are not
+        // "money you forgot to route" -- they have their own rules (selling a
+        // house, a non-qualified-withdrawal penalty, a Medicare cutoff) that
+        // this model does not carry, so reaching into them silently would
+        // flatter the plan. The stranded_account warning points at them
+        // instead, and a user who means to spend one can list it explicitly.
+        if (shortfall > 0.005) {
+          const alreadyOffered = new Set(active.map((x) => x.account.id));
+          const lastResort = activeAccounts
+            .filter((a) => drainTierOf(a) !== null)
+            .sort((a, b) => LAST_RESORT_TIER_ORDER[drainTierOf(a)!] - LAST_RESORT_TIER_ORDER[drainTierOf(b)!]);
+          for (const source of lastResort) {
+            if (shortfall <= 0.005) break;
+            // Floor ignored on purpose: this is the case the floor was never
+            // meant to cover.
+            const drawn = drawFromSource(source, spender, shortfall, month, 0);
+            if (drawn <= 0.005) continue;
+            shortfall -= drawn;
+            const year = yearOf(month);
+            const key = `unplanned:${year}:${source.id}`;
+            if (!warnedThisYear.has(key)) {
+              warnedThisYear.add(key);
+              warnings.push({
+                year,
+                kind: "unplanned_withdrawal",
+                accountId: source.id,
+                message:
+                  `Your withdrawal order could not cover ${month}'s spending, so ${source.name} was drawn on outside the plan` +
+                  (alreadyOffered.has(source.id)
+                    ? " (its floor or per-period limit was in the way)."
+                    : " (it is not an active source that month).") +
+                  " The money was there -- the routing could not reach it. Any tax and early-withdrawal penalty on it has been charged.",
+              });
+            }
+          }
         }
       }
     };

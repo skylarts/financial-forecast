@@ -13,6 +13,7 @@ const KIND_LABELS: Record<ProjectionWarning["kind"], string> = {
   stranded_account: "Money the plan can't reach",
   frozen_floor: "Money locked under a floor",
   ineligible_contribution: "A contribution the rules wouldn't allow",
+  unplanned_withdrawal: "The plan had to improvise",
 };
 
 // Running an account to $0 is often the PLAN (spending down a 529), so it
