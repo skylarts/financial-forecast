@@ -15,6 +15,16 @@ describe("buildLlmExport", () => {
     expect(output).toContain("Growth rates are nominal");
   });
 
+  it("warns that taxable income is nominal and must be deflated before reading a bracket off it", () => {
+    expect(output).toContain("Reading the tax numbers without fooling yourself");
+    expect(output).toContain("indexes the brackets and the standard deduction forward");
+  });
+
+  it("says ordinaryTaxableIncome includes salary, so a working year is not a retirement year", () => {
+    expect(output).toContain("`ordinaryTaxableIncome` includes salary");
+    expect(output).toContain("gross salary (where a gross amount is entered)");
+  });
+
   it("includes a section per data area", () => {
     expect(output).toContain("## Household");
     expect(output).toContain("## Settings");
